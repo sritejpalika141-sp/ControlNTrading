@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ControlN Trading - Admin Panel</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="apple-touch-icon" href="/static/logo-192.png">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#161b22">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0B0E14;
+            --bg2: #10141D;
+            --card: rgba(22, 26, 37, 0.65);
+            --sidebar: rgba(16, 20, 29, 0.85);
+            --accent: #00D2FF;
+            --text: #F8F9FA;
+            --text-muted: #8B98AD;
+            --success: #00FF9D;
+            --danger: #FF2A5F;
+            --purple: #B829FF;
+            --border: rgba(255,255,255,0.08);
+            --border-hover: rgba(255,255,255,0.12);
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { overflow-x: hidden; }
+        /* Scoped horizontal scroll for wide data tables (mobile) */
+        .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Outfit', 'Inter', sans-serif;
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        /* Sidebar Styles */
+        .sidebar {
+            width: 250px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            backdrop-filter: blur(16px);
+            z-index: 1000;
+        }
+        .sidebar-header {
+            padding: 0 1.5rem 2rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+        .sidebar-header img {
+            height: 32px;
+            border-radius: 4px;
+        }
+        .sidebar-header h1 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .nav-item {
+            padding: 12px 1.5rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            font-size: 0.95rem;
+            border-left: 3px solid transparent;
+        }
+        .nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: var(--text);
+        }
+        .nav-item.active {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent);
+            border-left-color: var(--accent);
+        }
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 1.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .sidebar-footer button {
+            width: 100%;
+            margin-bottom: 10px;
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        /* Main Content Styles */
+        .main-content {
+            flex: 1;
+            margin-left: 250px;
+            padding: 2rem 3rem;
+            max-width: calc(100vw - 250px);
+        }
+        .top-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .section-title {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .card { 
+            background: var(--card); 
+            border-radius: 16px; 
+            padding: 1.5rem; 
+            margin-bottom: 2rem; 
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            border-color: rgba(0, 210, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 210, 255, 0.05);
+            transform: translateY(-2px);
+        }
+        h2 { margin-top: 0; font-size: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; }
+        
+        .swarm-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+        }
+        .agent-card {
+            background: rgba(22, 26, 37, 0.4);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        .agent-card:hover {
+            border-color: rgba(0, 210, 255, 0.3);
+            box-shadow: 0 8px 30px rgba(0, 210, 255, 0.05);
+            transform: translateY(-2px);
+        }
+        .agent-glow {
+            position: absolute;
+            top: -20px;
+            right: -20px;
+            width: 100px;
+            height: 100px;
+            background: radial-gradient(circle, rgba(0, 255, 157, 0.15) 0%, transparent 70%);
+            border-radius: 50%;
+        }
+        
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .badge-success { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge-danger { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        
+        button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        
+        .form-group { display: flex; gap: 1rem; margin-top: 1rem; }
+        input, select {
+            flex: 1;
+            padding: 10px;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: white;
+            outline: none;
+        }
+        input:focus, select:focus { border-color: var(--accent); }
+        
+        /* Layout Grids for Analytics */
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+        .stat-box {
+            background: var(--bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+        .stat-value { font-size: 2rem; font-weight: 700; color: var(--accent); margin-bottom: 5px; }
+        .stat-label { font-size: 0.9rem; color: var(--text-muted); }
+        
+        /* Terminal for Crash Logs */
+        .terminal {
+            background: #000;
+            color: #0f0;
+            font-family: monospace;
+            padding: 1rem;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+        .terminal-row { margin-bottom: 8px; border-bottom: 1px dashed #333; padding-bottom: 4px; }
+        .terminal-time { color: #888; margin-right: 10px; }
+        .terminal-msg { color: #ff5555; white-space: pre-wrap;}
+        
+        /* Tab contents */
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                flex-direction: row;
+                flex-wrap: wrap;
+                padding: 1rem;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .sidebar-header { border-bottom: none; margin-bottom: 0; padding: 0 1rem 0 0; }
+            .nav-item { padding: 8px; flex: 1; text-align: center; border-left: none; border-bottom: 3px solid transparent; }
+            .nav-item.active { border-left: none; border-bottom-color: var(--accent); }
+            .main-content { margin-left: 0; padding: 1rem; max-width: 100vw; }
+            .form-group { flex-direction: column; }
+            table { font-size: 0.8rem; min-width: 600px; }
+            .card { overflow-x: auto; }
+            .sidebar-footer { display: none; }
+            /* Tap targets: nav + action buttons >= 44px effective touch area */
+            .nav-item { min-height: 44px; }
+            .btn-primary, .top-header button, .form-group button,
+            .form-group input, .form-group select { min-height: 44px; }
+        }
+        @media (max-width: 480px) {
+            .main-content { padding: 0.75rem; max-width: 100vw; }
+            .top-header { flex-direction: column; align-items: stretch; gap: 12px; }
+            .top-header button { width: 100%; }
+            .form-group input, .form-group select, .form-group button { width: 100%; }
+            .card { padding: 1rem; }
+            .section-title { font-size: 1.25rem; }
+            /* .table-responsive already scopes table overflow-x; keep card from double-scrolling */
+            .card { overflow-x: visible; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Left Sidebar Menu -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <img src="/static/logo.png" alt="ControlN">
+            <h1>Admin Panel</h1>
+        </div>
+        
+        <div class="nav-item active" onclick="switchTab('usersTab', this)">
+            👥 Users Management
+        </div>
+        <div class="nav-item" onclick="switchTab('appAnalyticsTab', this); fetchAnalytics();">
+            📊 App Analytics
+        </div>
+        <div class="nav-item" onclick="switchTab('strategiesTab', this); fetchAnalytics();">
+            📈 Working Strategies
+        </div>
+        <div class="nav-item" onclick="switchTab('crashAnalyticsTab', this); fetchAnalytics();">
+            ⚠️ Crash Logs
+        </div>
+        <div class="nav-item" onclick="switchTab('pipelineTab', this); fetchAnalytics();">
+            🚀 Update Pipeline
+        </div>
+        <div class="nav-item" onclick="switchTab('aiSwarmTab', this); fetchSwarmStatus();">
+            🧠 AI Swarm
+        </div>
+        
+        <div class="sidebar-footer">
+            <button onclick="location.href='/'">Go to Dashboard</button>
+            <div style="margin-top: 10px;">Logged in as: <strong id="adminName">Admin</strong></div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+        
+        <!-- Tab: AI Swarm -->
+        <div id="aiSwarmTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">🧠 AI Swarm Status & Learning</h1>
+                <button class="btn-primary" onclick="fetchSwarmStatus()">Refresh Swarm Data</button>
+            </div>
+            
+            <div class="card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+                <h2 style="border: none; color: var(--text-muted); font-size: 1rem; margin-bottom: 1.5rem;">Active Node Network</h2>
+                <div id="swarmList" class="swarm-grid">
+                    <!-- Loaded dynamically via fetchSwarmStatus() -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 1: Users Management -->
+        <div id="usersTab" class="tab-content active">
+            <div class="top-header">
+                <h1 class="section-title">Users Management</h1>
+                <button class="btn-primary" onclick="fetchUsers()">Refresh Data</button>
+            </div>
+
+            <div class="card">
+                <h2>Add New User</h2>
+                <div class="form-group">
+                    <input type="text" id="newUsername" placeholder="Username">
+                    <input type="password" id="newPassword" placeholder="Password">
+                    <select id="newRole">
+                        <option value="0">Standard User</option>
+                        <option value="1">Administrator</option>
+                    </select>
+                    <button class="btn-primary" onclick="addUser()">Create User</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Active Users</h2>
+                <div class="table-responsive">
+                <table id="userTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Automation</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userList">
+                        <!-- Loaded dynamically -->
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: App Analytics -->
+        <div id="appAnalyticsTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">App Analytics</h1>
+                <button class="btn-primary" onclick="fetchAnalytics()">Refresh Data</button>
+            </div>
+            
+            <div class="card" id="healthAgentCard" style="border-left: 4px solid var(--accent);">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2>🩺 System Health Agent</h2>
+                    <button class="btn-primary" style="padding:4px 8px;" onclick="toggleHealthAgentCard()">Minimize</button>
+                </div>
+                <div id="healthAgentContent" style="margin-top: 10px;">
+                    <div style="display:flex; gap: 20px; align-items:center; margin-bottom: 10px;">
+                        <div><strong>Status:</strong> <span id="ha-status">Checking...</span></div>
+                        <div><strong>Last Check:</strong> <span id="ha-last-check">N/A</span></div>
+                        <div><strong>Paused:</strong> <span id="ha-paused">No</span></div>
+                    </div>
+                    <div><strong>Last Error Detected:</strong> <span id="ha-last-error" style="color: var(--danger);">None</span></div>
+                    <div><strong>Last Fix Applied:</strong> <span id="ha-last-fix" style="color: var(--success);">None</span></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>System Overview</h2>
+                <div class="analytics-grid">
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-total-users">-</div>
+                        <div class="stat-label">Total Users (DB)</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-active-users">-</div>
+                        <div class="stat-label">Active Users (DB)</div>
+                    </div>
+                    <div class="stat-box" style="cursor:pointer;" onclick="showLoggedInUsers()">
+                        <div class="stat-value" style="color:var(--success)" id="stat-logged-in-users">-</div>
+                        <div class="stat-label">Logged In (Fyers) ↗</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-automation">-</div>
+                        <div class="stat-label">Automation Enabled</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-active-conn">-</div>
+                        <div class="stat-label">Active WebSockets</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card" id="loggedInUsersCard" style="display:none; border:1px solid var(--accent)">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom: 1px solid var(--border); padding-bottom:10px;">
+                    <h2 style="border:none; margin:0; padding:0;">Logged In Users</h2>
+                    <button class="btn-primary" style="padding:4px 8px;" onclick="document.getElementById('loggedInUsersCard').style.display='none'">Close</button>
+                </div>
+                <div id="loggedInUsersList" style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <!-- populated dynamically -->
+                </div>
+            </div>
+            
+            <!-- User Activity Modal / Section -->
+            <div class="card" id="userActivityCard" style="display:none; border:1px solid var(--success);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom: 1px solid var(--border); padding-bottom:10px;">
+                    <h2 style="border:none; margin:0; padding:0;" id="userActivityTitle">User Activity</h2>
+                    <button class="btn-primary" style="padding:4px 8px;" onclick="document.getElementById('userActivityCard').style.display='none'">Close</button>
+                </div>
+                <div class="analytics-grid" style="margin-bottom:1rem">
+                    <div class="stat-box">
+                        <div class="stat-value" id="ua-paper-pnl" style="font-size:1.5rem">-</div>
+                        <div class="stat-label">Paper PNL</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="ua-live-pnl" style="font-size:1.5rem">-</div>
+                        <div class="stat-label">Live PNL</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="ua-trades" style="font-size:1.5rem">-</div>
+                        <div class="stat-label">Trades Today</div>
+                    </div>
+                </div>
+                <div style="margin-bottom: 1rem; color: var(--text-muted); font-size: 0.9rem;" id="ua-extra-info">
+                    <!-- Additional info (automation, strategies) -->
+                </div>
+                <h3>Recent Logs</h3>
+                <div class="terminal" id="ua-terminal" style="height:200px;"></div>
+            </div>
+        </div>
+
+        <!-- Tab 2.5: Working Strategies -->
+        <div id="strategiesTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">Working Strategies</h1>
+                <button class="btn-primary" onclick="fetchAnalytics()">Refresh Data</button>
+            </div>
+            <div class="card">
+                <h2>Strategies Currently Running</h2>
+                <div class="table-responsive">
+                <table id="strategiesTable">
+                    <thead>
+                        <tr>
+                            <th>Strategy Name</th>
+                            <th>Active Users Running</th>
+                        </tr>
+                    </thead>
+                    <tbody id="strategiesList">
+                        <!-- Loaded dynamically -->
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Crash Logs -->
+        <div id="crashAnalyticsTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">Crash Logs</h1>
+                <button class="btn-primary" onclick="fetchAnalytics()">Refresh Data</button>
+            </div>
+            
+            <div class="card">
+                <h2>Recent Background Errors (Last 50)</h2>
+                <div class="terminal" id="crash-terminal">
+                    Loading logs...
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Update Pipeline -->
+        <div id="pipelineTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">Update Pipeline</h1>
+                <button class="btn-danger" onclick="restartServer()">Restart Server</button>
+            </div>
+            
+            <div class="card">
+                <h2>Deployment Status</h2>
+                <div class="analytics-grid" style="margin-bottom: 2rem;">
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-version">-</div>
+                        <div class="stat-label">Current Version</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="stat-uptime">-</div>
+                        <div class="stat-label">System Uptime</div>
+                    </div>
+                </div>
+                
+                <h2>Recent Git Commits</h2>
+                <div class="terminal" style="color: #fff; background: #0b1120; height: 200px;" id="git-terminal">
+                    Loading git log...
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Global Data Store ---
+        window.adminData = {};
+
+        // --- Navigation Logic ---
+        function switchTab(tabId, element) {
+            // Update active state on nav
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            if(element) element.classList.add('active');
+            
+            // Hide all tabs, show selected
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        // --- Analytics Fetch Logic ---
+        async function fetchAnalytics() {
+            try {
+                const res = await fetch('/api/admin/analytics');
+                const data = await res.json();
+                
+                if(data.error) {
+                    console.error(data.error);
+                    return;
+                }
+                
+                window.adminData.analytics = data;
+                
+                // Populate App Analytics
+                document.getElementById('stat-total-users').innerText = data.app.total_users;
+                document.getElementById('stat-active-users').innerText = data.app.active_users;
+                document.getElementById('stat-logged-in-users').innerText = data.app.logged_in_users ? data.app.logged_in_users.length : 0;
+                document.getElementById('stat-active-conn').innerText = data.app.active_connections;
+                document.getElementById('stat-automation').innerText = data.app.users_with_automation;
+                
+                // Populate Strategies
+                const stratList = document.getElementById('strategiesList');
+                if(stratList && data.app.strategies_working) {
+                    stratList.innerHTML = '';
+                    const entries = Object.entries(data.app.strategies_working).sort((a,b) => b[1] - a[1]);
+                    if(entries.length === 0) {
+                        stratList.innerHTML = '<tr><td colspan="2">No strategies currently active.</td></tr>';
+                    } else {
+                        entries.forEach(([name, count]) => {
+                            stratList.innerHTML += `<tr><td>${name}</td><td><span class="badge badge-success">${count} User(s)</span></td></tr>`;
+                        });
+                    }
+                }
+                
+                // Populate Pipeline
+                document.getElementById('stat-version').innerText = "v" + data.pipeline.version;
+                document.getElementById('stat-uptime').innerText = data.pipeline.uptime;
+                document.getElementById('git-terminal').innerText = data.pipeline.git_log;
+                
+                // Populate Crash Logs
+                const term = document.getElementById('crash-terminal');
+                term.innerHTML = '';
+                if(data.crashes && data.crashes.length > 0) {
+                    data.crashes.forEach(log => {
+                        const div = document.createElement('div');
+                        div.className = 'terminal-row';
+                        // C2: build with textContent so log.message (attacker-influenceable error
+                        // text) renders as literal text, never executed markup.
+                        const timeSpan = document.createElement('span');
+                        timeSpan.className = 'terminal-time';
+                        timeSpan.textContent = `[${log.timestamp}]`;
+                        const msgSpan = document.createElement('span');
+                        msgSpan.className = 'terminal-msg';
+                        msgSpan.textContent = log.message;
+                        div.appendChild(timeSpan);
+                        div.appendChild(msgSpan);
+                        term.appendChild(div);
+                    });
+                } else {
+                    term.innerHTML = '<span style="color: #10b981;">No recent errors logged!</span>';
+                }
+                
+                // Auto-refresh active cards
+                if (document.getElementById('loggedInUsersCard').style.display === 'block') {
+                    showLoggedInUsers();
+                }
+                if (document.getElementById('userActivityCard').style.display === 'block' && window.adminData.currentActivityUser) {
+                    fetchUserActivity(window.adminData.currentActivityUser.uid, window.adminData.currentActivityUser.username);
+                }
+                
+            } catch (e) {
+                console.error("Error fetching analytics", e);
+            }
+        }
+        
+        function showLoggedInUsers() {
+            const card = document.getElementById('loggedInUsersCard');
+            card.style.display = 'block';
+            const list = document.getElementById('loggedInUsersList');
+            list.innerHTML = '';
+            
+            const users = window.adminData.analytics?.app?.logged_in_users || [];
+            if(users.length === 0) {
+                list.innerHTML = '<span style="color:var(--text-muted)">No users logged in via Fyers currently.</span>';
+                return;
+            }
+            
+            users.forEach(u => {
+                const btn = document.createElement('button');
+                btn.className = 'btn-primary';
+                btn.style.background = 'var(--card)';
+                btn.style.border = '1px solid var(--accent)';
+                btn.innerText = `👤 ${u.username} (ID: ${u.id})`;
+                btn.onclick = () => fetchUserActivity(u.id, u.username);
+                list.appendChild(btn);
+            });
+        }
+        
+        async function fetchUserActivity(uid, username) {
+            window.adminData.currentActivityUser = {uid, username};
+            const card = document.getElementById('userActivityCard');
+            card.style.display = 'block';
+            document.getElementById('userActivityTitle').innerText = `Activity: ${username}`;
+            
+            document.getElementById('ua-paper-pnl').innerText = '...';
+            document.getElementById('ua-live-pnl').innerText = '...';
+            document.getElementById('ua-trades').innerText = '...';
+            document.getElementById('ua-extra-info').innerHTML = '';
+            document.getElementById('ua-terminal').innerHTML = 'Loading...';
+            
+            try {
+                const res = await fetch(`/api/admin/users/${uid}/activity`);
+                const data = await res.json();
+                
+                if(data.state && Object.keys(data.state).length > 0) {
+                    const ppnl = parseFloat(data.state.paper_pnl_today || 0);
+                    const lpnl = parseFloat(data.state.live_pnl_today || 0);
+                    
+                    document.getElementById('ua-paper-pnl').innerText = '₹' + ppnl.toFixed(2);
+                    document.getElementById('ua-paper-pnl').style.color = ppnl >= 0 ? 'var(--success)' : 'var(--danger)';
+                    
+                    document.getElementById('ua-live-pnl').innerText = '₹' + lpnl.toFixed(2);
+                    document.getElementById('ua-live-pnl').style.color = lpnl >= 0 ? 'var(--success)' : 'var(--danger)';
+                    
+                    document.getElementById('ua-trades').innerText = (data.state.paper_trades_today || 0) + (data.state.live_trades_today || 0);
+                    
+                    const isAuto = data.state.automation_enabled ? '<span style="color:var(--success)">Enabled</span>' : '<span style="color:var(--danger)">Disabled</span>';
+                    const strats = data.state.active_strategies && data.state.active_strategies.length > 0 ? data.state.active_strategies.join(', ') : 'None';
+                    document.getElementById('ua-extra-info').innerHTML = `<strong>Automation:</strong> ${isAuto} | <strong>Active Strategies:</strong> ${strats}`;
+                } else {
+                    document.getElementById('ua-paper-pnl').innerText = 'N/A';
+                    document.getElementById('ua-live-pnl').innerText = 'N/A';
+                    document.getElementById('ua-trades').innerText = 'N/A';
+                    document.getElementById('ua-extra-info').innerHTML = '<em>User state not initialized.</em>';
+                }
+                
+                const term = document.getElementById('ua-terminal');
+                term.innerHTML = '';
+                if(data.logs && data.logs.length > 0) {
+                    data.logs.forEach(log => {
+                        const div = document.createElement('div');
+                        div.className = 'terminal-row';
+                        const color = log.level === 'error' ? '#ff5555' : (log.level === 'warning' ? '#f59e0b' : '#10b981');
+                        // C2: build with textContent so log.message renders as literal text.
+                        const timeSpan = document.createElement('span');
+                        timeSpan.className = 'terminal-time';
+                        timeSpan.textContent = `[${log.timestamp}]`;
+                        const msgSpan = document.createElement('span');
+                        msgSpan.style.color = color;
+                        msgSpan.textContent = log.message;
+                        div.appendChild(timeSpan);
+                        div.appendChild(msgSpan);
+                        term.appendChild(div);
+                    });
+                } else {
+                    term.innerHTML = '<span style="color:var(--text-muted)">No recent logs found.</span>';
+                }
+            } catch(e) {
+                document.getElementById('ua-terminal').innerHTML = '<span style="color:var(--danger)">Error fetching user activity.</span>';
+            }
+        }
+
+        async function restartServer() {
+            if(!confirm("WARNING: Are you sure you want to restart the background server process? All users will briefly disconnect.")) return;
+            try {
+                const res = await fetch('/api/admin/restart-server', {method: 'POST'});
+                const data = await res.json();
+                if(data.success) {
+                    alert("Server restart triggered. It will take a few seconds.");
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Failed to contact server.");
+            }
+        }
+
+
+        // --- Existing Users Logic ---
+        async function fetchUsers() {
+            try {
+                const res = await fetch('/api/admin/users');
+                const users = await res.json();
+                const list = document.getElementById('userList');
+                if(!list) return;
+                list.innerHTML = '';
+                
+                if(!Array.isArray(users)) {
+                    list.innerHTML = '<tr><td colspan="6">Error loading users</td></tr>';
+                    return;
+                }
+
+                users.forEach(u => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${u.id}</td>
+                        <td>${u.username}</td>
+                        <td>${u.is_admin ? '<span class="badge badge-success">Admin</span>' : '<span class="badge" style="background:#334155;color:white">User</span>'}</td>
+                        <td>
+                            <span class="badge ${u.automation_enabled ? 'badge-success' : 'badge-danger'}">
+                                ${u.automation_enabled ? 'Active' : 'Off'}
+                            </span>
+                        </td>
+                        <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '--'}</td>
+                        <td>
+                            <button class="btn-primary" style="padding: 4px 8px; font-size: 0.75rem; margin-right: 4px;" onclick="changePassword(${u.id}, '${u.username}')">Change Pass</button>
+                            <button class="btn-primary" style="padding: 4px 8px; font-size: 0.75rem; margin-right: 4px; background: #8b5cf6;" onclick="changePin(${u.id}, '${u.username}')">Set PIN</button>
+                            ${u.username !== 'admin' ? `
+                                <button class="btn-primary" style="padding: 4px 8px; font-size: 0.75rem; margin-right: 4px; background: ${u.is_active ? '#eab308' : '#10b981'};" onclick="toggleUserStatus(${u.id}, ${!u.is_active})">
+                                    ${u.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button class="btn-danger" style="padding: 4px 8px; font-size: 0.75rem;" onclick="deleteUser(${u.id})">Delete</button>
+                            ` : ''}
+                        </td>
+                    `;
+                    list.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Fetch users error:", e);
+            }
+        }
+
+        async function changePin(id, username) {
+            const newPin = prompt(`Enter new 4-digit Fyers PIN for ${username}:`);
+            if(!newPin) return;
+            if(!/^\d{4}$/.test(newPin)) return alert("PIN must be exactly 4 digits.");
+            
+            try {
+                const res = await fetch(`/api/admin/users/${id}/pin`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pin: newPin})
+                });
+                const data = await res.json();
+                if(data.success) {
+                    alert("PIN updated successfully!");
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Failed to update PIN");
+            }
+        }
+
+        async function changePassword(id, username) {
+            const newPass = prompt(`Enter new password for ${username} (min 6 chars):`);
+            if(!newPass) return;
+            if(newPass.length < 6) return alert("Password must be at least 6 characters.");
+            
+            try {
+                const res = await fetch(`/api/admin/users/${id}/password`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({new_password: newPass})
+                });
+                const data = await res.json();
+                if(data.success) {
+                    alert("Password updated successfully!");
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Failed to connect to server");
+            }
+        }
+
+        async function addUser() {
+            const user = document.getElementById('newUsername').value;
+            const pass = document.getElementById('newPassword').value;
+            const role = document.getElementById('newRole').value;
+            if(!user || !pass) return alert("Fill all fields");
+
+            try {
+                const res = await fetch('/api/admin/users', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: user, password: pass, is_admin: parseInt(role)})
+                });
+                const data = await res.json();
+                if(data.success) {
+                    alert("User created!");
+                    document.getElementById('newUsername').value = '';
+                    document.getElementById('newPassword').value = '';
+                    fetchUsers();
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Failed to connect to server");
+            }
+        }
+
+        async function deleteUser(id) {
+            if(!confirm("Are you sure?")) return;
+            await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+            fetchUsers();
+        }
+
+        async function toggleUserStatus(id, isActive) {
+            const actionText = isActive ? "activate" : "deactivate";
+            if(!confirm(`Are you sure you want to ${actionText} this user?`)) return;
+            
+            try {
+                const res = await fetch(`/api/admin/users/${id}/toggle-status`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({is_active: isActive})
+                });
+                const data = await res.json();
+                if(data.success) {
+                    fetchUsers();
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Failed to connect to server");
+            }
+        }
+
+        function checkAdminLogin() {
+            const cookies = document.cookie.split(';');
+            const uc = cookies.find(c => c.trim().startsWith('username='));
+            if (uc) {
+                const username = decodeURIComponent(uc.split('=')[1]);
+                const adminNameEl = document.getElementById('adminName');
+                if (adminNameEl) {
+                    const dispName = username.charAt(0).toUpperCase() + username.slice(1);
+                    adminNameEl.innerText = dispName;
+                }
+            }
+        }
+
+        // Init
+        checkAdminLogin();
+        fetchUsers();
+        
+        // Health Agent Logic
+        function toggleHealthAgentCard() {
+            const content = document.getElementById('healthAgentContent');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+            } else {
+                content.style.display = 'none';
+            }
+        }
+        
+        async function fetchHealthAgentStatus() {
+            try {
+                const response = await fetch('/api/health-agent-status');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('ha-status').innerText = data.status || 'idle';
+                    document.getElementById('ha-last-check').innerText = data.last_check || 'N/A';
+                    document.getElementById('ha-paused').innerText = data.is_paused ? 'Yes' : 'No';
+                    document.getElementById('ha-last-error').innerText = data.last_error || 'None';
+                    document.getElementById('ha-last-fix').innerText = data.last_fix || 'None';
+                }
+            } catch (e) {
+                console.error("Failed to fetch health agent status:", e);
+            }
+        }
+        
+        // Poll Health Agent Status every 10 seconds
+        setInterval(fetchHealthAgentStatus, 10000);
+        fetchHealthAgentStatus();
+
+
+        async function fetchSwarmStatus() {
+            try {
+                const res = await fetch('/api/admin/swarm-status');
+                const data = await res.json();
+                if (data.success) {
+                    const grid = document.getElementById('swarmList');
+                    grid.innerHTML = '';
+                    data.agents.forEach(agent => {
+                        let statusColor = agent.active ? 'var(--success)' : 'var(--text-muted)';
+                        let statusText = agent.active ? 'Active Node' : 'Paused';
+                        let insightHtml = agent.latest_insight && agent.latest_insight !== "No insights yet." 
+                            ? `<details style="margin-top: 15px;"><summary style="cursor:pointer;color:var(--accent);font-size:0.85rem;font-weight:600;">View Latest Learning</summary><div style="margin-top:10px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;border:1px solid var(--border);white-space:pre-wrap;font-size:0.8rem;color:var(--text-muted);">${agent.latest_insight}</div></details>` 
+                            : '<div style="margin-top: 15px; font-size:0.8rem; color:var(--text-muted);">No learning data yet. Runs at 4:00 PM.</div>';
+                            
+                        let card = document.createElement('div');
+                        card.className = 'agent-card';
+                        card.innerHTML = `
+                            ${agent.active ? '<div class="agent-glow"></div>' : ''}
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 15px; position:relative; z-index:2;">
+                                <div>
+                                    <h3 style="margin:0 0 5px 0; font-size:1.1rem; color:var(--text);">${agent.strategy_name}</h3>
+                                    <span style="font-size:0.75rem; color:${statusColor}; font-weight:600; padding: 2px 8px; background: rgba(0,255,157,0.1); border-radius: 10px;">${statusText}</span>
+                                </div>
+                            </div>
+                            
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; position:relative; z-index:2;">
+                                <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 3px;">Win Rate</div>
+                                    <div style="font-size: 1.2rem; font-weight: 700; color: ${((agent.win_rate || 0) >= 50) ? 'var(--success)' : 'var(--danger)'};">${(agent.win_rate || 0).toFixed(1)}%</div>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 3px;">Total Trades</div>
+                                    <div style="font-size: 1.2rem; font-weight: 700; color: var(--text);">${agent.total_trades || 0}</div>
+                                </div>
+                            </div>
+                            
+                            <div style="position:relative; z-index:2; border-top: 1px solid var(--border); padding-top: 15px;">
+                                ${insightHtml}
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    });
+                }
+            } catch (err) {
+                console.error("Error fetching swarm status:", err);
+            }
+        }
+
+    </script>
+</body>
+</html>

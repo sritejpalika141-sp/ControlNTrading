@@ -1,0 +1,329 @@
+/* ============================================================================
+   ControlN Trading — DESIGN SYSTEM FOUNDATION
+   ----------------------------------------------------------------------------
+   Bold premium fintech. TradingView-inspired: dark, dense, chart-serious.
+   Signature accent: PREMIUM VIOLET (#7C3AED) used with restraint on a
+   considered neutral near-black base.
+
+   Shared token + component layer for all 4 pages (login, index, admin, landing).
+   Each page's <head> must link this file BEFORE its own page styles:
+       <link rel="stylesheet" href="/static/design-system.css">
+
+   Theme model (compatible with the existing dashboard):
+     - DARK is the default (tokens on :root).
+     - LIGHT is opt-in via `body.light-theme` (matches app.js toggleTheme()).
+     - Persisted in localStorage['theme'] = 'light' | 'dark'.
+   ============================================================================ */
+
+/* ---- Font imports ---------------------------------------------------------
+   Sora        → display / headings (geometric, characterful, not Inter/Roboto)
+   Plus Jakarta Sans → body (refined, already used by the dashboard)
+   JetBrains Mono    → ALL numbers (prices, P&L, %) with tabular figures.
+   Building on the dashboard's Jakarta + JetBrains Mono for cross-page unity. */
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ============================================================================
+   1. DESIGN TOKENS — DARK (default)
+   ============================================================================ */
+:root {
+  /* -- Neutral base: cool near-black, NOT pure #000. Subtle blue-cool cast. -- */
+  --ds-bg:            #0A0B0F;   /* app background — deepest */
+  --ds-bg-elev-0:     #0D0E13;   /* base panels */
+  --ds-surface-1:     #12141B;   /* cards / raised surfaces */
+  --ds-surface-2:     #171A23;   /* elevated cards, popovers */
+  --ds-surface-3:     #1E222E;   /* hover / active surface */
+  --ds-inset:         #08090C;   /* inputs, wells (recessed) */
+
+  /* -- Violet accent scale (signature) — anchored on #7C3AED -------------- */
+  --ds-violet-50:     #EDE7FE;
+  --ds-violet-200:    #C4B5FD;
+  --ds-violet-400:    #A78BFA;
+  --ds-violet-500:    #8B5CF6;
+  --ds-violet-600:    #7C3AED;   /* PRIMARY accent */
+  --ds-violet-700:    #6D28D9;   /* pressed */
+  --ds-violet-900:    #3C1E7A;   /* deep tint fills */
+  --ds-accent:        var(--ds-violet-600);
+  --ds-accent-hover:  var(--ds-violet-500);
+  --ds-accent-press:  var(--ds-violet-700);
+  --ds-accent-soft:   rgba(124, 58, 237, 0.14);  /* tinted fills / hovers */
+  --ds-accent-ring:   rgba(124, 58, 237, 0.45);  /* focus ring */
+
+  /* -- Semantic trading colors ------------------------------------------- */
+  --ds-profit:        #14D19B;   /* green — gains */
+  --ds-profit-soft:   rgba(20, 209, 155, 0.13);
+  --ds-loss:          #FF4D6A;   /* red — losses */
+  --ds-loss-soft:     rgba(255, 77, 106, 0.13);
+  --ds-warn:          #F5A524;   /* amber — caution */
+  --ds-warn-soft:     rgba(245, 165, 36, 0.12);
+  --ds-info:          #38BDF8;   /* cyan-blue — neutral info */
+
+  /* -- Text tiers -------------------------------------------------------- */
+  --ds-text:          #F4F5F7;   /* primary */
+  --ds-text-2:        #AEB4C2;   /* secondary */
+  --ds-text-muted:    #7A8194;   /* muted / labels */
+  --ds-text-dim:      #4E5567;   /* dim / disabled */
+  --ds-text-on-accent:#FFFFFF;
+
+  /* -- Borders ----------------------------------------------------------- */
+  --ds-border:        rgba(255, 255, 255, 0.07);
+  --ds-border-strong: rgba(255, 255, 255, 0.12);
+  --ds-border-accent: rgba(124, 58, 237, 0.55);
+
+  /* -- Elevation / shadow (tinted inner + crisp depth, NO neon glow) ------ */
+  --ds-shadow-sm:  0 1px 2px rgba(0,0,0,0.40);
+  --ds-shadow-md:  0 8px 24px -6px rgba(0,0,0,0.55);
+  --ds-shadow-lg:  0 24px 60px -12px rgba(0,0,0,0.65);
+  --ds-inset-hi:   inset 0 1px 0 rgba(255,255,255,0.04); /* top highlight edge */
+  --ds-inset-lo:   inset 0 -1px 0 rgba(0,0,0,0.35);
+
+  /* -- Radius scale ------------------------------------------------------ */
+  --ds-r-xs: 6px;
+  --ds-r-sm: 9px;
+  --ds-r-md: 13px;
+  --ds-r-lg: 18px;
+  --ds-r-xl: 26px;
+  --ds-r-pill: 999px;
+
+  /* -- Spacing scale (4pt base) ------------------------------------------ */
+  --ds-1: 4px;   --ds-2: 8px;   --ds-3: 12px;  --ds-4: 16px;
+  --ds-5: 20px;  --ds-6: 24px;  --ds-7: 32px;  --ds-8: 40px;
+  --ds-9: 48px;  --ds-10: 64px; --ds-11: 80px; --ds-12: 112px;
+
+  /* -- Typography families ----------------------------------------------- */
+  --ds-font-display: 'Sora', system-ui, sans-serif;
+  --ds-font-body:    'Plus Jakarta Sans', system-ui, sans-serif;
+  --ds-font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+
+  /* -- Type scale (fluid where useful) ----------------------------------- */
+  --ds-fs-display: clamp(2.4rem, 4.2vw, 3.4rem);
+  --ds-fs-h1: clamp(1.8rem, 3vw, 2.3rem);
+  --ds-fs-h2: 1.5rem;
+  --ds-fs-h3: 1.2rem;
+  --ds-fs-body: 0.95rem;
+  --ds-fs-sm: 0.85rem;
+  --ds-fs-xs: 0.75rem;
+  --ds-fs-input: 1rem;   /* >=16px — prevents mobile zoom */
+
+  --ds-lh-tight: 1.12;
+  --ds-lh-snug: 1.35;
+  --ds-lh-body: 1.6;
+
+  --ds-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ============================================================================
+   2. DESIGN TOKENS — LIGHT  (body.light-theme — matches app.js toggle)
+   ----------------------------------------------------------------------------
+   A real, polished alternative: warm-paper neutrals, violet kept as the accent,
+   trading green/red darkened for contrast on light surfaces.
+   ============================================================================ */
+body.light-theme {
+  --ds-bg:            #F4F5F8;
+  --ds-bg-elev-0:     #FFFFFF;
+  --ds-surface-1:     #FFFFFF;
+  --ds-surface-2:     #FAFAFC;
+  --ds-surface-3:     #F0F1F5;
+  --ds-inset:         #F1F2F6;
+
+  --ds-accent:        #7C3AED;
+  --ds-accent-hover:  #6D28D9;
+  --ds-accent-press:  #5B21B6;
+  --ds-accent-soft:   rgba(124, 58, 237, 0.10);
+  --ds-accent-ring:   rgba(124, 58, 237, 0.35);
+
+  --ds-profit:        #0FA47A;
+  --ds-profit-soft:   rgba(15, 164, 122, 0.12);
+  --ds-loss:          #E11D48;
+  --ds-loss-soft:     rgba(225, 29, 72, 0.10);
+  --ds-warn:          #C2740B;
+  --ds-warn-soft:     rgba(194, 116, 11, 0.12);
+  --ds-info:          #0284C7;
+
+  --ds-text:          #14161C;
+  --ds-text-2:        #3C4150;
+  --ds-text-muted:    #626A7C;
+  --ds-text-dim:      #9AA1B1;
+  --ds-text-on-accent:#FFFFFF;
+
+  --ds-border:        rgba(15, 20, 35, 0.10);
+  --ds-border-strong: rgba(15, 20, 35, 0.16);
+  --ds-border-accent: rgba(124, 58, 237, 0.45);
+
+  --ds-shadow-sm:  0 1px 2px rgba(20,24,40,0.06);
+  --ds-shadow-md:  0 10px 28px -8px rgba(20,24,40,0.14);
+  --ds-shadow-lg:  0 24px 60px -14px rgba(20,24,40,0.18);
+  --ds-inset-hi:   inset 0 1px 0 rgba(255,255,255,0.6);
+  --ds-inset-lo:   inset 0 -1px 0 rgba(15,20,35,0.05);
+}
+
+/* ============================================================================
+   3. BASE / RESET (scoped helpers — do not fight page-level resets)
+   ============================================================================ */
+.ds-root,
+.ds-scope {
+  font-family: var(--ds-font-body);
+  color: var(--ds-text);
+  background: var(--ds-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Utility: tabular monospace for all numeric data (TradingView signature). */
+.ds-num {
+  font-family: var(--ds-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+  letter-spacing: -0.01em;
+}
+.ds-profit { color: var(--ds-profit); }
+.ds-loss   { color: var(--ds-loss); }
+
+/* ============================================================================
+   4. TYPOGRAPHY UTILITIES
+   ============================================================================ */
+.ds-display { font-family: var(--ds-font-display); font-weight: 700; font-size: var(--ds-fs-display); line-height: var(--ds-lh-tight); letter-spacing: -0.03em; }
+.ds-h1 { font-family: var(--ds-font-display); font-weight: 700; font-size: var(--ds-fs-h1); line-height: var(--ds-lh-tight); letter-spacing: -0.02em; }
+.ds-h2 { font-family: var(--ds-font-display); font-weight: 600; font-size: var(--ds-fs-h2); line-height: var(--ds-lh-snug); letter-spacing: -0.015em; }
+.ds-h3 { font-family: var(--ds-font-display); font-weight: 600; font-size: var(--ds-fs-h3); line-height: var(--ds-lh-snug); }
+.ds-eyebrow { font-family: var(--ds-font-mono); font-size: var(--ds-fs-xs); font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ds-text-muted); }
+.ds-body { font-size: var(--ds-fs-body); line-height: var(--ds-lh-body); color: var(--ds-text-2); }
+.ds-muted { color: var(--ds-text-muted); }
+
+/* ============================================================================
+   5. BUTTONS
+   ============================================================================ */
+.ds-btn {
+  --_bg: var(--ds-surface-2);
+  --_fg: var(--ds-text);
+  --_bd: var(--ds-border-strong);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--ds-2);
+  font-family: var(--ds-font-body); font-weight: 600; font-size: var(--ds-fs-body);
+  line-height: 1; padding: 0 var(--ds-5); height: 46px; min-height: 46px;
+  border-radius: var(--ds-r-sm); border: 1px solid var(--_bd);
+  background: var(--_bg); color: var(--_fg); cursor: pointer;
+  transition: transform .12s var(--ds-ease), background .18s var(--ds-ease),
+              border-color .18s var(--ds-ease), box-shadow .18s var(--ds-ease);
+  box-shadow: var(--ds-inset-hi);
+  user-select: none; text-decoration: none; white-space: nowrap;
+}
+.ds-btn:active { transform: translateY(1px) scale(0.995); }
+.ds-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ds-accent-ring); }
+
+/* Primary — the signature violet CTA */
+.ds-btn--primary {
+  --_bg: var(--ds-accent); --_fg: var(--ds-text-on-accent); --_bd: transparent;
+  box-shadow: var(--ds-shadow-sm), var(--ds-inset-hi);
+}
+.ds-btn--primary:hover { --_bg: var(--ds-accent-hover); box-shadow: var(--ds-shadow-md); }
+.ds-btn--primary:active { --_bg: var(--ds-accent-press); }
+
+/* Secondary — neutral raised */
+.ds-btn--secondary:hover { --_bg: var(--ds-surface-3); --_bd: var(--ds-border-accent); }
+
+/* Ghost — text-forward */
+.ds-btn--ghost { --_bg: transparent; --_bd: transparent; box-shadow: none; color: var(--ds-text-2); }
+.ds-btn--ghost:hover { --_bg: var(--ds-accent-soft); color: var(--ds-text); }
+
+/* Danger */
+.ds-btn--danger { --_bg: var(--ds-loss); --_fg: #fff; --_bd: transparent; }
+.ds-btn--danger:hover { filter: brightness(1.08); }
+
+.ds-btn--block { width: 100%; }
+.ds-btn--lg { height: 52px; min-height: 52px; font-size: 1.02rem; }
+
+/* ============================================================================
+   6. INPUTS  (font-size >=16px, violet focus ring)
+   ============================================================================ */
+.ds-field { display: flex; flex-direction: column; gap: var(--ds-2); }
+.ds-label { font-family: var(--ds-font-body); font-size: var(--ds-fs-sm); font-weight: 600; color: var(--ds-text-2); letter-spacing: 0.01em; }
+.ds-input {
+  width: 100%; box-sizing: border-box;
+  font-family: var(--ds-font-body); font-size: var(--ds-fs-input); /* >=16px */
+  color: var(--ds-text); background: var(--ds-inset);
+  border: 1px solid var(--ds-border-strong); border-radius: var(--ds-r-sm);
+  padding: 13px 15px; min-height: 48px; outline: none;
+  transition: border-color .16s var(--ds-ease), box-shadow .16s var(--ds-ease), background .16s var(--ds-ease);
+  box-shadow: var(--ds-inset-lo);
+}
+.ds-input::placeholder { color: var(--ds-text-dim); }
+.ds-input:hover { border-color: var(--ds-border-accent); }
+.ds-input:focus {
+  border-color: var(--ds-accent);
+  box-shadow: 0 0 0 3px var(--ds-accent-ring);
+  background: var(--ds-bg-elev-0);
+}
+/* Input with a trailing action (e.g. show/hide password) */
+.ds-input-wrap { position: relative; }
+.ds-input-wrap .ds-input { padding-right: 46px; }
+.ds-input-action {
+  position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; color: var(--ds-text-muted);
+  padding: 6px; border-radius: var(--ds-r-xs); line-height: 0; font-size: 16px;
+  min-width: 34px; min-height: 34px; display: inline-flex; align-items: center; justify-content: center;
+  transition: color .15s var(--ds-ease), background .15s var(--ds-ease);
+}
+.ds-input-action:hover { color: var(--ds-text); background: var(--ds-accent-soft); }
+
+/* ============================================================================
+   7. SURFACES / CARDS
+   ============================================================================ */
+.ds-card {
+  background: var(--ds-surface-1);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-r-lg);
+  box-shadow: var(--ds-shadow-md), var(--ds-inset-hi);
+}
+.ds-card--flush { border-radius: var(--ds-r-md); }
+.ds-panel { background: var(--ds-surface-2); border: 1px solid var(--ds-border); border-radius: var(--ds-r-md); }
+.ds-divider { height: 1px; background: var(--ds-border); border: 0; width: 100%; }
+.ds-hairline { border: none; border-top: 1px solid var(--ds-border); }
+
+/* ============================================================================
+   8. BADGES / PILLS
+   ============================================================================ */
+.ds-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--ds-font-mono); font-size: var(--ds-fs-xs); font-weight: 600;
+  letter-spacing: 0.04em; padding: 4px 10px; border-radius: var(--ds-r-pill);
+  border: 1px solid var(--ds-border-strong); color: var(--ds-text-2);
+  background: var(--ds-surface-2);
+}
+.ds-badge--accent { color: var(--ds-violet-200); border-color: var(--ds-border-accent); background: var(--ds-accent-soft); }
+.ds-badge--profit { color: var(--ds-profit); border-color: transparent; background: var(--ds-profit-soft); }
+.ds-badge--loss { color: var(--ds-loss); border-color: transparent; background: var(--ds-loss-soft); }
+.ds-badge--warn { color: var(--ds-warn); border-color: transparent; background: var(--ds-warn-soft); }
+.ds-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ds-text-dim); flex-shrink: 0; }
+.ds-dot--live { background: var(--ds-profit); box-shadow: 0 0 0 3px var(--ds-profit-soft); }
+
+/* ============================================================================
+   9. TOP NAV / HEADER SHELL  (reusable across pages)
+   ============================================================================ */
+.ds-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--ds-4); height: 60px; padding: 0 var(--ds-5);
+  background: color-mix(in srgb, var(--ds-bg-elev-0) 82%, transparent);
+  border-bottom: 1px solid var(--ds-border);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.ds-nav__brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--ds-font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; color: var(--ds-text); text-decoration: none; }
+.ds-nav__mark { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--ds-accent); color: #fff; font-weight: 800; font-family: var(--ds-font-display); font-size: 15px; box-shadow: var(--ds-shadow-sm); }
+.ds-nav__spacer { flex: 1; }
+
+/* Theme-toggle button (icon) reusable */
+.ds-theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: var(--ds-r-sm);
+  background: var(--ds-surface-2); border: 1px solid var(--ds-border-strong);
+  color: var(--ds-text-2); cursor: pointer; font-size: 17px; line-height: 0;
+  transition: color .15s var(--ds-ease), background .15s var(--ds-ease), border-color .15s var(--ds-ease);
+}
+.ds-theme-toggle:hover { color: var(--ds-text); border-color: var(--ds-border-accent); background: var(--ds-surface-3); }
+.ds-theme-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ds-accent-ring); }
+
+/* ============================================================================
+   10. MOTION — respect reduced-motion
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}

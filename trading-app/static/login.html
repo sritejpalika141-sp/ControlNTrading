@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ControlN Trading - Login</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="apple-touch-icon" href="/static/logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --accent: #3b82f6;
+            --text: #f8fafc;
+            --error: #ef4444;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        .login-card {
+            background: var(--card);
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 { margin-bottom: 0.5rem; font-size: 1.5rem; }
+        p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+        .form-group { text-align: left; margin-bottom: 1.5rem; }
+        label { display: block; margin-bottom: 0.5rem; font-size: 0.85rem; color: #94a3b8; }
+        input {
+            width: 100%;
+            padding: 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: white;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus { border-color: var(--accent); }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, background 0.2s;
+        }
+        button:hover { background: #2563eb; }
+        button:active { transform: scale(0.98); }
+        .error { color: var(--error); font-size: 0.85rem; margin-top: 1rem; display: none; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <img src="/static/logo.png" alt="ControlN Trading" style="width: 180px; height: auto; margin-bottom: 1.5rem; border-radius: 8px;">
+        <p>Login to your trading dashboard</p>
+        <div id="idleMessage" style="display:none; color: #f59e0b; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); padding: 10px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 1.5rem;">
+            ⚠️ You have been logged out due to inactivity.
+        </div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" placeholder="Enter username">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="Enter password">
+        </div>
+        <button onclick="login()">Sign In</button>
+        <div id="errorMessage" class="error">Invalid username or password</div>
+        <p style="text-align: center; font-size: 0.75rem; color: #64748b; margin-top: 1.5rem; margin-bottom: 0;">Copyrights reserved: ControlN Business Consultants</p>
+    </div>
+
+    <script>
+        // Check for idle redirect reason
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('reason') === 'idle') {
+            document.getElementById('idleMessage').style.display = 'block';
+        }
+
+        async function login() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            const err = document.getElementById('errorMessage');
+            
+            err.style.display = 'none';
+            
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass }),
+                    credentials: 'include'
+                });
+                const data = await res.json();
+                if (data.success) {
+                    // Cache-busting redirect to prevent browser serving cached landing page
+                    window.location.replace('/?_t=' + Date.now());
+                } else {
+                    err.textContent = data.message || 'Invalid username or password';
+                    err.style.display = 'block';
+                }
+            } catch (e) {
+                console.error(e);
+                err.textContent = 'Login failed. Server may be down.';
+                err.style.display = 'block';
+            }
+        }
+
+        // Allow Enter key to submit
+        document.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') login();
+        });
+    </script>
+</body>
+</html>

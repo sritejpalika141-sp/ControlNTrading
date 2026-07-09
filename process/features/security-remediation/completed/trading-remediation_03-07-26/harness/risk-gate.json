@@ -1,0 +1,14 @@
+{
+  "task": "Phase 1 critical security remediation (trading-remediation)",
+  "planPath": "process/features/security-remediation/active/trading-remediation_03-07-26/phase-01-critical-security_PLAN_03-07-26.md",
+  "riskLevel": "high",
+  "riskClasses": [
+    "auth/identity",
+    "billing/live-money-adjacent",
+    "secrets/trust-boundary"
+  ],
+  "mustStopBeforeFinalize": true,
+  "humanApprovalRequired": true,
+  "why": "Live real-money trading platform. Touches session auth (signed cookie + ~20-route shared resolver incl. the / landing page), Telegram webhook auth, admin credentials + login rate-limit, live order placement (exit-position fix, max-loss square-off race, daily-limit TOCTOU race), and encryption-key rotation + git secret untracking. The expanded ~20-route resolver scope was explicitly approved by the user this session before EXECUTE.",
+  "approver": "user (explicit session approval of expanded ~20-route resolver scope at EXECUTE handoff)"
+}

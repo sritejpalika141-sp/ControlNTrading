@@ -1,0 +1,279 @@
+"""
+Shared application state, constants, and helpers.
+
+Centralizes the mutable globals and utility functions used across `app.py`
+and the `workers/*` modules so background tasks can be split out of app.py
+without introducing circular imports.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional, Set
+import orjson
+
+import pytz
+from fastapi import Request, WebSocket
+
+from fyers_client import FyersClient
+from engine.automation import TradingState
+from models import Database
+
+# ───────────────────────── Constants ─────────────────────────
+IST = pytz.timezone("Asia/Kolkata")
+VERSION = "6.0.0"
+SERVER_START_TIME = datetime.now(IST)
+
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+ENV_PATH = PROJECT_ROOT / "fyers-mcp-server" / ".env"
+LOG_DIR = BASE_DIR / "logs"
+
+logger = logging.getLogger("DASHBOARD")
+
+# ───────────────────────── Mutable globals ─────────────────────────
+USER_CONTEXTS: Dict[int, FyersClient] = {}
+USER_STATES: Dict[int, TradingState] = {}
+USER_CACHES: Dict[str, dict] = {}
+active_connections: Set[WebSocket] = set()
+dashboard_cache: dict = {}
+ai_trend_cache: dict = {}  # Cache for AI predictions to prevent rate-limits
+_analysis_store: dict = {}
+main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+# Global Market Regime state evaluated by the Regime Worker
+market_regime: str = "NEUTRAL"
+regime_reason: str = "Awaiting first 5-minute candle."
+
+# Token readiness gate: blocks market-dependent operations until the first
+# Fyers token refresh completes on startup.  Set by fyers_token_refresh_scheduler
+# in app.py after the initial refresh finishes.
+_token_ready: asyncio.Event = asyncio.Event()
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Setter used by the FastAPI lifespan to publish the running loop."""
+    global main_loop
+    main_loop = loop
+
+
+# ───────────────────────── Helpers ─────────────────────────
+def get_user_state(user_id) -> TradingState:
+    """Get or create TradingState for a user. Always normalizes user_id to int."""
+    u_id = int(user_id)
+    if u_id not in USER_STATES:
+        USER_STATES[u_id] = TradingState(user_id=u_id)
+    return USER_STATES[u_id]
+
+
+def get_user_cache(user_id) -> dict:
+    """Get or create the per-user runtime cache (keyed by str(user_id))."""
+    u_id = str(user_id)
+    if u_id not in USER_CACHES:
+        USER_CACHES[u_id] = {
+            "spot": {}, "vix": None, "analysis": {}, "strikes": {},
+            "positions": [], "active_positions": [], "orders": [], "funds": {},
+            "last_update": 0, "total_pnl": 0, "is_auth": False,
+        }
+    return USER_CACHES[u_id]
+
+
+def purge_user_runtime(user_id) -> None:
+    """Remove all in-memory runtime state for a user (Phase 2 Item A3).
+
+    Called synchronously when a user is deactivated or deleted so that every background
+    loop iterating `for u_id, client in USER_CONTEXTS.items()` (trailing_monitor,
+    automation_loop, token-refresh, hard-exit scheduler) naturally excludes them on the
+    next tick — instead of continuing to trade a deactivated/deleted user's live broker
+    session until the process restarts. First flips `automation_enabled=False` on their
+    live TradingState (in case another loop tick already captured a reference), then drops
+    the entries from all three per-user maps. Idempotent and never raises.
+    """
+    try:
+        u_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return
+
+    st = USER_STATES.get(u_id_int)
+    if st is not None:
+        try:
+            st.automation_enabled = False
+            st.hard_exit_triggered = True
+        except Exception:
+            pass
+
+    USER_CONTEXTS.pop(u_id_int, None)
+    USER_STATES.pop(u_id_int, None)
+    # USER_CACHES is keyed by str(user_id) (see get_user_cache).
+    USER_CACHES.pop(str(u_id_int), None)
+
+
+def get_current_client(request: Request) -> FyersClient:
+    """Resolve the FyersClient for the user_id cookie on the request."""
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        user_id = 0  # Default to guest/unauthenticated user context
+    u_id = int(user_id)
+    if u_id not in USER_CONTEXTS:
+        USER_CONTEXTS[u_id] = FyersClient(user_id=u_id)
+    return USER_CONTEXTS[u_id]
+
+
+import json
+import os
+
+_lot_sizes_dict = None
+
+def get_lot_size(symbol: str) -> int:
+    """Get the official NSE lot size from local data/lot_sizes.json.
+    No hardcoded fallbacks — all values come from the JSON file."""
+    global _lot_sizes_dict
+    
+    if _lot_sizes_dict is None:
+        try:
+            path = os.path.join(os.path.dirname(__file__), "data", "lot_sizes.json")
+            with open(path, "r") as f:
+                _lot_sizes_dict = json.load(f)
+            logger.info(f"✅ Loaded {len(_lot_sizes_dict)} lot sizes from lot_sizes.json")
+        except Exception as e:
+            logger.error(f"❌ CRITICAL: Failed to load lot_sizes.json: {e}")
+            _lot_sizes_dict = {}
+
+    s = symbol.upper()
+    
+    # 1. Exact match (handles full Fyers symbols like NSE:NIFTY2670723950CE)
+    if s in _lot_sizes_dict:
+        return _lot_sizes_dict[s]
+    
+    # 2. Check by base name — order matters: check BANKNIFTY before NIFTY
+    for idx in ["BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTY", "SENSEX", "BANKEX"]:
+        if idx in s:
+            val = _lot_sizes_dict.get(idx)
+            if val:
+                return val
+            # Also try the INDEX format
+            idx_key = f"NSE:{idx}-INDEX" if idx != "NIFTY" else "NSE:NIFTY50-INDEX"
+            val = _lot_sizes_dict.get(idx_key)
+            if val:
+                return val
+
+    # 3. Try extracting base symbol from option format (e.g., NSE:RELIANCE2670731300CE → RELIANCE)
+    import re
+    m = re.match(r"NSE:([A-Z]+)\d", s)
+    if m:
+        base = m.group(1)
+        val = _lot_sizes_dict.get(base)
+        if val:
+            return val
+
+    # 4. Equity stocks have lot size 1
+    if "-EQ" in s:
+        return 1
+
+    logger.warning(f"⚠️ No lot size found for {symbol} in lot_sizes.json, defaulting to 1")
+    return 1  # Default for unknown equity/stocks
+
+
+
+# ───────────────────────── NSE 2026 Holidays ─────────────────────────
+NSE_HOLIDAYS_2026 = {
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Gurunanak Jayanti",
+    "2026-12-25": "Christmas"
+}
+
+def get_holiday_reason() -> Optional[str]:
+    """
+    Check if today is a weekend or an official NSE trading holiday.
+    Returns the reason string if it is a holiday, otherwise returns None.
+    """
+    now = datetime.now(IST)
+    date_str = now.date().isoformat()
+    
+    # 1. Check official NSE holidays list
+    if date_str in NSE_HOLIDAYS_2026:
+        return f"NSE Holiday ({NSE_HOLIDAYS_2026[date_str]})"
+        
+    # 2. Check weekends (Sat/Sun)
+    if now.weekday() == 5:
+        return "Weekend (Saturday)"
+    if now.weekday() == 6:
+        # Exclude Muhurat Trading day (Nov 8, 2026)
+        if date_str == "2026-11-08":
+            return None
+        return "Weekend (Sunday)"
+        
+    return None
+
+def is_market_open() -> bool:
+    """Check if market is currently open (9:15 - 15:30 IST, weekdays, excluding holidays)."""
+    now = datetime.now(IST)
+    if get_holiday_reason() is not None:
+        return False
+    market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_start <= now <= market_end
+
+
+# Legacy underscore alias preserved for callers that imported it.
+_is_market_open = is_market_open
+
+
+async def broadcast_log(msg: str, level: str = "info", user_id: Optional[int] = None, telegram_alert: bool = False) -> None:
+    """Send a log message to connected clients, store in DB, and forward to Webhook if requested."""
+    timestamp_ws = datetime.now(IST).strftime("%H:%M:%S")
+    timestamp_db = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        asyncio.create_task(Database.insert_log(level, msg, timestamp_db, user_id))
+    except Exception as e:
+        print(f"⚠️ DB log insert error: {e}")
+
+    # --- NEW: Forward requested alerts to Telegram/Webhook ---
+    if telegram_alert and user_id is not None:
+        try:
+            state = get_user_state(user_id)
+            if state.webhook_url:
+                from engine.notifier import trigger_webhook_background
+                
+                # Assign a sensible title based on the message content
+                if "🚀" in msg or "Auto-executing" in msg:
+                    title = "🚀 Trade Entry"
+                elif "🎉" in msg or "📉" in msg or "🔴" in msg or "🛑" in msg or "🚨" in msg or "🎯" in msg or "✅" in msg:
+                    title = "🔔 Trade Exit / Update"
+                elif "❌" in msg or "⚠️" in msg:
+                    title = "⚠️ System Error / Warning"
+                else:
+                    title = "Sritej Trading Alert"
+
+                trigger_webhook_background(state.webhook_url, msg, title=title)
+        except Exception as e:
+            print(f"⚠️ Failed to forward log to webhook: {e}")
+
+    if not active_connections:
+        return
+
+    payload = {"type": "log", "msg": msg, "level": level, "time": timestamp_ws}
+    disconnected = set()
+    for ws in active_connections:
+        if user_id is None or getattr(ws, "user_id", None) == user_id:
+            try:
+                await ws.send_text(orjson.dumps(payload).decode("utf-8"))
+            except Exception:
+                disconnected.add(ws)
+    for ws in disconnected:
+        active_connections.discard(ws)

@@ -1,0 +1,12 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+app.log
+trading_app.db
+trading_bot.db
+trading.db
+*.db
+.env

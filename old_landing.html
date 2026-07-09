@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ControlN Trading — Professional Algorithmic Option Trading</title>
+  <link rel="icon" type="image/png" href="/static/logo.png">
+  <link rel="apple-touch-icon" href="/static/logo.png">
+  <meta name="description" content="AI-powered automated options trading platform for NIFTY indices. AES-256 encrypted, SEBI compliant, sub-100ms execution.">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #06080e;
+      --bg-card: rgba(12, 16, 28, 0.75);
+      --bg-card-hover: rgba(18, 24, 43, 0.85);
+      --accent-green: #00ff66;
+      --accent-green-glow: rgba(0, 255, 102, 0.12);
+      --accent-cyan: #00f0ff;
+      --accent-cyan-glow: rgba(0, 240, 255, 0.15);
+      --accent-rose: #ff3366;
+      --accent-rose-glow: rgba(255, 51, 102, 0.15);
+      --accent-amber: #ff9900;
+      --accent-amber-glow: rgba(255, 153, 0, 0.15);
+      --border: rgba(30, 41, 69, 0.6);
+      --border-hover: rgba(0, 240, 255, 0.4);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      overflow-x: hidden;
+      line-height: 1.6;
+      background-image: 
+        linear-gradient(rgba(30, 41, 69, 0.15) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 69, 0.15) 1px, transparent 1px);
+      background-size: 50px 50px;
+      background-position: center top;
+      position: relative;
+    }
+
+    /* Subtle background grid noise or blobs */
+    .glow-blob {
+      position: absolute;
+      width: 450px;
+      height: 450px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent-cyan-glow) 0%, transparent 70%);
+      filter: blur(80px);
+      z-index: -1;
+      opacity: 0.7;
+    }
+    .blob-1 { top: 15%; left: -10%; }
+    .blob-2 { top: 55%; right: -10%; background: radial-gradient(circle, var(--accent-green-glow) 0%, transparent 70%); }
+    .blob-3 { top: 80%; left: 20%; background: radial-gradient(circle, rgba(255, 51, 102, 0.05) 0%, transparent 70%); }
+
+    /* ── LIVE TICKER BAR ── */
+    .ticker-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 38px;
+      background: #030509;
+      border-bottom: 1px solid var(--border);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+    .ticker-label {
+      background: linear-gradient(135deg, var(--accent-cyan), #0284c7);
+      color: #030509;
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 0.75rem;
+      padding: 0 16px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      letter-spacing: 1px;
+      box-shadow: 4px 0 15px rgba(0,240,255,0.2);
+      z-index: 10;
+    }
+    .ticker-scroll-wrapper {
+      flex-grow: 1;
+      overflow: hidden;
+      position: relative;
+      height: 100%;
+      display: flex;
+      align-items: center;
+    }
+    .ticker-track {
+      display: flex;
+      white-space: nowrap;
+      position: absolute;
+      animation: ticker-slide 35s linear infinite;
+    }
+    @keyframes ticker-slide {
+      0% { transform: translate3d(0, 0, 0); }
+      100% { transform: translate3d(-50%, 0, 0); }
+    }
+    .ticker-item {
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .t-name { font-weight: 600; color: var(--text-main); margin-right: 8px; }
+    .t-price { color: var(--accent-cyan); font-weight: 700; margin-right: 8px; }
+    .t-chg { font-size: 0.75rem; display: flex; align-items: center; gap: 2px; }
+    .t-chg.up { color: var(--accent-green); }
+    .t-chg.down { color: var(--accent-rose); }
+    .ticker-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      margin-left: 20px;
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 6%;
+      position: relative;
+      z-index: 100;
+      margin-top: 38px;
+    }
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff, var(--text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .nav-links {
+      display: flex;
+      list-style: none;
+      gap: 32px;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s, text-shadow 0.2s;
+    }
+    .nav-links a:hover {
+      color: var(--accent-cyan);
+      text-shadow: 0 0 10px var(--accent-cyan-glow);
+    }
+    .btn-login {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.85rem;
+      background: transparent;
+      color: var(--accent-cyan);
+      border: 1px solid var(--accent-cyan);
+      padding: 8px 20px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.05);
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+    .btn-login:hover {
+      background: var(--accent-cyan);
+      color: #030509;
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.35);
+      transform: translateY(-1px);
+    }
+
+    /* ── HERO ── */
+    .hero-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 100px 5% 80px;
+      position: relative;
+      z-index: 10;
+    }
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 240, 255, 0.06);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      color: var(--accent-cyan);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 999px;
+      margin-bottom: 24px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      box-shadow: 0 0 15px rgba(0,240,255,0.05);
+    }
+    .hero-tag::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      box-shadow: 0 0 8px var(--accent-cyan);
+      animation: pulse 1.8s infinite;
+    }
+    .hero-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 3.8rem;
+      font-weight: 800;
+      line-height: 1.1;
+      max-width: 900px;
+      margin-bottom: 24px;
+      letter-spacing: -1.5px;
+      color: #ffffff;
+    }
+    .hero-title span {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 30px rgba(0, 240, 255, 0.1);
+    }
+    .hero-subtitle {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin-bottom: 40px;
+      line-height: 1.7;
+    }
+    .cta-group {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 80px;
+    }
+    .btn-primary {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 0.95rem;
+      background: linear-gradient(135deg, var(--accent-cyan), #0284c7);
+      color: #030509;
+      border: none;
+      padding: 14px 32px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      box-shadow: 0 4px 25px rgba(0, 240, 255, 0.25);
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(0, 240, 255, 0.4);
+    }
+    .btn-secondary {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 0.95rem;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 14px 32px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--text-muted);
+      transform: translateY(-1px);
+    }
+
+    /* ── STATS ── */
+    .stats-container {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      max-width: 1100px;
+      width: 100%;
+      padding: 0 20px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      text-align: center;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+      position: relative;
+    }
+    .stat-card:hover {
+      border-color: var(--border-hover);
+      box-shadow: 0 8px 30px rgba(0, 240, 255, 0.05);
+    }
+    .stat-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 4px;
+      letter-spacing: -1px;
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    /* ── SECTIONS SHARED ── */
+    .section-block {
+      padding: 100px 8%;
+      position: relative;
+      z-index: 10;
+    }
+    .section-block + .section-block {
+      border-top: 1px solid var(--border);
+    }
+    .section-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 2.6rem;
+      font-weight: 800;
+      text-align: center;
+      margin-bottom: 12px;
+      letter-spacing: -1px;
+      color: #ffffff;
+    }
+    .section-subtitle {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 720px;
+      margin: 0 auto 60px;
+      line-height: 1.6;
+    }
+
+    /* ── STRATEGIES GRID ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 36px 28px;
+      transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 240, 255, 0.25);
+      box-shadow: 0 12px 40px rgba(0, 240, 255, 0.05);
+    }
+    .feature-card:hover::before {
+      opacity: 1;
+    }
+    .feature-icon {
+      font-size: 2.2rem;
+      margin-bottom: 20px;
+      display: inline-flex;
+      width: 56px;
+      height: 56px;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    .feature-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+    }
+    .feature-desc {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin-bottom: 24px;
+      flex-grow: 1;
+    }
+    .strategy-badge {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .badge-green { background: rgba(0, 255, 102, 0.08); color: var(--accent-green); border: 1px solid rgba(0, 255, 102, 0.2); }
+    .badge-blue { background: rgba(0, 240, 255, 0.08); color: var(--accent-cyan); border: 1px solid rgba(0, 240, 255, 0.2); }
+    .badge-amber { background: rgba(255, 153, 0, 0.08); color: var(--accent-amber); border: 1px solid rgba(255, 153, 0, 0.2); }
+
+    .strategy-details {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.03);
+      padding-top: 18px;
+    }
+    .strategy-detail-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+    }
+    .strategy-detail-item::before {
+      content: '⚡';
+      font-size: 0.75rem;
+      color: var(--accent-cyan);
+    }
+
+    /* ── SECURITY ── */
+    .security-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .security-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      display: flex;
+      gap: 20px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .security-card:hover {
+      border-color: rgba(0, 240, 255, 0.2);
+      box-shadow: 0 8px 35px rgba(0, 240, 255, 0.03);
+    }
+    .security-icon-wrap {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 240, 255, 0.04);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    .security-text h4 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #ffffff;
+    }
+    .security-text p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .security-highlight {
+      max-width: 1100px;
+      margin: 40px auto 0;
+      background: linear-gradient(135deg, rgba(0, 255, 102, 0.03), rgba(0, 240, 255, 0.03));
+      border: 1px solid rgba(0, 255, 102, 0.15);
+      border-radius: var(--radius-md);
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .security-highlight .sh-icon { font-size: 2.2rem; }
+    .security-highlight h4 { font-family: 'Syne', sans-serif; font-size: 1.05rem; font-weight: 700; color: #ffffff; margin-bottom: 4px; }
+    .security-highlight p { font-size: 0.88rem; color: var(--text-muted); }
+
+    /* ── COMPLIANCE ── */
+    .compliance-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto 40px;
+    }
+    .compliance-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      text-align: center;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .compliance-card:hover {
+      border-color: rgba(255, 153, 0, 0.25);
+      transform: translateY(-3px);
+    }
+    .compliance-card .cc-icon { font-size: 1.8rem; margin-bottom: 12px; }
+    .compliance-card h4 { font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 700; color: #ffffff; margin-bottom: 8px; }
+    .compliance-card p { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+
+    .disclaimer-box {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: rgba(255, 153, 0, 0.02);
+      border: 1px solid rgba(255, 153, 0, 0.15);
+      border-radius: var(--radius-md);
+      padding: 24px 32px;
+    }
+    .disclaimer-box h4 { font-family: 'Syne', sans-serif; font-size: 0.9rem; font-weight: 800; color: var(--accent-amber); margin-bottom: 8px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .disclaimer-box p { font-size: 0.82rem; color: var(--text-dim); line-height: 1.7; }
+
+    /* ── MARKET NEWS & LIVE PRICES ── */
+    .news-layout {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 32px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .market-prices-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .price-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      transition: border-color 0.2s;
+    }
+    .price-card:hover { border-color: rgba(0, 255, 102, 0.2); }
+    .pc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .pc-name { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .pc-badge { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+    .pc-price { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem; font-weight: 700; color: #ffffff; }
+    .pc-chg { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; margin-top: 2px; }
+    .pc-chg.up { color: var(--accent-green); }
+    .pc-chg.down { color: var(--accent-rose); }
+    .pc-loading { color: var(--text-dim); font-size: 0.85rem; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+
+    .refresh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { background: rgba(0, 255, 102, 0.06); color: var(--accent-green); border-color: rgba(0, 255, 102, 0.3); }
+    .last-updated { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 16px; }
+
+    /* NEWS SIDEBAR */
+    .news-sidebar { display: flex; flex-direction: column; gap: 0; }
+    .news-sidebar-header {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .news-sidebar-header h3 { font-family: 'Syne', sans-serif; font-size: 0.95rem; font-weight: 700; color: #ffffff; }
+    .live-badge { background: rgba(255,51,102,0.06); color: var(--accent-rose); border: 1px solid rgba(255,51,102,0.2); font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-rose); animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .news-list { background: var(--bg-card); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
+    .news-item {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.02);
+      transition: background 0.2s;
+    }
+    .news-item:last-child { border-bottom: none; }
+    .news-item:hover { background: rgba(255,255,255,0.02); }
+    .news-cat { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-green); margin-bottom: 4px; }
+    .news-headline { font-size: 0.85rem; font-weight: 500; line-height: 1.4; margin-bottom: 4px; color: var(--text-main); }
+    .news-headline strong { color: var(--accent-cyan); font-weight: 600; }
+    .news-meta { font-size: 0.72rem; color: var(--text-dim); }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 6%;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      background: #030509;
+    }
+    .footer-disclaimer {
+      max-width: 850px;
+      margin: 12px auto 0;
+      line-height: 1.6;
+      font-size: 0.78rem;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 1100px) {
+      .news-layout { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr 1fr; }
+      .security-grid { grid-template-columns: 1fr; }
+      .compliance-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 768px) {
+      .hero-title { font-size: 2.6rem; }
+      .stats-container { grid-template-columns: repeat(2, 1fr); }
+      .features-grid { grid-template-columns: 1fr; }
+      .compliance-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .market-prices-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ LIVE TICKER BAR ═══ -->
+  <div class="ticker-bar">
+    <div class="ticker-label">⚡ LIVE</div>
+    <div class="ticker-scroll-wrapper">
+      <div class="ticker-track" id="tickerTrack">
+        <!-- Populated by JS -->
+        <div class="ticker-item"><span class="t-name">NIFTY 50</span><span class="t-price pc-loading">Loading...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="glow-blob blob-1"></div>
+  <div class="glow-blob blob-2"></div>
+
+  <!-- ═══ HEADER ═══ -->
+  <header>
+    <div class="logo" style="display: flex; align-items: center; gap: 8px;">
+      <img src="/static/logo.png" alt="ControlN Trading" style="height: 52px; width: auto; border-radius: 6px;">
+    </div>
+    <ul class="nav-links">
+      <li><a href="#features">Strategies</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#compliance">Compliance</a></li>
+      <li><a href="#news">Market News</a></li>
+    </ul>
+    <button class="btn-login" onclick="location.href='/login'">Access Platform</button>
+  </header>
+
+  <!-- ═══ HERO ═══ -->
+  <section class="hero-container">
+    <div class="hero-tag">⚡ Automated Options Platform</div>
+    <h1 class="hero-title">High-Fidelity <span>Algorithmic Execution</span> for Retail Traders</h1>
+    <p class="hero-subtitle">Connect your broker, configure risk management parameters, and trade indices automatically with state-of-the-art AI-driven strategies.</p>
+
+    <div class="cta-group">
+      <button class="btn-primary" onclick="location.href='/login'">Start Paper Trading</button>
+      <button class="btn-secondary" onclick="document.getElementById('features').scrollIntoView({behavior:'smooth'})">Explore Features</button>
+    </div>
+
+    <div class="stats-container">
+      <div class="stat-card">
+        <div class="stat-val">100%</div>
+        <div class="stat-label">Automated</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val">&lt; 100ms</div>
+        <div class="stat-label">Execution Latency</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val">AES-256</div>
+        <div class="stat-label">Data Encryption</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val">5</div>
+        <div class="stat-label">Built-in Strategies</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ STRATEGIES ═══ -->
+  <section id="features" class="section-block">
+    <h2 class="section-title">Automated Trading Modules</h2>
+    <p class="section-subtitle">Five professional-grade algorithmic strategies built for Indian index options — each with independent risk controls and AI signal confirmation.</p>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <span class="strategy-badge badge-blue">Strategy 1</span>
+        <div class="feature-icon">🧱</div>
+        <h3 class="feature-title">OB + FVG — Smart Money</h3>
+        <p class="feature-desc">Identifies institutional Order Blocks (OB) and Fair Value Gaps (FVG) on the 5-minute NIFTY chart. Enters trades when price returns to these key supply/demand imbalance zones with AI-confirmation.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">Bearish / Bullish OB detection</div>
+          <div class="strategy-detail-item">FVG retest + rejection confirmation</div>
+          <div class="strategy-detail-item">AI signal scoring (Tech + Sentiment)</div>
+          <div class="strategy-detail-item">Trailing stop loss with 2 targets</div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <span class="strategy-badge badge-green">Strategy 2</span>
+        <div class="feature-icon">🛡️</div>
+        <h3 class="feature-title">9:26 Buy Breakout</h3>
+        <p class="feature-desc">Analyzes range expansion and volume profile on index opening bars. Executes direction-biased options trades with adaptive stop losses based on the first candle's high/low range.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">First-candle breakout detection</div>
+          <div class="strategy-detail-item">Volume-weighted entry confirmation</div>
+          <div class="strategy-detail-item">Dynamic SL from opening range</div>
+          <div class="strategy-detail-item">Auto strike selection via Fyers API</div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <span class="strategy-badge badge-amber">Strategy 3</span>
+        <div class="feature-icon">📈</div>
+        <h3 class="feature-title">5-Minute ORB</h3>
+        <p class="feature-desc">Opening Range Breakout tracking high-volume breakouts on the first 5-minute bar. Fully automated option strike routing, dual profit targets, and real-time trailing stop loss management.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">5-min ORB high/low computation</div>
+          <div class="strategy-detail-item">Dual-target trailing SL management</div>
+          <div class="strategy-detail-item">CE/PE auto-routing on breakout side</div>
+          <div class="strategy-detail-item">Square-off at expiry automatically</div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <span class="strategy-badge badge-blue" style="background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25);">Strategy 4</span>
+        <div class="feature-icon">📜</div>
+        <h3 class="feature-title">Wisdom-Aligned Pullback</h3>
+        <p class="feature-desc">Monitors key moving averages to detect high-probability pullback entries in the direction of the dominant macro trend on the 1-hour and 5-minute timeframes.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">1H SMA macro trend filter</div>
+          <div class="strategy-detail-item">20 EMA pullback bounce entry</div>
+          <div class="strategy-detail-item">Volume-weighted confirmation</div>
+          <div class="strategy-detail-item">Dynamic stop loss matching</div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <span class="strategy-badge badge-amber" style="background: rgba(245,158,11,0.15); color: var(--accent-amber); border: 1px solid rgba(245,158,11,0.25);">Strategy 5</span>
+        <div class="feature-icon">🚀</div>
+        <h3 class="feature-title">Aerospace Mean Reversion</h3>
+        <p class="feature-desc">Utilizes a Kalman Filter state estimator to track the index's Fair Value Line (FVL) and a 20-bar 2.5 SD Flight Envelope, executing volume-confirmed reversion entries.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">Kalman Filter state tracking</div>
+          <div class="strategy-detail-item">2.5 SD Flight Envelope mapping</div>
+          <div class="strategy-detail-item">Cover Order (CO) dynamic routing</div>
+          <div class="strategy-detail-item">Strict 45-bar time guardrails</div>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="strategy-badge badge-green" style="background: rgba(16,185,129,0.15); color: var(--accent-green); border: 1px solid rgba(16,185,129,0.25);">Strategy 8</span>
+        <div class="feature-icon">💰</div>
+        <h3 class="feature-title">Smart Money Concepts</h3>
+        <p class="feature-desc">Detects institutional liquidity sweeps and enters CE or PE options trades with precision.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">1M Liquidity Sweep Detection</div>
+          <div class="strategy-detail-item">Dual Trend Alignment</div>
+          <div class="strategy-detail-item">5M OB/FVG Contextual Zones</div>
+          <div class="strategy-detail-item">Dual Trail Stops (Aggressive/Standard)</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ SECURITY ═══ -->
+  <section id="security" class="section-block" style="background: rgba(59,130,246,0.02);">
+    <h2 class="section-title">Enterprise-Grade Security</h2>
+    <p class="section-subtitle">Your credentials and trading data are protected with military-grade encryption and best-in-class secure infrastructure practices.</p>
+
+    <div class="security-grid">
+      <div class="security-card">
+        <div class="security-icon-wrap">🔐</div>
+        <div class="security-text">
+          <h4>AES-256 Fernet Encryption</h4>
+          <p>All API credentials — including Fyers Client ID, Secret, and Access Tokens — are encrypted at rest in the database using AES-256 Fernet symmetric encryption. Keys are dynamically generated and stored in isolated environment variables on server boot.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🛡️</div>
+        <div class="security-text">
+          <h4>HTTPS / TLS 1.3 in Transit</h4>
+          <p>All traffic between your browser and our servers is encrypted end-to-end via Let's Encrypt SSL/TLS 1.3 certificates. No data is ever transmitted in plain text. HTTP traffic is automatically redirected to HTTPS on port 443.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🔑</div>
+        <div class="security-text">
+          <h4>Session Cookie Security</h4>
+          <p>Authentication sessions use scoped HttpOnly cookies bound to the root path (<code>/</code>), preventing cross-site script access. Sessions are server-side invalidated on logout, and idle sessions are automatically expired after 15 minutes of inactivity.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">⏱️</div>
+        <div class="security-text">
+          <h4>Idle Auto-Lock (15 Minutes)</h4>
+          <p>The platform detects inactivity by monitoring mouse, keyboard, scroll, and touch events. After 15 continuous minutes of no activity, the session is automatically locked and the user is redirected to the login page for re-authentication.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">👥</div>
+        <div class="security-text">
+          <h4>Role-Based Access Control</h4>
+          <p>Multi-user platform with segregated access. Standard users can only access their own data, positions, and API credentials. Administrators have additional privileges to manage user accounts, passwords, and platform settings from the Admin Panel.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🖥️</div>
+        <div class="security-text">
+          <h4>Isolated GCP Infrastructure</h4>
+          <p>Hosted on Google Cloud Platform (GCP) in the Asia South 1 (Mumbai) region. The server runs under a dedicated systemd process with strict file permissions. All environment secrets are managed via isolated <code>.env</code> files, never version-controlled.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="security-highlight">
+      <div class="sh-icon">✅</div>
+      <div>
+        <h4>SSL Certificate Verified — controlntrading.online</h4>
+        <p>Your connection is fully secured with a Let's Encrypt SSL certificate covering both <strong>controlntrading.online</strong> and <strong>www.controlntrading.online</strong>. Certificate is auto-renewed every 90 days via Certbot.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ COMPLIANCE ═══ -->
+  <section id="compliance" class="section-block">
+    <h2 class="section-title">Regulatory Compliance</h2>
+    <p class="section-subtitle">ControlN Trading is built with responsible trading practices, risk controls, and full compliance with SEBI's algorithmic trading guidelines for retail investors.</p>
+
+    <div class="compliance-grid">
+      <div class="compliance-card">
+        <div class="cc-icon">📋</div>
+        <h4>SEBI Algo Trading Guidelines</h4>
+        <p>All algorithmic strategies comply with SEBI's framework for retail algorithmic trading. Trades are executed via SEBI-registered broker APIs (Fyers Securities) with full audit trails and order logging.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🧾</div>
+        <h4>Risk Parameter Controls</h4>
+        <p>Platform enforces mandatory risk limits including Max Daily Loss (MDL), Max Daily Trades, and Position Profit Targets. All limits are configurable per user and enforced automatically before any order is placed.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">📊</div>
+        <h4>Full Trade Audit Trail</h4>
+        <p>Every trade entry, modification, exit, and square-off is logged with timestamps and order IDs. Full P&L history with broker-simulated charges (STT, brokerage, GST) is exportable as CSV reports.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🏦</div>
+        <h4>Broker Integration via API</h4>
+        <p>All orders are routed exclusively through Fyers Securities, a SEBI-registered stock broker. Credentials are managed by the user directly and never shared with third parties. No pooling of funds.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🔒</div>
+        <h4>Data Privacy & Retention</h4>
+        <p>No personal financial data is shared with third parties. Trade and user data is stored in isolated SQLite databases per deployment, with encrypted credentials. Users may request account deletion at any time.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">⚠️</div>
+        <h4>Emergency Exit Controls</h4>
+        <p>One-click Emergency Exit button immediately squares off all open positions and disables automation. Available 24/7 from the dashboard header regardless of active strategy state.</p>
+      </div>
+    </div>
+
+    <div class="disclaimer-box">
+      <h4>⚠️ Risk Disclaimer</h4>
+      <p>Options trading involves a substantial risk of loss and is not suitable for all investors. Algorithmic trading systems execute orders based on predefined rules — past performance is not indicative of future results. ControlN Trading is a technology platform only and does not provide investment advice. Please consult a SEBI-registered investment advisor before trading. Ensure you understand the risks before trading options with real capital.</p>
+    </div>
+  </section>
+
+  <!-- ═══ MARKET NEWS & LIVE PRICES ═══ -->
+  <section id="news" class="section-block" style="background: rgba(16,185,129,0.02);">
+    <h2 class="section-title">Market Pulse</h2>
+    <p class="section-subtitle">Live market prices and today's top financial news to help you stay ahead of market movements.</p>
+
+    <div class="news-layout">
+
+      <!-- LEFT: Live Prices -->
+      <div>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem;">
+          <h3 style="font-size: 1rem; font-weight: 700;">📊 Live Market Prices</h3>
+          <button class="refresh-btn" onclick="loadMarketPrices()">🔄 Refresh</button>
+        </div>
+        <div class="last-updated" id="lastUpdated">Fetching live data...</div>
+        <div class="market-prices-grid" id="pricesGrid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- NIFTY Options Insight -->
+        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem;">
+          <h4 style="font-size: 0.88rem; font-weight: 700; margin-bottom: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">📌 Quick Info</h4>
+          <div style="display: grid; grid-template-columns: repeat(2,1fr); gap: 0.75rem;">
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">NIFTY Lot Size</div>
+              <div style="font-size: 1.1rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--accent-green);">65</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">BANKNIFTY Lot Size</div>
+              <div style="font-size: 1.1rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: #60a5fa;">30</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Market Hours</div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">9:15 AM – 3:30 PM</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Expiry (NIFTY)</div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);" id="expiryDay">Tuesday Weekly</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: News Feed -->
+      <div class="news-sidebar">
+        <div class="news-sidebar-header">
+          <h3>📰 Market News</h3>
+          <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+        </div>
+        <div class="news-list" id="newsList">
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#10b981;">📊 MARKET CLOSE · TODAY</div>
+            <div class="news-headline">NIFTY closes at <strong>23,659</strong> (+41 pts, +0.17%); SENSEX ends at <strong>75,318</strong> after sharp intraday recovery</div>
+            <div class="news-meta">May 20, 2026 · Closing Bell · Source: Business Standard</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#ef4444;">📉 INTRADAY MOVE</div>
+            <div class="news-headline">Markets opened gap-down on geopolitical fears (US-Iran conflict) but staged strong final-hour reversal led by Reliance Industries and Oil & Gas heavyweights</div>
+            <div class="news-meta">May 20, 2026 · Market Update · Source: NDTV Profit</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#f59e0b;">🏦 FII / DII FLOW</div>
+            <div class="news-headline">DIIs net buyers of <strong>₹3,801 Cr</strong> vs FIIs net sellers of <strong>₹2,457 Cr</strong> on May 19; DII buying cushions market from deeper correction</div>
+            <div class="news-meta">May 20, 2026 · Institutional Data · NSE Provisional</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#8b5cf6;">📈 DERIVATIVES</div>
+            <div class="news-headline">NIFTY PCR at <strong>0.86</strong> — key put OI support at <strong>23,000 & 23,500</strong> strikes; call writing heavy at <strong>23,700 & 24,000</strong> — resistance zone 23,758–23,860</div>
+            <div class="news-meta">May 20, 2026 · Options Desk · Source: NSE</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#06b6d4;">💱 CURRENCY</div>
+            <div class="news-headline">Indian Rupee hits record low of <strong>₹96.96/USD</strong> amid rising global bond yields and dollar strength; RBI intervention likely on further weakness</div>
+            <div class="news-meta">May 20, 2026 · Forex · Source: Economic Times</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#f59e0b;">🛢️ COMMODITIES</div>
+            <div class="news-headline">Crude oil prices remain elevated weighing on import-heavy economy; Gold retreats slightly as dollar firms up; market on edge over energy sector margins</div>
+            <div class="news-meta">May 20, 2026 · Commodities · Source: Goodreturns</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#10b981;">🔭 MARKET OUTLOOK</div>
+            <div class="news-headline">Analysts: NIFTY needs decisive move above <strong>23,800–23,900</strong> to confirm recovery. Support at <strong>23,400–23,460</strong>. Failure below 23,200 risks extended correction</div>
+            <div class="news-meta">May 20, 2026 · Technical View · Source: HDFC SKY</div>
+          </div>
+
+          <div class="news-item">
+            <div class="news-cat" style="color:#ec4899;">🌏 GLOBAL CUES</div>
+            <div class="news-headline">US-Iran geopolitical tensions, elevated US bond yields and cautious Fed stance continue to suppress risk appetite in emerging markets including India</div>
+            <div class="news-meta">May 20, 2026 · Global Markets · Source: The Hindu</div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer>
+    <p style="font-weight: 600;">Copyrights reserved: ControlN Business Consultants</p>
+    <p class="footer-disclaimer">Disclaimer: Options trading involves substantial risk of loss and is not suitable for all investors. Algorithmic trading systems execute orders based on predefined rules. Past performance is not indicative of future results. ControlN Trading is a technology platform and does not provide investment advice. Please consult a SEBI-registered investment advisor before trading with real capital.</p>
+  </footer>
+
+  <script>
+    // ═══════════════════════════════════════════════════
+    // MARKET PRICES — via /api/market-data (NSE India proxy)
+    // ═══════════════════════════════════════════════════
+    const BADGE_MAP = {
+      'NIFTY 50':               { badge: 'NSE', color: '#10b981' },
+      'NIFTY BANK':             { badge: 'NSE', color: '#10b981' },
+      'NIFTY MIDCAP 50':        { badge: 'NSE', color: '#8b5cf6' },
+      'NIFTY NEXT 50':          { badge: 'NSE', color: '#8b5cf6' },
+      'NIFTY IT':               { badge: 'NSE', color: '#3b82f6' },
+      'NIFTY AUTO':             { badge: 'NSE', color: '#06b6d4' },
+      'NIFTY FMCG':             { badge: 'NSE', color: '#f59e0b' },
+      'NIFTY PHARMA':           { badge: 'NSE', color: '#ec4899' },
+      'NIFTY FINANCIAL SERVICES': { badge: 'NSE', color: '#3b82f6' },
+      'INDIA VIX':              { badge: 'VIX', color: '#ef4444' },
+    };
+
+    function fmtPrice(val, name) {
+      if (val === undefined || val === null) return '--';
+      if (name === 'INDIA VIX') return Number(val).toFixed(2);
+      return '₹' + Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    async function loadMarketPrices() {
+      const grid = document.getElementById('pricesGrid');
+      const lastUpdatedEl = document.getElementById('lastUpdated');
+
+      // Loading skeleton
+      grid.innerHTML = Object.keys(BADGE_MAP).map(n => {
+        const b = BADGE_MAP[n];
+        return `<div class="price-card">
+          <div class="pc-header">
+            <span class="pc-name">${n}</span>
+            <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+          </div>
+          <div class="pc-price pc-loading">Loading...</div>
+          <div class="pc-chg" style="color:var(--text-muted);font-size:0.75rem">Fetching from NSE...</div>
+        </div>`;
+      }).join('');
+
+      try {
+        const res = await fetch('/api/market-data');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const indices = data.indices || [];
+        if (!indices.length) throw new Error('Empty response');
+
+        grid.innerHTML = indices.map(idx => {
+          const b = BADGE_MAP[idx.name] || { badge: 'NSE', color: '#10b981' };
+          const isUp = idx.change >= 0;
+          return `<div class="price-card">
+            <div class="pc-header">
+              <span class="pc-name">${idx.name}</span>
+              <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+            </div>
+            <div class="pc-price">${fmtPrice(idx.last, idx.name)}</div>
+            <div class="pc-chg ${isUp ? 'up' : 'down'}">
+              ${isUp ? '▲' : '▼'} ${Math.abs(idx.change).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}
+              (${Math.abs(idx.pct).toFixed(2)}%)
+            </div>
+          </div>`;
+        }).join('');
+
+        const cached = data.cached ? ' · <span style="color:#f59e0b">⏱ cached</span>' : '';
+        lastUpdatedEl.innerHTML = `✅ Source: <strong>NSE India</strong> · <strong>${data.fetched_at || '--'}</strong>${cached}`;
+        updateTicker(indices);
+
+      } catch (e) {
+        console.error('Market data error:', e);
+        lastUpdatedEl.textContent = '⚠️ NSE data temporarily unavailable. Retrying in 60s...';
+        grid.innerHTML = Object.keys(BADGE_MAP).map(n => {
+          const b = BADGE_MAP[n];
+          return `<div class="price-card">
+            <div class="pc-header">
+              <span class="pc-name">${n}</span>
+              <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+            </div>
+            <div class="pc-price" style="color:var(--text-muted)">Retrying...</div>
+            <div class="pc-chg" style="color:var(--text-muted);font-size:0.75rem">NSE server busy</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    function updateTicker(indices) {
+      const track = document.getElementById('tickerTrack');
+      const items = indices.map(idx => {
+        const isUp = idx.change >= 0;
+        return `<div class="ticker-item">
+          <span class="t-name">${idx.name}</span>
+          <span class="t-price">${fmtPrice(idx.last, idx.name)}</span>
+          <span class="t-chg ${isUp ? 'up' : 'down'}">${isUp ? '▲' : '▼'} ${Math.abs(idx.pct).toFixed(2)}%</span>
+          <span class="ticker-dot"></span>
+        </div>`;
+      }).join('');
+      track.innerHTML = items + items;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // LIVE NEWS — via /api/market-news (RSS proxy)
+    // ═══════════════════════════════════════════════════
+    function timeAgo(pubDateStr) {
+      if (!pubDateStr) return '';
+      try {
+        const diff = Math.floor((Date.now() - new Date(pubDateStr).getTime()) / 60000);
+        if (diff < 1)    return 'Just now';
+        if (diff < 60)   return `${diff} min ago`;
+        if (diff < 1440) return `${Math.floor(diff/60)} hr ago`;
+        return new Date(pubDateStr).toLocaleDateString('en-IN');
+      } catch(e) { return pubDateStr; }
+    }
+
+    async function loadMarketNews() {
+      const newsList = document.getElementById('newsList');
+      try {
+        const res = await fetch('/api/market-news');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const news = data.news || [];
+        if (!news.length) throw new Error('No news');
+
+        const colors = { 'Economic Times': '#f59e0b', 'Moneycontrol': '#10b981' };
+        newsList.innerHTML = news.map(n => {
+          const col = colors[n.source] || '#9ca3af';
+          const link = n.link ? `onclick="window.open('${n.link}','_blank')"` : '';
+          return `<div class="news-item" ${link} style="${n.link ? 'cursor:pointer' : ''}">
+            <div class="news-cat" style="color:${col}">📰 ${(n.source || '').toUpperCase()}</div>
+            <div class="news-headline">${n.title}</div>
+            <div class="news-meta">${timeAgo(n.pubDate)}${n.pubDate ? ' · ' : ''}${n.source}</div>
+          </div>`;
+        }).join('');
+      } catch(e) {
+        console.warn('News RSS load failed (keeping static):', e);
+        // Static fallback news stays in HTML
+      }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // INIT
+    // ═══════════════════════════════════════════════════
+    loadMarketPrices();
+    loadMarketNews();
+    setInterval(loadMarketPrices, 60000);   // prices every 60s
+    setInterval(loadMarketNews,  300000);   // news every 5 min
+  </script>
+</body>
+</html>

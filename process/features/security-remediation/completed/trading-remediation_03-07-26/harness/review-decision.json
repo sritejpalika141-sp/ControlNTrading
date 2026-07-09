@@ -1,0 +1,15 @@
+{
+  "task": "Phase 1 critical security remediation (trading-remediation)",
+  "reviewer": "user (human) — explicit session approval of the expanded ~20-route resolve_authenticated_user_id migration (incl. / root and admin routes), conveyed at EXECUTE handoff",
+  "decision": "approved-with-concerns",
+  "timestamp": "2026-07-04",
+  "blockingFindings": [],
+  "nonBlockingFindings": [
+    "Grace-window residual: a raw-integer cookie is still honored until 2026-07-11 (SESSION_MIGRATION_CUTOFF) — deliberate, time-bounded tradeoff to avoid mass-logout of live traders.",
+    "Login rate-limit is username-keyed, not IP-keyed — documented tradeoff; distributed username-spray not mitigated.",
+    "Step E residual: manual automation re-enable (Telegram /start or toggle API) mid-square-off could still race — tracked in backlog note phase1-square-off-reentry-guard.",
+    "No git-history rewrite (explicit user decision) — historical .env/.db blobs remain in history; neutralized by provider-secret rotation (Item G2, manual), not erasure.",
+    "OAuth state-binding/CSRF hardening is Phase 2 scope; Phase 1 signs the cookie at all write sites but does not redesign the 401/guest branching."
+  ],
+  "notes": "All fully-automated gates pass (14 unit/concurrency tests + 8 grep/dry-run gates). Live-money and live-provider gates (paper round-trip, live session survival, Telegram setWebhook) are deferred to deploy-day manual verification per the plan's Hybrid/Agent-Probe tiering. Pre-prod-cutover open items: set SECRET_KEY / TELEGRAM_WEBHOOK_SECRET / INITIAL_ADMIN_PASSWORD; run Telegram setWebhook with secret_token; run encryption-key rotation per Item G1 order incl. pre-restart .env grep (E2); rotate provider secrets (G2)."
+}

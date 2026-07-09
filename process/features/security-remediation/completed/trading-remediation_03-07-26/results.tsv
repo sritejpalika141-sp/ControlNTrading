@@ -1,0 +1,6 @@
+phase	cycle	loop	gate	status	notes
+phase-01	baseline	EVL	all	HALTED_SUCCESS	confirmed green on first EVL pass
+phase-02	baseline	EVL	all	HALTED_SUCCESS	confirmed green on first EVL pass
+phase-03	cycle-1	EVL	index-mobile-usable	FIXING	.tab-nav overflows 136px at 375/390px, silently clipped by html overflow-x:hidden, some tabs unreachable
+phase-03	cycle-1	EVL	index-mobile-usable	SUPPLEMENT_APPLIED	.tab-nav overflow-x:auto added, tabs now reachable at 375/390px, re-verify pending
+phase-03	cycle-2	EVL	all	HALTED_SUCCESS	all gates confirmed clean independently; program complete

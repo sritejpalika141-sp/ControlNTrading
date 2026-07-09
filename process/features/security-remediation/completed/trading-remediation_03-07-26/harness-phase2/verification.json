@@ -1,0 +1,62 @@
+{
+  "task": "Phase 2 remaining findings security remediation (trading-remediation)",
+  "result": "PASS (all fully-automated gates green; C1/C2 reflected-XSS live scripted-browser probe deferred — Agent-Probe tier, not run this session)",
+  "commands": [
+    {
+      "cmd": "pytest trading-app/tests/ -v",
+      "result": "PASS",
+      "notes": "Full pytest suite covering all Step A-D changes (B0's new minimal pytest+pytest-asyncio harness plus Phase 1's pre-existing test files). 45/45 passed (per phase-02-remaining-findings_REPORT_03-07-26.md 'Test Harness (B0) — Final State'). One failure was hit and fixed during the EXECUTE session: test_auto_trader.py::test_no_fabricated_price_order initially failed because a stray explanatory comment at auto_trader.py:966 contained the banned phrase 'intrinsic + time_value' describing logic that had already been removed — the B5 fix itself was correct; only the comment wording was changed, no logic touched. Re-run after the comment fix: PASSED. All other 44 tests passed on first run."
+    },
+    {
+      "cmd": "pytest trading-app/tests/ --collect-only ; pytest (bare, run from trading-app/)",
+      "result": "PASS",
+      "notes": "Confirms the new pytest.ini testpaths scoping does not accidentally collect the 20 pre-existing ad-hoc test_*.py root scripts (one of which, test_login.py, has a genuine top-level-await SyntaxError). Both invocations collected exactly the intended 45 tests and never touched the legacy root scripts, per B0's Execute-Agent Instruction E9 verification recorded in the phase report."
+    },
+    {
+      "cmd": "python -c \"import requests; requests.get('https://public.fyers.in/sym_details/NSE_FO.csv', timeout=10)\"",
+      "result": "PASS",
+      "notes": "Live TLS re-verification for D2 against the real Fyers endpoint, confirming certificate verification is genuinely restored (not just code-reviewed). Returned HTTP 200 with verify=certifi.where() in place (no verify=False/CERT_NONE passed). Report also states a repo-wide grep confirmed no verify=False/CERT_NONE remains anywhere in the codebase."
+    },
+    {
+      "cmd": "grep -n \"allow_guest=True\" trading-app/app.py",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check: guest-fallback 401 — read get_current_client (app.py:848-874) and confirm the only allow_guest=True call site is non-trading. Exactly one call site (app.py:2742, the GET /api/version handler — a read-only version/uptime poll). Also confirmed resolve_authenticated_user_id (app.py:836-845) is the sole site in the file that reads the raw user_id cookie directly, i.e. no endpoint bypasses the 401 guard by reading the cookie itself."
+    },
+    {
+      "cmd": "read trading-app/app.py:2120-2153 and trading-app/state.py:46",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check, boundary/failure case: regime guard fails closed when state.market_regime is NEUTRAL/unset/malformed, not just when it holds a valid-but-wrong value. The guard checks `regime not in (\"TRENDING_UP\", \"TRENDING_DOWN\")` — any other value (NEUTRAL, CHOPPY_SIDEWAYS, EVENT_RISK_AVOID, CLOSED, empty string, or garbage) falls into the rejection branch and returns a structured `{\"success\": False, ...}` rejection rather than proceeding. state.py:46 confirms market_regime defaults to the string \"NEUTRAL\" (not None/unset), so an uninitialized state cannot raise AttributeError or accidentally read as tradeable — it deterministically fails closed."
+    },
+    {
+      "cmd": "read trading-app/models.py:94-114",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check, boundary/failure case: decrypt_val fails loudly (raises DecryptionError) on a genuine decryption failure rather than silently returning ciphertext as plaintext. On InvalidToken, the code distinguishes a real (corrupted/wrong-key) Fernet token — which raises DecryptionError after logging — from legacy never-encrypted plaintext, which is returned as-is (an intentional, bounded backwards-compat path, not a silent-ciphertext-as-plaintext bug). Any other unexpected exception also raises DecryptionError. Confirmed no code path returns the raw ciphertext value on a genuine decrypt failure."
+    },
+    {
+      "cmd": "read trading-app/fetch_lot_sizes.py:1-15; grep -n \"CERT_NONE\\|verify=False\" trading-app/",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check: TLS restored in both fetch sites (fetch_lot_sizes.py and the RSS/NSE SSL context in app.py), not just the one explicitly re-run live above. fetch_lot_sizes.py:11 uses verify=certifi.where(). Report states the _RSS_SSL_CTX in app.py (~2575-2581) is now built via ssl.create_default_context(cafile=certifi.where()), replacing CERT_NONE. Grep across the codebase found no remaining verify=False or CERT_NONE outside historical comments."
+    },
+    {
+      "cmd": "read trading-app/static/landing.html (renderNews / _safeHttpUrl) and trading-app/static/admin.html (crash-log + user-activity terminals)",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check: XSS fixes render feed-/log-controlled text via textContent/createElement only, no innerHTML of untrusted content remains. Static/code-level verification only — confirms textContent/createElement usage and an http:/https:-only protocol allowlist (_safeHttpUrl) on n.link before it is wired via addEventListener instead of an inlined onclick attribute string. The live scripted-browser probe for this item is tracked separately under manualChecks (not run this session)."
+    },
+    {
+      "cmd": "read trading-app/static/service-worker.js:40-66",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check: service-worker cache exclusion for sensitive /api/* paths. Confirms the exclusion list (/api/funds, /api/positions, /api/orders, /api/admin/, /api/user/settings) is checked before cache.put and those paths bypass caching entirely; non-sensitive /api/* paths keep existing Network-First caching. Verified by direct code read, consistent with the phase report's D3 description."
+    },
+    {
+      "cmd": "read trading-app/workers/health_agent.py:16-29 (_match_fix_action) and 106-121 (execute_fix)",
+      "result": "PASS",
+      "notes": "Independent EVL spot-check: health_agent exact-token matching and user-scoping. Confirms exact-equality match against ALLOWED_FIX_ACTIONS = {restart_ws, relogin, clear_cache, wait} after trim/lowercase (a substring-only match like 'do NOT restart_ws' falls through to 'wait'), and confirms execute_fix scopes restart_ws/relogin to a single originating u_id when provided, falling back to all USER_CONTEXTS only when u_id is None (genuinely global error)."
+    }
+  ],
+  "manualChecks": [
+    {
+      "check": "C1/C2 reflected-XSS live scripted-browser probe (landing.html news feed + admin.html log terminals) via vc-agent-browser (E7) — confirms the fix renders correctly against a live DOM, not just via static code read",
+      "status": "NOT-RUN-THIS-SESSION (Agent-Probe tier per the plan's test coverage tiering)"
+    }
+  ]
+}

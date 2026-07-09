@@ -1,0 +1,20 @@
+# Logs
+*.log
+logs/
+__pycache__/
+
+# Packages
+.venv/
+env/
+venv/
+
+# Zip files
+*.zip
+
+# OS files
+.DS_Store
+
+# Secrets & local databases (Phase 1 Item G3 — never commit these going forward)
+.env
+*.db
+*.db-journal

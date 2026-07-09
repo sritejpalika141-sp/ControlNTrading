@@ -1,0 +1,14 @@
+{
+  "task": "Phase 2 remaining findings security remediation (trading-remediation)",
+  "planPath": "process/features/security-remediation/active/trading-remediation_03-07-26/phase-02-remaining-findings_PLAN_03-07-26.md",
+  "riskLevel": "high",
+  "riskClasses": [
+    "auth/identity",
+    "secrets/trust-boundary",
+    "trading-logic/live-money-adjacent"
+  ],
+  "mustStopBeforeFinalize": true,
+  "humanApprovalRequired": true,
+  "why": "Phase 2 of the trading-remediation security program on a live real-money Fyers-API trading platform. Closes remaining auth edge cases (get_current_client guest-fallback now returns 401 instead of a silent user-0 context; OAuth `state` bound to a signed single-use short-TTL nonce instead of a raw guessable user_id; deactivated/deleted users purged from live in-memory runtime so background loops stop acting for them). Fixes trading-engine correctness bugs (regime/duplicate-position guard now fails closed off the live `state.market_regime` signal instead of silently no-op'ing on a dead cache; missing/malformed `pl` no longer silently treated as zero P&L; per-user isolation in trailing_monitor so one user's bad data can't abort monitoring for everyone; fabricated estimated-price fallback removed so no live order is ever placed on a guessed premium; ATR trailing stop no longer overwrites the sl_points distance field with an absolute price). Fixes secrets/trust-boundary issues (decrypt_val now fails loudly instead of returning ciphertext as if it were plaintext; TLS certificate verification restored via certifi.where() for the lot-size and RSS/NSE fetches; sensitive /api/* paths excluded from service-worker caching; health_agent's LLM-driven auto-remediation now requires an exact allow-listed action token and scopes restart/relogin actions to the originating user). Also fixes two reflected-XSS surfaces (landing.html news feed, admin.html log terminals) and two data-integrity items (nightly_learning_date persistence, orphaned-row cleanup on user deletion).",
+  "approver": "pending-user-signoff"
+}

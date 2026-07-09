@@ -1,0 +1,463 @@
+import sys
+import os
+import time
+import subprocess
+import json
+import asyncio
+import hashlib
+import sqlite3
+import difflib
+import threading
+import glob
+from typing import Dict, Optional
+
+APP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading-app")
+sys.path.append(APP_DIR)
+
+from engine.ai_engine import ai_engine
+from engine.notifier import trigger_webhook_background
+
+DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
+TRADING_DB = os.path.join(APP_DIR, "trading_db.sqlite")
+
+# State for crash-loop detection (Per Service)
+PROBATION_STATE = {
+    "sritej-trading": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None},
+    "sritej-researcher": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None}
+}
+
+# State for Deployment tracking (Global)
+DEPLOYMENT_STATE = {
+    "end_time": 0,
+    "last_known_good_commit": None
+}
+
+def init_db():
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS healing_memory (
+                    hash_key TEXT PRIMARY KEY,
+                    target_file TEXT,
+                    error_msg TEXT,
+                    search_content TEXT,
+                    replace_content TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] Failed to init DB: {e}")
+
+init_db()
+
+def get_webhook_url():
+    """Fetch webhook URL from main trading DB for User 1."""
+    try:
+        with sqlite3.connect(TRADING_DB) as conn:
+            cursor = conn.execute("SELECT webhook_url FROM user_states WHERE user_id=1")
+            row = cursor.fetchone()
+            if row and row[0]:
+                return row[0]
+    except Exception:
+        pass
+    return None
+
+def monitor_service_logs(service_name: str):
+    """Tails the systemd journal for a specific service."""
+    print(f"🚀 [VM Orchestrator] Starting external monitoring of {service_name}...")
+    
+    cmd = ["journalctl", "-u", service_name, "-f", "-n", "0"]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    traceback_buffer = []
+    in_traceback = False
+    
+    while True:
+        line = process.stdout.readline()
+        if not line:
+            if process.poll() is not None:
+                print(f"❌ [VM Orchestrator] journalctl process for {service_name} died! Exiting to allow systemd to restart.")
+                break
+            time.sleep(0.1)
+            continue
+            
+        # Catch standard Python tracebacks and our custom hooks
+        if "🏥 [VM-ORCHESTRATOR-HOOK] Traceback caught:" in line or "Traceback (most recent call last):" in line:
+            in_traceback = True
+            traceback_buffer = []
+            print(f"🚨 [VM Orchestrator] Traceback detected in {service_name}! Gathering logs...")
+            traceback_buffer.append(line)
+            continue
+            
+        if in_traceback:
+            # We need a robust way to know when traceback ends. Usually it ends when the lines are no longer indented or a new log prefix appears.
+            if ("INFO:" in line or "ERROR:" in line or "WARNING:" in line or line.startswith("202")) and not line.startswith(" "):
+                in_traceback = False
+                full_tb = "".join(traceback_buffer)
+                print(f"🚨 [VM Orchestrator] Traceback gathering complete for {service_name}. Initiating healing...")
+                asyncio.run(handle_crash(full_tb, service_name))
+                traceback_buffer = []
+                
+                # Check if this very line is actually the start of another traceback (very rare but possible)
+                if "Traceback (most recent call last):" in line or "🏥 [VM-ORCHESTRATOR-HOOK] Traceback caught:" in line:
+                     in_traceback = True
+                     traceback_buffer.append(line)
+            else:
+                traceback_buffer.append(line)
+
+async def handle_crash(traceback_str: str, service_name: str):
+    """Handles rollback check, dependency checking, and AI healing."""
+    state = PROBATION_STATE[service_name]
+    
+    # Check Probation State
+    if time.time() < state["end_time"]:
+        print(f"🛑 [VM Orchestrator] CRASH LOOP DETECTED in {service_name} during AI probation period!")
+        
+        # Check if we are in an active feature deployment window
+        if time.time() < DEPLOYMENT_STATE["end_time"] and DEPLOYMENT_STATE["last_known_good_commit"]:
+            print(f"🛑 [VM Orchestrator] This crash loop is from a NEW FEATURE update! Initiating Ultimate Safety Rollback.")
+            try:
+                commit = DEPLOYMENT_STATE["last_known_good_commit"]
+                print(f"🔄 [VM Orchestrator] Rolling back entire repository to {commit}...")
+                subprocess.run(["git", "reset", "--hard", commit], cwd=APP_DIR, check=True)
+                
+                # Delete invalid SQL solution just in case
+                if state["last_cache_key"]:
+                    with sqlite3.connect(DB_FILE) as conn:
+                        conn.execute('DELETE FROM healing_memory WHERE hash_key = ?', (state["last_cache_key"],))
+                
+                wh_url = get_webhook_url()
+                if wh_url:
+                    trigger_webhook_background(wh_url, f"🛑 **FEATURE ROLLBACK DETECTED! ({service_name})**\nNew feature deployment failed and AI was unable to fix it. System rolled back to previous stable version to protect production.", "Orchestrator Ultimate Rollback")
+                
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"], check=True)
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"], check=True)
+                
+                # Clear deployment state to prevent repeated rollbacks
+                DEPLOYMENT_STATE["end_time"] = 0
+            except Exception as e:
+                print(f"❌ [VM Orchestrator] Feature Rollback failed: {e}")
+                
+            print(f"💤 [VM Orchestrator] Pausing healing for {service_name} for 5 minutes...")
+            time.sleep(300)
+            return
+
+        print(f"Initiating AI Patch Rollback.")
+        if state["last_patched_file"] and state["last_backup_file"]:
+            try:
+                # Restore backup
+                with open(state["last_backup_file"], "r") as f:
+                    old_content = f.read()
+                with open(state["last_patched_file"], "w") as f:
+                    f.write(old_content)
+                
+                # Delete invalid SQL solution
+                if state["last_cache_key"]:
+                    with sqlite3.connect(DB_FILE) as conn:
+                        conn.execute('DELETE FROM healing_memory WHERE hash_key = ?', (state["last_cache_key"],))
+                        
+                # Alert User
+                wh_url = get_webhook_url()
+                if wh_url:
+                    trigger_webhook_background(wh_url, f"🛑 **CRASH LOOP DETECTED! ({service_name})** AI Patch failed and has been rolled back. Healing paused for 5 minutes.", "Orchestrator Rollback")
+                    
+                print(f"🔄 [VM Orchestrator] Restarting {service_name} after rollback...")
+                subprocess.run(["sudo", "systemctl", "restart", service_name])
+            except Exception as e:
+                print(f"❌ [VM Orchestrator] Rollback failed for {service_name}: {e}")
+                
+        print(f"💤 [VM Orchestrator] Pausing healing for {service_name} for 5 minutes...")
+        time.sleep(300)
+        return
+
+    # Extract Error Message
+    lines = traceback_str.strip().split("\n")
+    error_msg = lines[-1] if lines else "Unknown Error"
+
+    # Dependency Healer
+    if "ModuleNotFoundError: No module named" in error_msg or "ImportError: No module named" in error_msg:
+        module_name = error_msg.split("'")[1] if "'" in error_msg else error_msg.split()[-1]
+        print(f"📦 [VM Orchestrator] Missing dependency detected: {module_name}. Running pip install...")
+        try:
+            pip_path = os.path.join(APP_DIR, ".venv", "bin", "pip")
+            subprocess.run([pip_path, "install", module_name], check=True)
+            print("✅ [VM Orchestrator] Dependency installed. Restarting...")
+            
+            # Webhook
+            wh_url = get_webhook_url()
+            if wh_url:
+                trigger_webhook_background(wh_url, f"📦 **Missing Dependency Fixed! ({service_name})**\nInstalled `{module_name}` successfully.", "Orchestrator Healing")
+                
+            subprocess.run(["sudo", "systemctl", "restart", service_name])
+            return
+        except subprocess.CalledProcessError:
+            print("❌ [VM Orchestrator] Pip install failed.")
+            return
+
+    # Proceed to Code Healing
+    await heal_application(traceback_str, lines, error_msg, service_name)
+
+async def heal_application(traceback_str: str, lines: list, error_msg: str, service_name: str):
+    """Diagnoses and patches the application code."""
+    print(f"🔧 [VM Orchestrator] Analyzing traceback ({len(traceback_str)} chars) for {service_name}...")
+    
+    target_file = None
+    for line in reversed(lines):
+        if "File " in line and "trading-app" in line:
+            parts = line.split('"')
+            if len(parts) > 1:
+                target_file = parts[1]
+                break
+                
+    if not target_file or not os.path.exists(target_file):
+        print(f"❌ [VM Orchestrator] Could not determine local file from traceback in {service_name}.")
+        return
+
+    print(f"📄 [VM Orchestrator] Target file identified: {target_file}")
+    
+    with open(target_file, "r") as f:
+        file_content = f.read()
+
+    error_data = {
+        "msg": error_msg,
+        "traceback": traceback_str
+    }
+    
+    cache_key = hashlib.md5((target_file + error_msg).encode()).hexdigest()
+    patch = None
+    from_cache = False
+
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.execute('SELECT search_content, replace_content FROM healing_memory WHERE hash_key = ?', (cache_key,))
+            row = cursor.fetchone()
+            if row:
+                patch = {"search_content": row[0], "replace_content": row[1]}
+                from_cache = True
+                print("⚡ [VM Orchestrator] Known error found in SQL Database! Retrieving cached patch...")
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] DB Read Error: {e}")
+
+    if not from_cache:
+        print("🧠 [VM Orchestrator] New error detected. Querying AI Engine for a patch...")
+        try:
+            patch = await ai_engine.generate_code_fix(error_data, file_content)
+            if not patch or not patch.get("search_content") or not patch.get("replace_content"):
+                print("❌ [VM Orchestrator] AI failed to generate a valid patch.")
+                return
+        except Exception as e:
+            print(f"❌ [VM Orchestrator] AI Engine Error: {e}")
+            return
+
+    search_str = patch["search_content"]
+    replace_str = patch["replace_content"]
+    
+    if search_str not in file_content:
+        print("❌ [VM Orchestrator] Patch search_content not found in file. Aborting.")
+        if from_cache:
+            try:
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute('DELETE FROM healing_memory WHERE hash_key = ?', (cache_key,))
+            except Exception: pass
+        return
+
+    new_content = file_content.replace(search_str, replace_str, 1)
+    
+    backup_file = target_file + f".bak.{int(time.time())}"
+    with open(backup_file, "w") as f:
+        f.write(file_content)
+
+    with open(target_file, "w") as f:
+        f.write(new_content)
+        
+    print(f"✅ [VM Orchestrator] Patch applied to {os.path.basename(target_file)}!")
+
+    print("🔍 [VM Orchestrator] Running syntax validation...")
+    try:
+        subprocess.run(["python3", "-m", "py_compile", target_file], check=True, capture_output=True)
+        print("✅ [VM Orchestrator] Syntax is valid.")
+        
+        if not from_cache:
+            try:
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute('''
+                        INSERT OR REPLACE INTO healing_memory (hash_key, target_file, error_msg, search_content, replace_content)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (cache_key, target_file, error_msg, search_str, replace_str))
+                print("💾 [VM Orchestrator] New solution saved to SQL database.")
+            except Exception as e:
+                print(f"⚠️ [VM Orchestrator] Failed to save to SQL DB: {e}")
+            
+    except subprocess.CalledProcessError:
+        print("❌ [VM Orchestrator] Syntax invalid! Reverting patch.")
+        with open(target_file, "w") as f:
+            f.write(file_content)
+        return
+
+    # Diff Generation & Notification
+    diff = list(difflib.unified_diff(
+        file_content.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{os.path.basename(target_file)}",
+        tofile=f"b/{os.path.basename(target_file)}"
+    ))
+    diff_text = "".join(diff)
+    
+    wh_url = get_webhook_url()
+    if wh_url:
+        msg = f"🔧 **AI Self-Healing Executed ({service_name})**\n**File:** `{os.path.basename(target_file)}`\n**Error:** `{error_msg}`\n\n**Diff:**\n```diff\n{diff_text[:1000]}\n```"
+        trigger_webhook_background(wh_url, msg, "Orchestrator Notification")
+
+    # Git Auto-Sync
+    print("🐙 [VM Orchestrator] Running Git Auto-Sync...")
+    try:
+        subprocess.run(["git", "add", target_file], cwd=APP_DIR, check=True)
+        subprocess.run(["git", "commit", "-m", f"🔧 AI Auto-Fix ({service_name}): {error_msg}"], cwd=APP_DIR, check=True)
+        subprocess.run(["git", "push"], cwd=APP_DIR, capture_output=True) # Don't check=True on push
+        print("✅ [VM Orchestrator] Git commit created successfully.")
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] Git auto-sync warning: {e}")
+
+    # Set Probation
+    PROBATION_STATE[service_name]["end_time"] = time.time() + 60
+    PROBATION_STATE[service_name]["last_patched_file"] = target_file
+    PROBATION_STATE[service_name]["last_backup_file"] = backup_file
+    PROBATION_STATE[service_name]["last_cache_key"] = cache_key
+    
+    # Restart Application
+    print(f"🔄 [VM Orchestrator] Restarting {service_name} and entering probation (60s)...")
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", service_name], check=True)
+    except Exception as e:
+        print(f"❌ [VM Orchestrator] Failed to restart {service_name}: {e}")
+
+def run_health_scan():
+    """Runs a proactive system scan and sends a report via webhook."""
+    print("📊 [VM Orchestrator] Running proactive health scan...")
+    report = ["📊 **System Health & Swarm Report**"]
+    
+    # 1. Service Status
+    for svc in ["sritej-trading", "sritej-researcher"]:
+        try:
+            status_cmd = subprocess.run(["sudo", "systemctl", "is-active", svc], capture_output=True, text=True)
+            is_running = "active" in status_cmd.stdout
+            icon = "✅" if is_running else "🛑"
+            report.append(f"{icon} {svc}: {'RUNNING' if is_running else 'FAILED/STOPPED'}")
+        except Exception:
+            report.append(f"⚠️ {svc}: Unknown")
+            
+    # 2. Memory / CPU
+    try:
+        ps_cmd = subprocess.run(["ps", "-eo", "pid,pcpu,pmem,comm,args"], capture_output=True, text=True)
+        
+        # Live Trading
+        trade_lines = [l for l in ps_cmd.stdout.splitlines() if "uvicorn" in l]
+        if trade_lines:
+            cpu, mem = trade_lines[0].split()[1:3]
+            report.append(f"🟢 Trading App: {cpu}% CPU | {mem}% RAM")
+            
+        # Researcher Swarm
+        research_lines = [l for l in ps_cmd.stdout.splitlines() if "strategy_researcher.py" in l]
+        if research_lines:
+            cpu, mem = research_lines[0].split()[1:3]
+            report.append(f"🧠 AI Swarm: {cpu}% CPU | {mem}% RAM")
+    except Exception:
+        pass
+
+    # 3. Syntax Audit
+    try:
+        py_files = []
+        for root, _, files in os.walk(APP_DIR):
+            if ".venv" in root or "__pycache__" in root: continue
+            for file in files:
+                if file.endswith(".py"):
+                    py_files.append(os.path.join(root, file))
+        
+        errors = 0
+        for pf in py_files:
+            if subprocess.run(["python3", "-m", "py_compile", pf], capture_output=True).returncode != 0:
+                errors += 1
+        report.append(f"🔍 Code Audit: {len(py_files)} files checked. {errors} Syntax Errors.")
+    except Exception as e:
+        report.append(f"🔍 Code Audit: Failed ({e})")
+
+    # 4. Database & Healing Activity
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            # check 24h count
+            cursor = conn.execute("SELECT COUNT(*) FROM healing_memory WHERE created_at >= datetime('now', '-1 day')")
+            count = cursor.fetchone()[0]
+            report.append(f"🗄️ Healing DB: Healthy")
+            report.append(f"🩹 Auto-Heal Actions: {count} patches applied in the last 24h.")
+    except Exception:
+        report.append("🗄️ Healing DB: Error checking.")
+
+    wh_url = get_webhook_url()
+    if wh_url:
+        trigger_webhook_background(wh_url, "\n".join(report), "Health Scanner")
+
+def health_scan_loop():
+    """Runs the health scan every 4 hours."""
+    while True:
+        time.sleep(14400) # 4 hours
+        try:
+            run_health_scan()
+        except Exception as e:
+            print(f"❌ [VM Orchestrator] Health scan error: {e}")
+
+def git_update_monitor():
+    """Checks for Git updates every 5 minutes and applies them autonomously."""
+    while True:
+        time.sleep(300)
+        try:
+            # Run git fetch
+            subprocess.run(["git", "fetch"], cwd=APP_DIR, check=True)
+            # Check if there are updates
+            status = subprocess.run(["git", "status", "-uno"], cwd=APP_DIR, capture_output=True, text=True)
+            if "Your branch is behind" in status.stdout:
+                print("📦 [VM Orchestrator] New feature/update detected in Git! Initiating autonomous deployment...")
+                
+                # Get current commit (last known good state)
+                commit_cmd = subprocess.run(["git", "rev-parse", "HEAD"], cwd=APP_DIR, capture_output=True, text=True)
+                last_commit = commit_cmd.stdout.strip()
+                
+                # Update DEPLOYMENT_STATE
+                DEPLOYMENT_STATE["last_known_good_commit"] = last_commit
+                DEPLOYMENT_STATE["end_time"] = time.time() + 300  # 5 minutes probation for new features
+                
+                # Pull updates
+                subprocess.run(["git", "pull"], cwd=APP_DIR, check=True)
+                
+                print("✅ [VM Orchestrator] Deployment successful. Restarting services...")
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"], check=True)
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"], check=True)
+                
+                wh_url = get_webhook_url()
+                if wh_url:
+                    trigger_webhook_background(wh_url, f"🚀 **New Feature Deployed**\nAutonomous deployment successful. Entering 5-minute probation period. If errors occur, AI will attempt to resolve them.", "Orchestrator CD/CI")
+                    
+        except Exception as e:
+            print(f"❌ [VM Orchestrator] Git monitor error: {e}")
+
+if __name__ == "__main__":
+    try:
+        print("🌟 [VM Orchestrator] Starting multi-service orchestration...")
+        # Start health scanner
+        threading.Thread(target=health_scan_loop, daemon=True).start()
+        
+        # Start CD/CI Git monitor
+        threading.Thread(target=git_update_monitor, daemon=True).start()
+        
+        # Start tails for both services
+        t1 = threading.Thread(target=monitor_service_logs, args=("sritej-trading",), daemon=True)
+        t2 = threading.Thread(target=monitor_service_logs, args=("sritej-researcher",), daemon=True)
+        
+        t1.start()
+        t2.start()
+        
+        # Keep main thread alive
+        while True:
+            time.sleep(60)
+            
+    except KeyboardInterrupt:
+        print("Stopping Orchestrator.")

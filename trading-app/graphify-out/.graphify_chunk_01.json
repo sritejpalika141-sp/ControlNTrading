@@ -1,0 +1,290 @@
+{
+  "nodes": [
+    {
+      "id": "app",
+      "label": "app.py",
+      "file_type": "code",
+      "source_file": "trading-app/app.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_all",
+      "label": "backtest_all.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_all.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_gap_fill",
+      "label": "backtest_gap_fill.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_gap_fill.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_strategy_7",
+      "label": "backtest_strategy_7.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_strategy_7.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_ai_engine",
+      "label": "ai_engine.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/ai_engine.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_automation",
+      "label": "automation.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/automation.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_candle_builder",
+      "label": "candle_builder.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/candle_builder.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_fvg",
+      "label": "fvg.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/fvg.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_key_levels",
+      "label": "key_levels.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/key_levels.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_logger",
+      "label": "logger.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/logger.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_notifier",
+      "label": "notifier.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/notifier.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_order_blocks",
+      "label": "order_blocks.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/order_blocks.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_signals",
+      "label": "signals.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_5",
+      "label": "strategy_5.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_5.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_926",
+      "label": "strategy_926.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_926.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_gap",
+      "label": "strategy_gap.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_gap.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_orb",
+      "label": "strategy_orb.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_orb.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_swing",
+      "label": "strategy_swing.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_swing.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_wisdom",
+      "label": "strategy_wisdom.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_wisdom.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strikes",
+      "label": "strikes.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strikes.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_trading_agents_oracle",
+      "label": "trading_agents_oracle.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/trading_agents_oracle.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "backtest_all",
+      "target": "engine_order_blocks",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "trading-app/backtest_all.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_automation",
+      "target": "engine_notifier",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "trading-app/engine/automation.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_fvg",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_key_levels",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_order_blocks",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

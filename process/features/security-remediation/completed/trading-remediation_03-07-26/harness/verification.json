@@ -1,0 +1,23 @@
+{
+  "task": "Phase 1 critical security remediation (trading-remediation)",
+  "result": "PASS (all fully-automated gates green; live/deploy-day gates deferred + documented)",
+  "commands": [
+    { "cmd": "./.venv/bin/python -m pytest tests/ -q", "result": "PASS", "notes": "14 tests: auth cookie (6), admin+rate-limit (6), order concurrency (2)" },
+    { "cmd": "grep -n 'cookies.get(\"user_id\")' trading-app/app.py", "result": "PASS", "notes": "only 2 matches, both inside resolve_authenticated_user_id (item-1-route-coverage)" },
+    { "cmd": "grep -rn exit_position trading-app/workers trading-app/app.py trading-app/fyers_client.py", "result": "PASS", "notes": "empty; stray auto_trader.py.new removed (item-4-exit-fix)" },
+    { "cmd": "grep -n admin123 trading-app/models.py", "result": "PASS", "notes": "empty (item-3-admin-hardcode)" },
+    { "cmd": "grep -A 60 'async with state.order_lock:' trading-app/app.py | grep -q record_trade", "result": "PASS", "notes": "record_trade inside widened lock (item-6-toctou-fix)" },
+    { "cmd": "grep -B6 'for pos in open_positions' trading-app/workers/auto_trader.py | grep -c 'automation_enabled = False'", "result": "PASS", "notes": "1 — flag set before square-off loop (item-5-race-reorder)" },
+    { "cmd": "grep -c x-telegram-bot-api-secret-token trading-app/app.py", "result": "PASS", "notes": "1 — hmac.compare_digest before body parse (item-2 code)" },
+    { "cmd": "cd trading-app && git ls-files .env trading.db trading_app.db trading_bot.db", "result": "PASS", "notes": "empty — untracked, working copies preserved (item-7-git-untrack)" },
+    { "cmd": "ENCRYPTION_KEY_OLD=<old> ENCRYPTION_KEY=<new> python scripts/migrate_reencrypt_credentials.py --db <copy>", "result": "PASS", "notes": "dry-run vs synthetic DB copy: new key decrypts, old rejected, plaintext upgraded, backup+single-tx (item-7-encryption-migration)" },
+    { "cmd": "python -m py_compile app.py models.py auth_utils.py workers/auto_trader.py scripts/migrate_reencrypt_credentials.py", "result": "PASS", "notes": "all modules compile" }
+  ],
+  "manualChecks": [
+    { "check": "item-1-live-session: existing live browser session (raw cookie) still authenticated immediately post-deploy during grace window", "status": "DEFERRED-DEPLOY-DAY" },
+    { "check": "item-1-new-login-coverage: fresh login loads /, /admin, /api/user/settings correctly", "status": "DEFERRED-DEPLOY-DAY" },
+    { "check": "item-2-webhook-auth: curl without header -> 403; with header (post-setWebhook) -> 200", "status": "DEFERRED-DEPLOY-DAY (needs live Telegram setWebhook)" },
+    { "check": "item-4-order-roundtrip: paper-trading place -> confirm position -> exit -> confirm closed both sides", "status": "DEFERRED-DEPLOY-DAY (needs paper account)" },
+    { "check": "item-5-race-live: concurrent automation_loop tick cannot open position after breach", "status": "DEFERRED-DEPLOY-DAY (needs paper account)" }
+  ]
+}

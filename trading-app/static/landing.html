@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ControlN Trading - AI Swarm Platform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #0a0b10;
+      --bg-card: rgba(22, 26, 37, 0.4);
+      --bg-pill: rgba(255, 255, 255, 0.03);
+      --accent-cyan: #00E5FF;
+      --accent-cyan-glow: rgba(0, 229, 255, 0.4);
+      --accent-purple: #B829FF;
+      --accent-purple-glow: rgba(184, 41, 255, 0.3);
+      --border: rgba(255, 255, 255, 0.08);
+      --text-main: #FFFFFF;
+      --text-muted: #8B98AD;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      overflow-x: hidden;
+      line-height: 1.6;
+      min-height: 100vh;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(0, 229, 255, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(184, 41, 255, 0.05) 0%, transparent 40%);
+    }
+
+    /* ── SCROLLING TICKER ── */
+    .ticker-wrap {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      position: fixed;
+      top: 0;
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+    }
+    .ticker-track {
+      display: flex;
+      white-space: nowrap;
+      animation: ticker-scroll 40s linear infinite;
+      will-change: transform;
+    }
+    .ticker-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 24px;
+      font-size: 0.82rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-main);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+    .ticker-item .t-name { color: var(--text-muted); font-weight: 600; }
+    .ticker-item .t-price { color: #fff; font-weight: 700; }
+    .ticker-item .t-chg.up { color: #00E5FF; }
+    .ticker-item .t-chg.down { color: #FF2A5F; }
+    .ticker-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.15); margin-left: 8px; }
+    
+    @keyframes ticker-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    /* ── MOCKUP CONTAINER ── */
+    .mockup-wrapper {
+      max-width: 1280px;
+      margin: 80px auto 40px;
+      background: rgba(13, 15, 22, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 24px;
+      padding: 40px;
+      backdrop-filter: blur(20px);
+      box-shadow: 
+        0 25px 50px -12px rgba(0, 0, 0, 0.5),
+        0 0 80px rgba(0, 229, 255, 0.06),
+        0 0 160px rgba(184, 41, 255, 0.04);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ── HEADER (PILL MENUBAR) ── */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 80px;
+    }
+    
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .logo img {
+      height: 32px;
+      width: auto;
+    }
+    .logo span { color: #fff; }
+    .logo span.ai { color: var(--accent-cyan); }
+
+    .nav-pill {
+      display: flex;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      border-radius: 40px;
+      padding: 8px 16px;
+      align-items: center;
+      gap: 32px;
+    }
+    
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+      margin-right: 16px;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.3s;
+    }
+    .nav-links a:hover { color: #fff; }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .btn-cyan {
+      background: var(--accent-cyan);
+      color: #000;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 30px;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.95rem;
+      cursor: pointer;
+      box-shadow: 0 0 20px var(--accent-cyan-glow);
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-cyan:hover {
+      box-shadow: 0 0 30px var(--accent-cyan-glow);
+      transform: translateY(-2px);
+    }
+
+    /* ── HERO SECTION ── */
+    .hero-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      align-items: center;
+      margin-bottom: 80px;
+    }
+    
+    .hero-content h1 {
+      font-size: 4.5rem;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 24px;
+      letter-spacing: -1px;
+    }
+    .hero-content p {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+      max-width: 90%;
+      line-height: 1.7;
+    }
+    
+    .hero-actions {
+      display: flex;
+      gap: 20px;
+    }
+    .btn-outline {
+      background: transparent;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 12px 32px;
+      border-radius: 30px;
+      font-weight: 600;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.05rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-outline:hover {
+      background: rgba(255,255,255,0.05);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    .hero-image {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+    .hero-image img {
+      width: 100%;
+      height: auto;
+      position: relative;
+      z-index: 2;
+      -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.5) 10%, rgba(0,0,0,1) 30%, rgba(0,0,0,1) 100%),
+                          linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 10%, rgba(0,0,0,1) 85%, transparent 100%);
+      -webkit-mask-composite: destination-in;
+      mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.5) 10%, rgba(0,0,0,1) 30%, rgba(0,0,0,1) 100%),
+                  linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 10%, rgba(0,0,0,1) 85%, transparent 100%);
+      mask-composite: intersect;
+      mix-blend-mode: screen;
+      opacity: 0.92;
+      filter: saturate(1.3) contrast(1.05) brightness(1.1);
+    }
+    .hero-image::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 60% 50%, rgba(0, 229, 255, 0.08) 0%, rgba(184, 41, 255, 0.04) 40%, transparent 70%);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* ── STATS ROW ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      margin-bottom: 100px;
+    }
+    .stat-box {
+      background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      transition: transform 0.3s;
+    }
+    .stat-box:hover {
+      transform: translateY(-5px);
+      border-color: rgba(255,255,255,0.15);
+    }
+    .stat-value {
+      font-size: 2.2rem;
+      font-weight: 800;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    .stat-icon {
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 229, 255, 0.08);
+      border: 1px solid rgba(0, 229, 255, 0.15);
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .stat-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+    .stat-label {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    /* ── BOTTOM CARDS ── */
+    .section-heading {
+      text-align: center;
+      font-size: 2.2rem;
+      font-weight: 700;
+      margin-bottom: 40px;
+    }
+
+    .features-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr); /* 4 Columns */
+      gap: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .feature-card {
+      background: rgba(255, 255, 255, 0.02);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 30px 24px;
+      position: relative;
+      transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s, background 0.3s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      aspect-ratio: 1 / 1;
+      cursor: pointer;
+    }
+    .feature-card:hover {
+      transform: translateY(-5px);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .card-cyan { border-color: rgba(0, 229, 255, 0.2); box-shadow: 0 0 30px rgba(0, 229, 255, 0.06) inset, 0 0 15px rgba(0, 229, 255, 0.04); }
+    .card-purple { border-color: rgba(184, 41, 255, 0.2); box-shadow: 0 0 30px rgba(184, 41, 255, 0.06) inset, 0 0 15px rgba(184, 41, 255, 0.04); }
+    .card-pink { border-color: rgba(255, 42, 95, 0.2); box-shadow: 0 0 30px rgba(255, 42, 95, 0.06) inset, 0 0 15px rgba(255, 42, 95, 0.04); }
+    .card-gold { border-color: rgba(0, 229, 255, 0.15); box-shadow: 0 0 30px rgba(0, 229, 255, 0.04) inset, 0 0 15px rgba(184, 41, 255, 0.04); }
+
+    .feature-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      font-size: 2rem;
+      background: rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-icon::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 16px;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(0,229,255,0.5), rgba(184,41,255,0.5), rgba(0,229,255,0.3));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+    .feature-icon svg {
+      width: 36px;
+      height: 36px;
+    }
+    .icon-cyan { box-shadow: 0 0 25px rgba(0, 229, 255, 0.1), inset 0 0 15px rgba(0, 229, 255, 0.05); }
+    .icon-purple { box-shadow: 0 0 25px rgba(184, 41, 255, 0.1), inset 0 0 15px rgba(184, 41, 255, 0.05); }
+    .icon-pink { box-shadow: 0 0 25px rgba(255, 42, 95, 0.1), inset 0 0 15px rgba(255, 42, 95, 0.05); }
+    .icon-gold { box-shadow: 0 0 25px rgba(255, 193, 7, 0.1), inset 0 0 15px rgba(255, 193, 7, 0.05); }
+
+    .feature-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      line-height: 1.3;
+    }
+    .feature-desc {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 1024px) {
+      .hero-section { grid-template-columns: 1fr; text-align: center; }
+      .hero-content p { margin: 0 auto 40px; }
+      .hero-actions { justify-content: center; }
+      .nav-pill { display: none; }
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .features-row { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .features-row { grid-template-columns: 1fr; }
+    }
+
+    /* ── MODAL SYSTEM ── */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(10px);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .modal-overlay.active {
+      display: flex;
+      opacity: 1;
+    }
+    .modal-content {
+      background: rgba(13, 15, 22, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 600px;
+      width: 90%;
+      position: relative;
+      transform: translateY(20px);
+      transition: transform 0.3s ease;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .modal-overlay.active .modal-content {
+      transform: translateY(0);
+    }
+    .modal-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      transition: color 0.3s;
+    }
+    .modal-close:hover {
+      color: #fff;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .modal-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+    .modal-title {
+      font-size: 1.8rem;
+      font-weight: 700;
+    }
+    .modal-body {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+    .modal-body p {
+      margin-bottom: 16px;
+    }
+    .modal-body ul {
+      margin-left: 20px;
+      margin-bottom: 16px;
+    }
+    .modal-body li {
+      margin-bottom: 8px;
+    }
+    
+    .feature-card {
+      cursor: pointer;
+    }
+
+    /* ── DETAIL SECTIONS (below mockup wrapper) ── */
+    .section-block {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 80px 40px;
+    }
+    .section-title {
+      text-align: center;
+      font-size: 2.2rem;
+      font-weight: 800;
+      margin-bottom: 16px;
+      letter-spacing: -0.5px;
+    }
+    .section-subtitle {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 720px;
+      margin: 0 auto 48px;
+      line-height: 1.7;
+    }
+  
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .old-feature-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 36px 28px;
+      transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      text-align: left;
+      height: 100%;
+    }
+    .old-feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .old-feature-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 240, 255, 0.25);
+      box-shadow: 0 12px 40px rgba(0, 240, 255, 0.05);
+    }
+    .old-feature-card:hover::before {
+      opacity: 1;
+    }
+    .old-feature-icon {
+      font-size: 2.2rem;
+      margin-bottom: 20px;
+      display: inline-flex;
+      width: 56px;
+      height: 56px;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    .old-feature-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+    }
+    .old-feature-desc {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin-bottom: 24px;
+      flex-grow: 1;
+    }
+    .strategy-badge {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .badge-green { background: rgba(0, 255, 102, 0.08); color: var(--accent-green); border: 1px solid rgba(0, 255, 102, 0.2); }
+    .badge-blue { background: rgba(0, 240, 255, 0.08); color: var(--accent-cyan); border: 1px solid rgba(0, 240, 255, 0.2); }
+    .badge-amber { background: rgba(255, 153, 0, 0.08); color: var(--accent-amber); border: 1px solid rgba(255, 153, 0, 0.2); }
+
+    .strategy-details {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.03);
+      padding-top: 18px;
+    }
+    .strategy-detail-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+    }
+    .strategy-detail-item::before {
+      content: '⚡';
+      font-size: 0.75rem;
+      color: var(--accent-cyan);
+    }
+
+    /* ── SECURITY ── */
+    .security-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .security-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      display: flex;
+      gap: 20px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .security-card:hover {
+      border-color: rgba(0, 240, 255, 0.2);
+      box-shadow: 0 8px 35px rgba(0, 240, 255, 0.03);
+    }
+    .security-icon-wrap {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 240, 255, 0.04);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+    }
+    .security-text h4 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #ffffff;
+    }
+    .security-text p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .security-highlight {
+      max-width: 1100px;
+      margin: 40px auto 0;
+      background: linear-gradient(135deg, rgba(0, 255, 102, 0.03), rgba(0, 240, 255, 0.03));
+      border: 1px solid rgba(0, 255, 102, 0.15);
+      border-radius: var(--radius-md);
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .security-highlight .sh-icon { font-size: 2.2rem; }
+    .security-highlight h4 { font-family: 'Syne', sans-serif; font-size: 1.05rem; font-weight: 700; color: #ffffff; margin-bottom: 4px; }
+    .security-highlight p { font-size: 0.88rem; color: var(--text-muted); }
+
+    /* ── COMPLIANCE ── */
+    .compliance-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto 40px;
+    }
+    .compliance-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      text-align: center;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .compliance-card:hover {
+      border-color: rgba(255, 153, 0, 0.25);
+      transform: translateY(-3px);
+    }
+    .compliance-card .cc-icon { font-size: 1.8rem; margin-bottom: 12px; }
+    .compliance-card h4 { font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 700; color: #ffffff; margin-bottom: 8px; }
+    .compliance-card p { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+
+    .disclaimer-box {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: rgba(255, 153, 0, 0.02);
+      border: 1px solid rgba(255, 153, 0, 0.15);
+      border-radius: var(--radius-md);
+      padding: 24px 32px;
+    }
+    .disclaimer-box h4 { font-family: 'Syne', sans-serif; font-size: 0.9rem; font-weight: 800; color: var(--accent-amber); margin-bottom: 8px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .disclaimer-box p { font-size: 0.82rem; color: var(--text-dim); line-height: 1.7; }
+
+    /* ── MARKET NEWS & LIVE PRICES ── */
+    .news-layout {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 32px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .market-prices-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .price-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      transition: border-color 0.2s;
+    }
+    .price-card:hover { border-color: rgba(0, 255, 102, 0.2); }
+    .pc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .pc-name { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .pc-badge { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+    .pc-price { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem; font-weight: 700; color: #ffffff; }
+    .pc-chg { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; margin-top: 2px; }
+    .pc-chg.up { color: var(--accent-green); }
+    .pc-chg.down { color: var(--accent-rose); }
+    .pc-loading { color: var(--text-dim); font-size: 0.85rem; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+
+    .refresh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { background: rgba(0, 255, 102, 0.06); color: var(--accent-green); border-color: rgba(0, 255, 102, 0.3); }
+    .last-updated { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 16px; }
+
+    /* NEWS SIDEBAR */
+    .news-sidebar { display: flex; flex-direction: column; gap: 0; }
+    .news-sidebar-header {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px 12px 0 0;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .news-sidebar-header h3 { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
+    .live-badge { background: rgba(255,51,102,0.06); color: #FF2A5F; border: 1px solid rgba(255,51,102,0.2); font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #FF2A5F; animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .news-list { background: var(--bg-card); border: 1px solid var(--border); border-top: none; border-radius: 0 0 12px 12px; overflow: hidden; }
+    .news-item {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.02);
+      transition: background 0.2s;
+    }
+    .news-item:last-child { border-bottom: none; }
+    .news-item:hover { background: rgba(255,255,255,0.02); }
+    .news-cat { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #10b981; margin-bottom: 4px; }
+    .news-headline { font-size: 0.85rem; font-weight: 500; line-height: 1.4; margin-bottom: 4px; color: var(--text-main); }
+    .news-headline strong { color: var(--accent-cyan); font-weight: 600; }
+    .news-meta { font-size: 0.72rem; color: var(--text-muted); }
+    .news-more-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      text-align: center;
+      background: rgba(255,255,255,0.02);
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      color: var(--accent-cyan);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .news-more-btn:hover { background: rgba(0, 229, 255, 0.05); }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 6%;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      background: #030509;
+    }
+    .footer-disclaimer {
+      max-width: 850px;
+      margin: 12px auto 0;
+      line-height: 1.6;
+      font-size: 0.78rem;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 1100px) {
+      .news-layout { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr 1fr; }
+      .security-grid { grid-template-columns: 1fr; }
+      .compliance-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 768px) {
+      .hero-title { font-size: 2.6rem; }
+      .stats-container { grid-template-columns: repeat(2, 1fr); }
+      .features-grid { grid-template-columns: 1fr; }
+      .compliance-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .market-prices-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+
+
+</head>
+
+<body>
+  <!-- TICKER TAPE -->
+  <div class="ticker-wrap">
+    <div class="ticker-track" id="tickerTrack">
+      <div class="ticker-item"><span class="t-name">NIFTY 50</span><span class="t-price">Loading...</span><span class="t-chg">--</span><span class="ticker-dot"></span></div>
+      <div class="ticker-item"><span class="t-name">BANKNIFTY</span><span class="t-price">Loading...</span><span class="t-chg">--</span><span class="ticker-dot"></span></div>
+    </div>
+  </div>
+
+  <div class="mockup-wrapper">
+    
+    <!-- HEADER -->
+    <header>
+      <div class="logo">
+        <img src="/static/logo.png" alt="ControlN" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDBFNUZGIiBzdHJva2Utd2lkdGg9IjIiPjxwb2x5Z29uIHBvaW50cz0iMTIgMiAyIDcgMTIgMTIgMjIgNyAxMiAyIj48L3BvbHlnb24+PHBvbHlsaW5lIHBvaW50cz0iMiAxNyAxMiAyMiAyMiAxNyI+PC9wb2x5bGluZT48cG9seWxpbmUgcG9pbnRzPSIyIDEyIDEyIDE3IDIyIDEyIj48L3BvbHlsaW5lPjwvc3ZnPg=='">
+        <span>ControlN <span class="ai">Trading</span></span>
+      </div>
+      
+      <div class="nav-pill">
+        <ul class="nav-links">
+          <li><a href="#strategies">Strategies</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#compliance">Compliance</a></li>
+          <li><a href="#marketnews">Market News</a></li>
+        </ul>
+        
+      </div>
+    </header>
+
+    <!-- HERO -->
+    <section class="hero-section">
+      <div class="hero-content">
+        <h1>AUTOMATED AI<br>TRADING SWARM</h1>
+        <p>Maximize Profits with 9 Autonomous, High-Performance Algorithmic Strategies for Indian Index Options. Powered by advanced Machine Learning.</p>
+        <div class="hero-actions">
+          <a href="/login" class="btn-cyan" style="padding: 16px 32px; font-size: 1.05rem;">Start Trading Now</a>
+          <a href="#features" class="btn-outline">Learn More</a>
+        </div>
+      </div>
+      <div class="hero-image">
+        <img src="/static/ai_trading_chip.jpg" alt="AI Trading Chip">
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="stats-row">
+      <!-- SVG gradient definitions -->
+      <svg width="0" height="0" style="position:absolute">
+        <defs>
+          <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#00E5FF" />
+            <stop offset="100%" style="stop-color:#B829FF" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="stat-box">
+        <div class="stat-value">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="1" x2="12" y2="23"></line>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+          </span>
+          ₹20Cr+
+        </div>
+        <div class="stat-label">Traded Volume</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="5" r="3"></circle>
+              <circle cx="5" cy="19" r="3"></circle>
+              <circle cx="19" cy="19" r="3"></circle>
+              <line x1="12" y1="8" x2="5" y2="16"></line>
+              <line x1="12" y1="8" x2="19" y2="16"></line>
+            </svg>
+          </span>
+          9
+        </div>
+        <div class="stat-label">Automated Modules</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+              <polyline points="4 10 12 4 20 8"></polyline>
+            </svg>
+          </span>
+          150%
+        </div>
+        <div class="stat-label">Avg. Annual Return</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">
+          <span class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </span>
+          24/7
+        </div>
+        <div class="stat-label">Market Monitoring</div>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <h2 class="section-heading">Master the Markets with Precision AI</h2>
+    
+    <section class="features-row" id="features">
+      
+      <!-- Card 1 -->
+      <div class="feature-card card-cyan" onclick="document.getElementById('strategies').scrollIntoView({behavior: 'smooth'})">
+        <div class="feature-icon icon-cyan">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+            <rect x="9" y="9" width="6" height="6"></rect>
+            <line x1="9" y1="1" x2="9" y2="4"></line>
+            <line x1="15" y1="1" x2="15" y2="4"></line>
+            <line x1="9" y1="20" x2="9" y2="23"></line>
+            <line x1="15" y1="20" x2="15" y2="23"></line>
+            <line x1="20" y1="9" x2="23" y2="9"></line>
+            <line x1="20" y1="14" x2="23" y2="14"></line>
+            <line x1="1" y1="9" x2="4" y2="9"></line>
+            <line x1="1" y1="14" x2="4" y2="14"></line>
+          </svg>
+        </div>
+        <h3 class="feature-title">Automated Trading Modules</h3>
+        <p class="feature-desc">Diverse algorithms, rapid execution, Adaptive models built for Indian Markets.</p>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="feature-card card-purple" onclick="document.getElementById('security').scrollIntoView({behavior: 'smooth'})">
+        <div class="feature-icon icon-purple">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <path d="M9 12l2 2 4-4" stroke="url(#iconGrad)"></path>
+          </svg>
+        </div>
+        <h3 class="feature-title">Enterprise-Grade Security</h3>
+        <p class="feature-desc">Top-tier encryption, lightning-fast execution, and reliable 99.99% uptime.</p>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="feature-card card-pink" onclick="document.getElementById('compliance').scrollIntoView({behavior: 'smooth'})">
+        <div class="feature-icon icon-pink">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+        </div>
+        <h3 class="feature-title">Regulatory Compliance</h3>
+        <p class="feature-desc">Fully compliant with standard regulations to ensure a safe, legal trading environment.</p>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="feature-card card-gold" onclick="document.getElementById('marketnews').scrollIntoView({behavior: 'smooth'})">
+        <div class="feature-icon icon-gold">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#iconGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+        </div>
+        <h3 class="feature-title">Market Pulse</h3>
+        <p class="feature-desc">📊 Live Market Prices and Market Daily News right at your fingertips.</p>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- ═══ STRATEGIES ═══ -->
+  <section id="strategies" class="section-block">
+    <h2 class="section-title">Automated Trading Modules</h2>
+    <p class="section-subtitle">Five professional-grade algorithmic strategies built for Indian index options — each with independent risk controls and AI signal confirmation.</p>
+    <div class="features-grid">
+
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-blue">Strategy 1</span>
+        <div class="old-feature-icon">🧱</div>
+        <h3 class="old-feature-title">OB + FVG — Smart Money</h3>
+        <p class="old-feature-desc">Identifies institutional Order Blocks (OB) and Fair Value Gaps (FVG) on the 5-minute NIFTY chart. Enters trades when price returns to these key supply/demand imbalance zones with AI-confirmation.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">Bearish / Bullish OB detection</div>
+          <div class="strategy-detail-item">FVG retest + rejection confirmation</div>
+          <div class="strategy-detail-item">AI signal scoring (Tech + Sentiment)</div>
+          <div class="strategy-detail-item">Trailing stop loss with 2 targets</div>
+        </div>
+      </div>
+
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-green">Strategy 2</span>
+        <div class="old-feature-icon">🛡️</div>
+        <h3 class="old-feature-title">9:26 Buy Breakout</h3>
+        <p class="old-feature-desc">Analyzes range expansion and volume profile on index opening bars. Executes direction-biased options trades with adaptive stop losses based on the first candle's high/low range.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">First-candle breakout detection</div>
+          <div class="strategy-detail-item">Volume-weighted entry confirmation</div>
+          <div class="strategy-detail-item">Dynamic SL from opening range</div>
+          <div class="strategy-detail-item">Auto strike selection via Fyers API</div>
+        </div>
+      </div>
+
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-amber">Strategy 3</span>
+        <div class="old-feature-icon">📈</div>
+        <h3 class="old-feature-title">5-Minute ORB</h3>
+        <p class="old-feature-desc">Opening Range Breakout tracking high-volume breakouts on the first 5-minute bar. Fully automated option strike routing, dual profit targets, and real-time trailing stop loss management.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">5-min ORB high/low computation</div>
+          <div class="strategy-detail-item">Dual-target trailing SL management</div>
+          <div class="strategy-detail-item">CE/PE auto-routing on breakout side</div>
+          <div class="strategy-detail-item">Square-off at expiry automatically</div>
+        </div>
+      </div>
+
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-blue" style="background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25);">Strategy 4</span>
+        <div class="old-feature-icon">📜</div>
+        <h3 class="old-feature-title">Wisdom-Aligned Pullback</h3>
+        <p class="old-feature-desc">Monitors key moving averages to detect high-probability pullback entries in the direction of the dominant macro trend on the 1-hour and 5-minute timeframes.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">1H SMA macro trend filter</div>
+          <div class="strategy-detail-item">20 EMA pullback bounce entry</div>
+          <div class="strategy-detail-item">Volume-weighted confirmation</div>
+          <div class="strategy-detail-item">Dynamic stop loss matching</div>
+        </div>
+      </div>
+
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-amber" style="background: rgba(245,158,11,0.15); color: var(--accent-amber); border: 1px solid rgba(245,158,11,0.25);">Strategy 5</span>
+        <div class="old-feature-icon">🚀</div>
+        <h3 class="old-feature-title">Aerospace Mean Reversion</h3>
+        <p class="old-feature-desc">Utilizes a Kalman Filter state estimator to track the index's Fair Value Line (FVL) and a 20-bar 2.5 SD Flight Envelope, executing volume-confirmed reversion entries.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">Kalman Filter state tracking</div>
+          <div class="strategy-detail-item">2.5 SD Flight Envelope mapping</div>
+          <div class="strategy-detail-item">Cover Order (CO) dynamic routing</div>
+          <div class="strategy-detail-item">Strict 45-bar time guardrails</div>
+        </div>
+      </div>
+      <div class="old-feature-card">
+        <span class="strategy-badge badge-green" style="background: rgba(16,185,129,0.15); color: var(--accent-green); border: 1px solid rgba(16,185,129,0.25);">Strategy 8</span>
+        <div class="old-feature-icon">💰</div>
+        <h3 class="old-feature-title">Smart Money Concepts</h3>
+        <p class="old-feature-desc">Detects institutional liquidity sweeps and enters CE or PE options trades with precision.</p>
+        <div class="strategy-details">
+          <div class="strategy-detail-item">1M Liquidity Sweep Detection</div>
+          <div class="strategy-detail-item">Dual Trend Alignment</div>
+          <div class="strategy-detail-item">5M OB/FVG Contextual Zones</div>
+          <div class="strategy-detail-item">Dual Trail Stops (Aggressive/Standard)</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ SECURITY ═══ -->
+  <section id="security" class="section-block" style="background: rgba(59,130,246,0.02);">
+    <h2 class="section-title">Enterprise-Grade Security</h2>
+    <p class="section-subtitle">Your credentials and trading data are protected with military-grade encryption and best-in-class secure infrastructure practices.</p>
+
+    <div class="security-grid">
+      <div class="security-card">
+        <div class="security-icon-wrap">🔐</div>
+        <div class="security-text">
+          <h4>AES-256 Fernet Encryption</h4>
+          <p>All API credentials — including Fyers Client ID, Secret, and Access Tokens — are encrypted at rest in the database using AES-256 Fernet symmetric encryption. Keys are dynamically generated and stored in isolated environment variables on server boot.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🛡️</div>
+        <div class="security-text">
+          <h4>HTTPS / TLS 1.3 in Transit</h4>
+          <p>All traffic between your browser and our servers is encrypted end-to-end via Let's Encrypt SSL/TLS 1.3 certificates. No data is ever transmitted in plain text. HTTP traffic is automatically redirected to HTTPS on port 443.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🔑</div>
+        <div class="security-text">
+          <h4>Session Cookie Security</h4>
+          <p>Authentication sessions use scoped HttpOnly cookies bound to the root path (<code>/</code>), preventing cross-site script access. Sessions are server-side invalidated on logout, and idle sessions are automatically expired after 15 minutes of inactivity.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">⏱️</div>
+        <div class="security-text">
+          <h4>Idle Auto-Lock (15 Minutes)</h4>
+          <p>The platform detects inactivity by monitoring mouse, keyboard, scroll, and touch events. After 15 continuous minutes of no activity, the session is automatically locked and the user is redirected to the login page for re-authentication.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">👥</div>
+        <div class="security-text">
+          <h4>Role-Based Access Control</h4>
+          <p>Multi-user platform with segregated access. Standard users can only access their own data, positions, and API credentials. Administrators have additional privileges to manage user accounts, passwords, and platform settings from the Admin Panel.</p>
+        </div>
+      </div>
+      <div class="security-card">
+        <div class="security-icon-wrap">🖥️</div>
+        <div class="security-text">
+          <h4>Isolated GCP Infrastructure</h4>
+          <p>Hosted on Google Cloud Platform (GCP) in the Asia South 1 (Mumbai) region. The server runs under a dedicated systemd process with strict file permissions. All environment secrets are managed via isolated <code>.env</code> files, never version-controlled.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="security-highlight">
+      <div class="sh-icon">✅</div>
+      <div>
+        <h4>SSL Certificate Verified — controlntrading.online</h4>
+        <p>Your connection is fully secured with a Let's Encrypt SSL certificate covering both <strong>controlntrading.online</strong> and <strong>www.controlntrading.online</strong>. Certificate is auto-renewed every 90 days via Certbot.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ COMPLIANCE ═══ -->
+  <section id="compliance" class="section-block">
+    <h2 class="section-title">Regulatory Compliance</h2>
+    <p class="section-subtitle">ControlN Trading is built with responsible trading practices, risk controls, and full compliance with SEBI's algorithmic trading guidelines for retail investors.</p>
+
+    <div class="compliance-grid">
+      <div class="compliance-card">
+        <div class="cc-icon">📋</div>
+        <h4>SEBI Algo Trading Guidelines</h4>
+        <p>All algorithmic strategies comply with SEBI's framework for retail algorithmic trading. Trades are executed via SEBI-registered broker APIs (Fyers Securities) with full audit trails and order logging.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🧾</div>
+        <h4>Risk Parameter Controls</h4>
+        <p>Platform enforces mandatory risk limits including Max Daily Loss (MDL), Max Daily Trades, and Position Profit Targets. All limits are configurable per user and enforced automatically before any order is placed.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">📊</div>
+        <h4>Full Trade Audit Trail</h4>
+        <p>Every trade entry, modification, exit, and square-off is logged with timestamps and order IDs. Full P&L history with broker-simulated charges (STT, brokerage, GST) is exportable as CSV reports.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🏦</div>
+        <h4>Broker Integration via API</h4>
+        <p>All orders are routed exclusively through Fyers Securities, a SEBI-registered stock broker. Credentials are managed by the user directly and never shared with third parties. No pooling of funds.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">🔒</div>
+        <h4>Data Privacy & Retention</h4>
+        <p>No personal financial data is shared with third parties. Trade and user data is stored in isolated SQLite databases per deployment, with encrypted credentials. Users may request account deletion at any time.</p>
+      </div>
+      <div class="compliance-card">
+        <div class="cc-icon">⚠️</div>
+        <h4>Emergency Exit Controls</h4>
+        <p>One-click Emergency Exit button immediately squares off all open positions and disables automation. Available 24/7 from the dashboard header regardless of active strategy state.</p>
+      </div>
+    </div>
+
+    <div class="disclaimer-box">
+      <h4>⚠️ Risk Disclaimer</h4>
+      <p>Options trading involves a substantial risk of loss and is not suitable for all investors. Algorithmic trading systems execute orders based on predefined rules — past performance is not indicative of future results. ControlN Trading is a technology platform only and does not provide investment advice. Please consult a SEBI-registered investment advisor before trading. Ensure you understand the risks before trading options with real capital.</p>
+    </div>
+  </section>
+
+  <!-- ═══ MARKET NEWS & LIVE PRICES ═══ -->
+  <section id="marketnews" class="section-block" style="background: rgba(16,185,129,0.02);">
+    <h2 class="section-title">Market Pulse</h2>
+    <p class="section-subtitle">Live market prices and today's top financial news to help you stay ahead of market movements.</p>
+
+    <div class="news-layout">
+
+      <!-- LEFT: Live Prices -->
+      <div>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 0.75rem;">
+          <h3 style="font-size: 1rem; font-weight: 700;">📊 Live Market Prices</h3>
+          <button class="refresh-btn" onclick="loadMarketPrices()">🔄 Refresh</button>
+        </div>
+        <div class="last-updated" id="lastUpdated">Fetching live data...</div>
+        <div class="market-prices-grid" id="pricesGrid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- NIFTY Options Insight -->
+        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem;">
+          <h4 style="font-size: 0.88rem; font-weight: 700; margin-bottom: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">📌 Quick Info</h4>
+          <div style="display: grid; grid-template-columns: repeat(2,1fr); gap: 0.75rem;">
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">NIFTY Lot Size</div>
+              <div style="font-size: 1.1rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--accent-green);">65</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">BANKNIFTY Lot Size</div>
+              <div style="font-size: 1.1rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: #60a5fa;">30</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Market Hours</div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">9:15 AM – 3:30 PM</div>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 0.75rem;">
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Expiry (NIFTY)</div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);" id="expiryDay">Tuesday Weekly</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: News Feed -->
+      <div class="news-sidebar">
+        <div class="news-sidebar-header">
+          <h3>📰 Market News</h3>
+          <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+        </div>
+        <div class="news-list" id="newsList">
+          <div class="news-item" style="text-align:center;color:var(--text-muted);padding:32px 20px;">Fetching latest news...</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer>
+    <p style="font-weight: 600;">Copyrights reserved: ControlN Business Consultants</p>
+    <p class="footer-disclaimer">Disclaimer: Options trading involves substantial risk of loss and is not suitable for all investors. Algorithmic trading systems execute orders based on predefined rules. Past performance is not indicative of future results. ControlN Trading is a technology platform and does not provide investment advice. Please consult a SEBI-registered investment advisor before trading with real capital.</p>
+  </footer>
+
+  
+  <!-- MODAL -->
+  <div class="modal-overlay" id="featureModal" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <div class="modal-header">
+        <div class="modal-icon" id="modalIcon"></div>
+        <h2 class="modal-title" id="modalTitle">Title</h2>
+      </div>
+      <div class="modal-body" id="modalBody">
+        Content goes here.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const modalData = {
+      modules: {
+        title: "Automated Trading Modules",
+        iconClass: "icon-cyan",
+        iconSvg: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>`,
+        content: `
+          <p>Our AI swarm consists of 9 distinct trading strategies specifically optimized for Indian Index Options (NIFTY, BANKNIFTY, SENSEX, FINNIFTY).</p>
+          <ul>
+            <li><strong>OB + FVG:</strong> Order block and fair value gap detection.</li>
+            <li><strong>Mean Reversion:</strong> Capitalizing on price over-extensions.</li>
+            <li><strong>Momentum Scalper:</strong> Lightning-fast execution on micro-trends.</li>
+            <li><strong>Smart Money Concepts:</strong> Tracking institutional order flow.</li>
+          </ul>
+          <p>Each module runs autonomously, evaluating market conditions in real-time, 24/7 without human emotion or fatigue.</p>
+        `
+      },
+      security: {
+        title: "Enterprise-Grade Security",
+        iconClass: "icon-purple",
+        iconSvg: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>`,
+        content: `
+          <p>Security is the foundation of our algorithmic infrastructure. We employ multiple layers of protection to ensure your capital and data are safe.</p>
+          <ul>
+            <li><strong>Data Encryption:</strong> AES-256 encryption for all sensitive data and API keys at rest and in transit.</li>
+            <li><strong>Secure Cloud Computing:</strong> Deployed on hardened Google Cloud infrastructure with strict firewall rules.</li>
+            <li><strong>API Sandboxing:</strong> Broker API keys are isolated and execute within secure, restricted memory enclaves.</li>
+            <li><strong>99.99% Uptime:</strong> Redundant server architecture ensures you never miss a critical trade due to downtime.</li>
+          </ul>
+        `
+      },
+      compliance: {
+        title: "Regulatory Compliance",
+        iconClass: "icon-pink",
+        iconSvg: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`,
+        content: `
+          <p>We prioritize building robust systems that align with strict financial regulations to provide a safe, legal trading environment.</p>
+          <ul>
+            <li><strong>SEBI Guidelines Alignment:</strong> Built with adherence to standard exchange and broker guidelines.</li>
+            <li><strong>Transparent Auditing:</strong> Every algorithmic decision and order placement is logged and auditable in real-time via your dashboard.</li>
+            <li><strong>Risk Management:</strong> Strict internal circuit breakers and daily loss limits prevent runaway algorithms or catastrophic drawdowns.</li>
+          </ul>
+        `
+      },
+      pulse: {
+        title: "Market Pulse",
+        iconClass: "icon-gold",
+        iconSvg: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>`,
+        content: `
+          <p>Information advantage is critical. ControlN Trading brings institutional-grade market data directly to your dashboard.</p>
+          <ul>
+            <li><strong>Live Ticker Feeds:</strong> Millisecond-accurate pricing for NIFTY, BANKNIFTY, SENSEX, and MIDCPNIFTY.</li>
+            <li><strong>AI News Sentiment:</strong> We parse thousands of financial news articles daily and use LLMs to gauge market sentiment (Bullish, Bearish, or Neutral) instantly.</li>
+            <li><strong>Macro Indicators:</strong> Real-time tracking of global cues and institutional (FII/DII) activity to give context to our algorithmic entries.</li>
+          </ul>
+        `
+      }
+    };
+
+    function openModal(id) {
+      const data = modalData[id];
+      if (!data) return;
+      
+      const modal = document.getElementById('featureModal');
+      const icon = document.getElementById('modalIcon');
+      
+      // Setup content
+      document.getElementById('modalTitle').innerText = data.title;
+      document.getElementById('modalBody').innerHTML = data.content;
+      
+      // Setup icon classes and SVG
+      icon.className = 'modal-icon ' + data.iconClass;
+      icon.innerHTML = data.iconSvg;
+      
+      // Show modal
+      modal.classList.add('active');
+      document.body.style.overflow = 'hidden'; // Prevent scrolling
+    }
+
+    function closeModal(e) {
+      if (e && e.target.classList.contains('modal-content')) return;
+      document.getElementById('featureModal').classList.remove('active');
+      document.body.style.overflow = 'auto'; // Restore scrolling
+    }
+  // ═══════════════════════════════════════════════════
+    // MARKET PRICES — via /api/market-data (NSE India proxy)
+    // ═══════════════════════════════════════════════════
+    const BADGE_MAP = {
+      'NIFTY 50':               { badge: 'NSE', color: '#10b981' },
+      'NIFTY BANK':             { badge: 'NSE', color: '#10b981' },
+      'NIFTY MIDCAP 50':        { badge: 'NSE', color: '#8b5cf6' },
+      'NIFTY NEXT 50':          { badge: 'NSE', color: '#8b5cf6' },
+      'NIFTY IT':               { badge: 'NSE', color: '#3b82f6' },
+      'NIFTY AUTO':             { badge: 'NSE', color: '#06b6d4' },
+      'NIFTY FMCG':             { badge: 'NSE', color: '#f59e0b' },
+      'NIFTY PHARMA':           { badge: 'NSE', color: '#ec4899' },
+      'NIFTY FINANCIAL SERVICES': { badge: 'NSE', color: '#3b82f6' },
+      'INDIA VIX':              { badge: 'VIX', color: '#ef4444' },
+    };
+
+    function fmtPrice(val, name) {
+      if (val === undefined || val === null) return '--';
+      if (name === 'INDIA VIX') return Number(val).toFixed(2);
+      return '₹' + Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    async function loadMarketPrices() {
+      const grid = document.getElementById('pricesGrid');
+      const lastUpdatedEl = document.getElementById('lastUpdated');
+
+      // Loading skeleton
+      grid.innerHTML = Object.keys(BADGE_MAP).map(n => {
+        const b = BADGE_MAP[n];
+        return `<div class="price-card">
+          <div class="pc-header">
+            <span class="pc-name">${n}</span>
+            <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+          </div>
+          <div class="pc-price pc-loading">Loading...</div>
+          <div class="pc-chg" style="color:var(--text-muted);font-size:0.75rem">Fetching live data...</div>
+        </div>`;
+      }).join('');
+
+      try {
+        const res = await fetch('/api/market-data');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const indices = data.indices || [];
+        if (!indices.length) throw new Error('Empty response');
+
+        grid.innerHTML = indices.map(idx => {
+          const b = BADGE_MAP[idx.name] || { badge: 'NSE', color: '#10b981' };
+          const isUp = idx.change >= 0;
+          return `<div class="price-card">
+            <div class="pc-header">
+              <span class="pc-name">${idx.name}</span>
+              <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+            </div>
+            <div class="pc-price">${fmtPrice(idx.last, idx.name)}</div>
+            <div class="pc-chg ${isUp ? 'up' : 'down'}">
+              ${isUp ? '▲' : '▼'} ${Math.abs(idx.change).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}
+              (${Math.abs(idx.pct).toFixed(2)}%)
+            </div>
+          </div>`;
+        }).join('');
+
+        const cached = data.cached ? ' · <span style="color:#f59e0b">⏱ cached</span>' : '';
+        lastUpdatedEl.innerHTML = `✅ Source: <strong>${data.source || 'Market Data'}</strong> · <strong>${data.fetched_at || '--'}</strong>${cached}`;
+        updateTicker(indices);
+
+      } catch (e) {
+        console.error('Market data error:', e);
+        lastUpdatedEl.textContent = '⚠️ Market data temporarily unavailable. Retrying in 15s...';
+        grid.innerHTML = Object.keys(BADGE_MAP).map(n => {
+          const b = BADGE_MAP[n];
+          return `<div class="price-card">
+            <div class="pc-header">
+              <span class="pc-name">${n}</span>
+              <span class="pc-badge" style="background:${b.color}22;color:${b.color};border:1px solid ${b.color}44">${b.badge}</span>
+            </div>
+            <div class="pc-price" style="color:var(--text-muted)">Retrying...</div>
+            <div class="pc-chg" style="color:var(--text-muted);font-size:0.75rem">Reconnecting...</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    function updateTicker(indices) {
+      const track = document.getElementById('tickerTrack');
+      if (!track) return;
+      const items = indices.map(idx => {
+        const isUp = idx.change >= 0;
+        return `<div class="ticker-item">
+          <span class="t-name">${idx.name}</span>
+          <span class="t-price">${fmtPrice(idx.last, idx.name)}</span>
+          <span class="t-chg ${isUp ? 'up' : 'down'}">${isUp ? '▲' : '▼'} ${Math.abs(idx.pct).toFixed(2)}%</span>
+          <span class="ticker-dot"></span>
+        </div>`;
+      }).join('');
+      // Duplicate content for seamless infinite scroll
+      track.innerHTML = items + items;
+      // Recalculate animation duration based on content width
+      requestAnimationFrame(() => {
+        const fullWidth = track.scrollWidth / 2;
+        const speed = 60; // pixels per second
+        const duration = fullWidth / speed;
+        track.style.animationDuration = duration + 's';
+      });
+    }
+
+    // ═══════════════════════════════════════════════════
+    // LIVE NEWS — via /api/market-news (RSS proxy)
+    // ═══════════════════════════════════════════════════
+    function timeAgo(pubDateStr) {
+      if (!pubDateStr) return '';
+      try {
+        const diff = Math.floor((Date.now() - new Date(pubDateStr).getTime()) / 60000);
+        if (diff < 1)    return 'Just now';
+        if (diff < 60)   return `${diff} min ago`;
+        if (diff < 1440) return `${Math.floor(diff/60)} hr ago`;
+        return new Date(pubDateStr).toLocaleDateString('en-IN');
+      } catch(e) { return pubDateStr; }
+    }
+
+    let _allNews = [];
+    let _newsExpanded = false;
+
+    async function loadMarketNews() {
+      const newsList = document.getElementById('newsList');
+      try {
+        const res = await fetch('/api/market-news');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const news = data.news || [];
+        if (!news.length) throw new Error('No news');
+
+        _allNews = news;
+        renderNews();
+      } catch(e) {
+        console.warn('News RSS load failed:', e);
+        newsList.innerHTML = '<div class="news-item" style="text-align:center;color:var(--text-muted);padding:24px;">Unable to load news. Retrying...</div>';
+      }
+    }
+
+    // C1: only allow http/https navigation targets; reject javascript:, data:, etc.
+    function _safeHttpUrl(u) {
+      if (!u) return null;
+      try {
+        const parsed = new URL(u, window.location.href);
+        return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function renderNews() {
+      const newsList = document.getElementById('newsList');
+      const sourceColors = { 'NDTV Profit': '#ef4444', 'Times of India': '#f59e0b', 'Livemint': '#10b981', 'Economic Times': '#06b6d4', 'Moneycontrol': '#8b5cf6' };
+      const visible = _newsExpanded ? _allNews : _allNews.slice(0, 6);
+
+      // C1: build every node with createElement + textContent so feed-controlled strings
+      // (title/source/pubDate, all from a third-party RSS feed) can NEVER be parsed as HTML,
+      // and wire the click via addEventListener to a protocol-validated URL instead of
+      // inlining n.link into an onclick attribute string (blocks attribute-breakout + javascript:).
+      newsList.replaceChildren();
+
+      visible.forEach(n => {
+        const col = sourceColors[n.source] || '#9ca3af';
+        const safeUrl = _safeHttpUrl(n.link);
+
+        const item = document.createElement('div');
+        item.className = 'news-item';
+        if (safeUrl) {
+          item.style.cursor = 'pointer';
+          item.addEventListener('click', () => window.open(safeUrl, '_blank', 'noopener'));
+        }
+
+        const cat = document.createElement('div');
+        cat.className = 'news-cat';
+        cat.style.color = col;
+        cat.textContent = '📰 ' + (n.source || '').toUpperCase();
+
+        const headline = document.createElement('div');
+        headline.className = 'news-headline';
+        headline.textContent = n.title || '';
+
+        const meta = document.createElement('div');
+        meta.className = 'news-meta';
+        meta.textContent = timeAgo(n.pubDate) + (n.pubDate ? ' · ' : '') + (n.source || '');
+
+        item.appendChild(cat);
+        item.appendChild(headline);
+        item.appendChild(meta);
+        newsList.appendChild(item);
+      });
+
+      if (_allNews.length > 6 && !_newsExpanded) {
+        const btn = document.createElement('button');
+        btn.className = 'news-more-btn';
+        btn.textContent = `Show ${_allNews.length - 6} More →`;
+        btn.addEventListener('click', () => { _newsExpanded = true; renderNews(); });
+        newsList.appendChild(btn);
+      } else if (_newsExpanded && _allNews.length > 6) {
+        const btn = document.createElement('button');
+        btn.className = 'news-more-btn';
+        btn.textContent = 'Show Less ↑';
+        btn.addEventListener('click', () => { _newsExpanded = false; renderNews(); });
+        newsList.appendChild(btn);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // INIT
+    // ═══════════════════════════════════════════════════
+    loadMarketPrices();
+    loadMarketNews();
+    setInterval(loadMarketPrices, 15000);   // prices every 15s for instant feel
+    setInterval(loadMarketNews,  120000);   // news every 2 min
+  
+</script>
+</body>
+
+
+</html>

@@ -1,0 +1,34 @@
+# Core server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Fyers API (brings its own requests version)
+fyers-apiv3>=3.1.7
+
+# HTTP & networking
+httpx>=0.28.0
+websockets>=10.4
+aiohttp>=3.9.0
+requests>=2.31.0
+certifi>=2024.2.2  # D2: explicit CA bundle for TLS verification (lot-size + RSS/NSE fetches)
+
+# Auth & security
+passlib>=1.7.4
+bcrypt>=4.2.0
+cryptography>=42.0.0
+pyotp>=2.9.0
+itsdangerous>=2.1.0
+
+# AI engines (optional — app has fallback)
+google-generativeai>=0.8.0
+openai
+
+# Utilities
+python-dotenv>=1.0.0
+pytz
+pyyaml>=5.1
+aiosqlite==0.20.0
+
+# Ultra-Low Latency optimizations
+uvloop>=0.21.0
+orjson>=3.10.0

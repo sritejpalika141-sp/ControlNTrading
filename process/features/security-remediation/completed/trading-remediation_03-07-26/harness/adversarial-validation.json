@@ -1,0 +1,59 @@
+{
+  "scenarios": [
+    {
+      "scenario": "Attacker forges user_id=1 cookie to impersonate admin",
+      "ruled_out": true,
+      "rationale": "Cookie is now an itsdangerous signed token; a raw forged integer is rejected once the 7-day grace window closes (SESSION_MIGRATION_CUTOFF=2026-07-11). Residual: during the grace window a raw integer is still honored — a deliberate, time-bounded tradeoff to avoid mass-logout, documented in the plan."
+    },
+    {
+      "scenario": "Attacker tampers with a valid signed cookie (bit-flips the id)",
+      "ruled_out": true,
+      "rationale": "URLSafeTimedSerializer.loads raises BadSignature; resolver returns None. Covered by test_tampered_signed_cookie_rejected."
+    },
+    {
+      "scenario": "Signed cookie replay after expiry",
+      "ruled_out": true,
+      "rationale": "SIGNED_MAX_AGE=30 days enforced via loads(max_age=...); expired tokens raise SignatureExpired -> None."
+    },
+    {
+      "scenario": "OAuth callback re-issues a raw (forgeable) cookie, bypassing signing",
+      "ruled_out": true,
+      "rationale": "Both OAuth-callback set_cookie sites now use sign_user_id(); no raw cookie is ever re-issued post-login. (OAuth state-binding/CSRF hardening remains Phase 2 scope.)"
+    },
+    {
+      "scenario": "Attacker discovers webhook URL and forges Telegram /stop or /start",
+      "ruled_out": true,
+      "rationale": "Webhook now requires X-Telegram-Bot-Api-Secret-Token verified via hmac.compare_digest before body parse; fail-closed 403. Requires the one-time setWebhook secret_token registration (deploy-day manual step)."
+    },
+    {
+      "scenario": "Brute-force login against admin",
+      "ruled_out": true,
+      "rationale": "5 failed attempts / 15 min per-username locks further attempts without checking the password (no timing oracle). Residual: username-keyed (not IP) — documented deliberate tradeoff; distributed username-spray is not mitigated by this control."
+    },
+    {
+      "scenario": "Guessable default admin/admin123 on fresh install",
+      "ruled_out": true,
+      "rationale": "Hardcoded default removed; admin only created from explicit INITIAL_ADMIN_PASSWORD, else no account + warning. Verified no 'admin123' literal remains."
+    },
+    {
+      "scenario": "Concurrent /api/order requests exceed daily trade limit (TOCTOU)",
+      "ruled_out": true,
+      "rationale": "order_lock widened to wrap check+place+record_trade atomically; concurrency test confirms exactly max_trades_per_day succeed. Live-broker latency behavior deferred to deploy-day paper round-trip."
+    },
+    {
+      "scenario": "New position opened during emergency max-loss square-off",
+      "ruled_out": false,
+      "rationale": "Background-loop race closed (automation_enabled=False set before the exit loop). NOT ruled out: a user manually re-enabling automation via Telegram /start or the toggle API mid-square-off could still race. Accepted known-gap, tracked in phase1-square-off-reentry-guard backlog note."
+    },
+    {
+      "scenario": "Encryption-key rotation orphans all credentials (get_cipher auto-regenerates a key)",
+      "ruled_out": true,
+      "rationale": "Mitigated by pre-restart step (grep -c '^ENCRYPTION_KEY=' .env == 1) in deployment order + execute-agent instruction E2; migration takes an automatic pre-migration backup and runs in a single transaction. Live cutover still depends on the operator following E2."
+    },
+    {
+      "scenario": "Secrets remain exploitable from git history after untracking",
+      "ruled_out": false,
+      "rationale": "By explicit user decision NO git history rewrite is performed; historical .env/.db blobs remain in history. Mitigated by provider-secret rotation (Item G2, manual) — exposure is neutralized by rotation, not erasure. Documented, accepted."
+    }
+  ]
+}

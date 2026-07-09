@@ -1,0 +1,77 @@
+{
+  "task": "Phase 2 remaining findings security remediation (trading-remediation)",
+  "snippets": [
+    {
+      "file": "trading-app/app.py",
+      "lines": "848-874",
+      "description": "get_current_client (A1) — guest/user-0 fallback is closed by default. Raises HTTPException(401) when no valid session identity is resolved, unless the caller explicitly opts in with allow_guest=True. Also rejects a deactivated user's still-valid cookie with a 401.",
+      "content": "async def get_current_client(request: Request, allow_guest: bool = False):\n    \"\"\"Resolve the FyersClient for the authenticated caller.\n\n    Phase 2 Item A1: the guest/user-0 fallback is CLOSED by default. Any trading-critical\n    endpoint (order placement, positions, funds, settings, automation toggles, quotes, etc.)\n    that reaches this without a valid session identity now receives a 401 instead of a\n    silently-scoped guest/user-0 context. The ONLY routes permitted to opt into the guest\n    path pass ``allow_guest=True`` explicitly — currently the single genuinely-public,\n    non-trading info endpoint ``GET /api/version`` (UI shell health/version poll that may\n    fire before login). Do not add to this allowlist without a documented, non-trading reason.\n    \"\"\"\n    user_id = await resolve_authenticated_user_id(request)\n    if not user_id:\n        if not allow_guest:\n            raise HTTPException(status_code=401, detail=\"Unauthorized\")\n        user_id = 0 # Explicitly-allowlisted public/guest context only\n\n    if user_id != 0:\n        user = await Database.get_user_by_id(user_id)\n        if not user or not user.get(\"is_active\", True):\n            raise HTTPException(status_code=401, detail=\"Unauthorized - Account deactivated\")\n\n    u_id = int(user_id)\n    if u_id not in USER_CONTEXTS:\n        USER_CONTEXTS[u_id] = FyersClient(user_id=u_id)\n\n    return USER_CONTEXTS[u_id]"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "2738-2742",
+      "description": "The only call site in the codebase that passes allow_guest=True to get_current_client — confirmed via grep to be the single exception to A1's 401 default. It is a non-trading, read-only version/uptime poll, not an order/positions/funds/settings endpoint.",
+      "content": "@app.get(\"/api/version\")\nasync def get_version(request: Request):\n    \"\"\"Return dashboard version and system info.\"\"\"\n    # A1 allowlist: non-trading UI health/version poll may fire before login → guest OK.\n    client = await get_current_client(request, allow_guest=True)"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "2120-2153",
+      "description": "Regime/duplicate-position guard (B4) inside place_order's order_lock critical section — now reads the live state.market_regime signal and fails closed with an explicit structured rejection instead of the old dead ai_trend_cache check that silently no-op'd.",
+      "content": "async with state.order_lock:\n        if state.trades_today >= state.max_trades_per_day:\n            return {\"success\": False, \"message\": f\"⛔ Daily trade limit reached ({state.max_trades_per_day} trades today). Manual order blocked.\"}\n\n        # ═══════════════════════════════════════════\n        # REGIME LOCKOUT: Block manual trades in flat/choppy markets & enforce alignment\n        # ═══════════════════════════════════════════\n        # B4: the former guard read `ai_trend_cache`, which is DEAD — grep confirms it has zero\n        # write sites (only a `{}` declaration in state.py, an alias in app.py, and this single\n        # read). `if trend_cache:` was therefore always falsy, so client.place_order /\n        # state.record_trade / return were NEVER reached — manual orders silently no-op'd\n        # (implicit None return). We route the guard off `state.market_regime`, the LIVE signal\n        # actually written by regime_worker.py (values: TRENDING_UP/TRENDING_DOWN/CHOPPY_SIDEWAYS/\n        # EVENT_RISK_AVOID/NEUTRAL/CLOSED). We FAIL CLOSED with an explicit structured rejection\n        # when the regime is not a confirmed tradeable trend — regime_worker sets NEUTRAL on every\n        # failure/fallback/insufficient-data path, so treating anything other than TRENDING_UP/DOWN\n        # as a block also covers the empty/stale-signal case. The order-placement path is DEDENTED\n        # out of the guard so a real result (rejection OR order outcome) is always returned, never\n        # an unlabeled None.\n        import state as _state_mod\n        regime = (_state_mod.market_regime or \"\").upper()\n        sym_u = order.symbol.upper()\n\n        if regime not in (\"TRENDING_UP\", \"TRENDING_DOWN\"):\n            return {\"success\": False, \"message\": f\"⛔ Manual trade blocked: market regime is '{regime or 'UNKNOWN'}' — no confirmed tradeable trend (Zero-Trading lockout active).\"}\n\n        if regime == \"TRENDING_UP\" and \"PE\" in sym_u:\n            return {\"success\": False, \"message\": \"⛔ Manual trade blocked: regime is TRENDING_UP (only CALL/CE trades allowed).\"}\n        if regime == \"TRENDING_DOWN\" and \"CE\" in sym_u:\n            return {\"success\": False, \"message\": \"⛔ Manual trade blocked: regime is TRENDING_DOWN (only PUT/PE trades allowed).\"}"
+    },
+    {
+      "file": "trading-app/state.py",
+      "lines": "46",
+      "description": "market_regime default — the signal the B4 guard reads defaults to the fail-closed string \"NEUTRAL\" (not unset/None), so an uninitialized or never-updated state is guaranteed to fall through to the 'not in (TRENDING_UP, TRENDING_DOWN)' rejection branch rather than raising AttributeError or being treated as tradeable.",
+      "content": "market_regime: str = \"NEUTRAL\""
+    },
+    {
+      "file": "trading-app/models.py",
+      "lines": "18",
+      "description": "DecryptionError — the dedicated exception type introduced by D1 so callers get an explicit, typed failure signal instead of a silently-wrong plaintext value.",
+      "content": "class DecryptionError(Exception):"
+    },
+    {
+      "file": "trading-app/models.py",
+      "lines": "94-114",
+      "description": "decrypt_val (D1) — on a genuine Fernet decryption failure (wrong key / corrupted ciphertext) now raises DecryptionError and logs loudly instead of silently returning the ciphertext as if it were usable plaintext. Legacy never-encrypted plaintext values still pass through unchanged (bounded backwards-compat, not a security regression since that value was never ciphertext to begin with).",
+      "content": "def decrypt_val(val: str) -> str:\n    if not val:\n        return val\n    try:\n        cipher = get_cipher()\n        return cipher.decrypt(val.encode('utf-8')).decode('utf-8')\n    except InvalidToken:\n        # D1: distinguish two failure modes instead of silently returning the raw value:\n        #  - the value LOOKS like a real Fernet token but won't decrypt (wrong key / corruption):\n        #    fail LOUD — never hand ciphertext back as if it were a usable plaintext credential.\n        #  - the value is legacy plaintext that was never encrypted: return it as-is (bounded\n        #    backwards-compat), which is returning plaintext-as-plaintext, not ciphertext-as-plaintext.\n        if _looks_like_fernet_token(val):\n            logger.error(\"🔓 decrypt_val: value is an encrypted Fernet token but decryption FAILED \"\n                         \"(wrong ENCRYPTION_KEY or corrupted ciphertext). Refusing to return ciphertext.\")\n            raise DecryptionError(\"Fernet token failed to decrypt\")\n        return val\n    except Exception as e:\n        # Unexpected error (not a decrypt-validity failure): log loudly, do not mask.\n        logger.error(f\"🔓 decrypt_val: unexpected error during decryption: {e}\")\n        raise DecryptionError(str(e))"
+    },
+    {
+      "file": "trading-app/fetch_lot_sizes.py",
+      "lines": "1-11",
+      "description": "TLS certificate verification restored (D2) — verify=False replaced with an explicit certifi.where() CA bundle for the Fyers lot-size CSV fetch, closing the MITM-tampering exposure.",
+      "content": "import requests\nimport json\nimport os\nimport certifi\n\ndef fetch_and_save_lot_sizes():\n    print(\"Downloading NSE_FO.csv from Fyers...\")\n    # D2: TLS certificate verification is ON. Point at certifi's CA bundle explicitly so a\n    # broken/absent system trust store does not silently disable verification (the previous\n    # verify=False exposed this fetch to MITM tampering).\n    resp = requests.get(\"https://public.fyers.in/sym_details/NSE_FO.csv\", verify=certifi.where(), timeout=10)"
+    },
+    {
+      "file": "trading-app/workers/health_agent.py",
+      "lines": "16-29",
+      "description": "ALLOWED_FIX_ACTIONS + _match_fix_action (D6) — the LLM's free-text fix suggestion must now match one exact allow-listed token (after trim/lowercase), not a substring anywhere in a longer sentence. A sentence merely containing a token (e.g. 'do NOT restart_ws') falls through to the safe 'wait' default.",
+      "content": "ALLOWED_FIX_ACTIONS = {\"restart_ws\", \"relogin\", \"clear_cache\", \"wait\"}\n\n\ndef _match_fix_action(raw: str) -> str:\n    \"\"\"D6: exact-token match of an LLM fix suggestion against the allow-list.\n\n    Trims whitespace and surrounding quotes/backticks/periods, lowercases, then requires EXACT\n    equality with an allow-listed token. A sentence that merely CONTAINS a token (e.g.\n    'do NOT restart_ws') does NOT fire the action — it falls through to 'wait'.\n    \"\"\"\n    if not raw:\n        return \"wait\"\n    cleaned = raw.strip().strip('`\"\\'. \\n\\t').lower()\n    return cleaned if cleaned in ALLOWED_FIX_ACTIONS else \"wait\""
+    },
+    {
+      "file": "trading-app/workers/health_agent.py",
+      "lines": "106-121",
+      "description": "execute_fix (D6) — restart_ws/relogin now scope to the originating u_id when the triggering error was user-scoped, falling back to all USER_CONTEXTS only for genuinely global errors (u_id is None). Also re-checks the action against ALLOWED_FIX_ACTIONS as a hard guard before acting.",
+      "content": "async def execute_fix(fix_action: str, u_id=None):\n    # D6: hard allow-list guard — never execute anything outside the approved set.\n    if fix_action not in ALLOWED_FIX_ACTIONS:\n        logger.warning(f\"🩺 Health Agent: rejected non-allowlisted action '{fix_action}' — treating as wait.\")\n        return\n\n    # D6: scope restart_ws/relogin to the originating user when the triggering error was\n    # user-scoped; fall back to all users only for genuinely global errors (u_id is None).\n    if u_id is not None and int(u_id) in USER_CONTEXTS:\n        targets = [(int(u_id), USER_CONTEXTS[int(u_id)])]\n    else:\n        targets = list(USER_CONTEXTS.items())\n\n    if fix_action == \"restart_ws\":\n        logger.info(f\"🩺 Health Agent executing: restart_ws (scope: {'user ' + str(u_id) if u_id is not None else 'all users'})\")"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "555-561",
+      "description": "OAuth state generation (A2) — /api/fyers/login_url now binds `state` to generate_oauth_state(user_id), a signed single-use short-TTL nonce, instead of the old raw `state=user_id` that any party could observe or guess and replay to hijack another user's callback.",
+      "content": "    # A2: bind the OAuth `state` to a signed, single-use, short-TTL nonce keyed to the\n    # initiating user instead of the raw user_id (which any party could observe/guess and\n    # replay to hijack another user's callback + session cookie).\n    from urllib.parse import quote as _urlquote\n    oauth_state = generate_oauth_state(user_id)\n    url = url.replace(\"state=None\", f\"state={_urlquote(oauth_state)}\")\n    return {\"url\": url}"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "571-580",
+      "description": "OAuth state consumption (A2) at /fyers/callback — an invalid/expired/replayed state is rejected with a redirect to /login?reason=invalid_state rather than being trusted at face value.",
+      "content": "    # A2: when a `state` value is present it MUST be a valid, unexpired, single-use signed\n    # nonce (see generate_oauth_state). We no longer trust a raw `state=user_id` at face value.\n    state = request.query_params.get(\"state\")\n    state_present = bool(state and state != \"None\")\n    if state_present:\n        bound_uid = consume_oauth_state(state)\n        if bound_uid is None:\n            print(\"⚠️ /fyers/callback rejected: invalid/expired/replayed OAuth state\", flush=True)\n            return RedirectResponse(url=\"/login?reason=invalid_state\")\n        user_id = bound_uid"
+    },
+    {
+      "file": "trading-app/auth_utils.py",
+      "lines": "134-176",
+      "description": "generate_oauth_state / consume_oauth_state (A2) — the nonce is signed (URLSafeTimedSerializer), bound to the initiating uid, checked for signature validity/expiry (max_age=OAUTH_STATE_TTL_SECONDS) and single-use (rejected if the nonce is already in _USED_OAUTH_NONCES). It is not additionally bound to the browser session presenting the callback — see adversarial-validation.json scenario (b) for the residual gap this leaves.",
+      "content": "def generate_oauth_state(user_id) -> str:\n    \"\"\"Return a signed, single-use, short-TTL OAuth `state` nonce bound to the initiating user.\"\"\"\n    nonce = os.urandom(16).hex()\n    return _get_oauth_serializer().dumps({\"uid\": int(user_id), \"nonce\": nonce})\n\n\ndef consume_oauth_state(state: Optional[str], now: Optional[float] = None) -> Optional[int]:\n    \"\"\"\n    Validate an OAuth `state` value and return the bound integer user id, or None if invalid.\n\n    Rejects when: state is missing, signature is bad/forged, the token is older than\n    OAUTH_STATE_TTL_SECONDS, or the nonce has already been consumed (replay). On success the\n    nonce is marked used so a second presentation of the same valid state fails.\n    \"\"\"\n    ...\n    try:\n        data = _get_oauth_serializer().loads(state, max_age=OAUTH_STATE_TTL_SECONDS)\n    except (BadSignature, SignatureExpired, ValueError, TypeError):\n        return None\n    ...\n    if nonce in _USED_OAUTH_NONCES:\n        return None  # replay of an already-consumed nonce\n    _USED_OAUTH_NONCES[nonce] = now + OAUTH_STATE_TTL_SECONDS"
+    }
+  ]
+}

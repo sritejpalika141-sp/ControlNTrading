@@ -1,0 +1,1029 @@
+{
+  "nodes": [
+    {
+      "id": "app",
+      "label": "app.py",
+      "file_type": "code",
+      "source_file": "trading-app/app.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_all",
+      "label": "backtest_all.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_all.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_gap_fill",
+      "label": "backtest_gap_fill.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_gap_fill.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backtest_strategy_7",
+      "label": "backtest_strategy_7.py",
+      "file_type": "code",
+      "source_file": "trading-app/backtest_strategy_7.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_ai_engine",
+      "label": "ai_engine.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/ai_engine.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_automation",
+      "label": "automation.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/automation.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_candle_builder",
+      "label": "candle_builder.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/candle_builder.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_fvg",
+      "label": "fvg.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/fvg.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_key_levels",
+      "label": "key_levels.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/key_levels.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_logger",
+      "label": "logger.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/logger.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_notifier",
+      "label": "notifier.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/notifier.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_order_blocks",
+      "label": "order_blocks.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/order_blocks.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_signals",
+      "label": "signals.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_5",
+      "label": "strategy_5.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_5.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_926",
+      "label": "strategy_926.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_926.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_gap",
+      "label": "strategy_gap.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_gap.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_orb",
+      "label": "strategy_orb.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_orb.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_swing",
+      "label": "strategy_swing.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_swing.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strategy_wisdom",
+      "label": "strategy_wisdom.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strategy_wisdom.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_strikes",
+      "label": "strikes.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/strikes.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_trading_agents_oracle",
+      "label": "trading_agents_oracle.py",
+      "file_type": "code",
+      "source_file": "trading-app/engine/trading_agents_oracle.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_ws_feed_fyerswsfeed",
+      "label": "FyersWSFeed",
+      "file_type": "code",
+      "source_file": "engine/ws_feed.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_ws_feed_ws_feed",
+      "label": "ws_feed",
+      "file_type": "code",
+      "source_file": "engine/ws_feed.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "engine_ws_feed_index_prev_close_reconstruction",
+      "label": "Index Prev Close Reconstruction",
+      "file_type": "rationale",
+      "source_file": "engine/ws_feed.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "models_database",
+      "label": "Database",
+      "file_type": "code",
+      "source_file": "models.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "models_risk_management_settings",
+      "label": "Risk Management Settings",
+      "file_type": "concept",
+      "source_file": "models.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fyers_client_fyersclient",
+      "label": "FyersClient",
+      "file_type": "code",
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fyers_client_saas_master_credentials",
+      "label": "SaaS Master Credentials Fallback",
+      "file_type": "rationale",
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "state_get_user_state",
+      "label": "get_user_state",
+      "file_type": "code",
+      "source_file": "state.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "state_get_current_client",
+      "label": "get_current_client",
+      "file_type": "code",
+      "source_file": "state.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "state_broadcast_log",
+      "label": "broadcast_log",
+      "file_type": "code",
+      "source_file": "state.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "state_user_contexts",
+      "label": "USER_CONTEXTS",
+      "file_type": "code",
+      "source_file": "state.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "state_user_states",
+      "label": "USER_STATES",
+      "file_type": "code",
+      "source_file": "state.py",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_app_connectwebsocket",
+      "label": "connectWebSocket",
+      "file_type": "code",
+      "source_file": "static/app.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_app_checkauthstatus",
+      "label": "checkAuthStatus",
+      "file_type": "code",
+      "source_file": "static/app.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "workers_auto_trader_is_symbol_expiry_today",
+      "label": "is_symbol_expiry_today",
+      "file_type": "code",
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "id": "workers_auto_trader_trailing_monitor",
+      "label": "trailing_monitor",
+      "file_type": "code",
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "id": "workers_auto_trader_calculate_smart_sl",
+      "label": "calculate_smart_sl",
+      "file_type": "code",
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "id": "workers_market_worker_get_market_phase",
+      "label": "get_market_phase",
+      "file_type": "code",
+      "source_file": "workers/market_worker.py"
+    },
+    {
+      "id": "workers_market_worker_market_data_worker",
+      "label": "market_data_worker",
+      "file_type": "code",
+      "source_file": "workers/market_worker.py"
+    },
+    {
+      "id": "workers_news_worker_newsworker",
+      "label": "NewsWorker",
+      "file_type": "code",
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "id": "workers_news_worker_newsworker_fetch_rss_headlines",
+      "label": "fetch_rss_headlines",
+      "file_type": "code",
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "id": "workers_news_worker_newsworker_update_summary",
+      "label": "update_summary",
+      "file_type": "code",
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "id": "workers_news_worker_newsworker_run",
+      "label": "run",
+      "file_type": "code",
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "id": "trading_app_test_login2_test",
+      "label": "test",
+      "file_type": "code",
+      "source_file": "test_login2.py"
+    },
+    {
+      "id": "trading_app_test_quotes_main",
+      "label": "main",
+      "file_type": "code",
+      "source_file": "test_quotes.py"
+    },
+    {
+      "id": "trading_app_test_ws_main",
+      "label": "main",
+      "file_type": "code",
+      "source_file": "test_ws.py"
+    },
+    {
+      "id": "trading_app_dailyupdates",
+      "label": "Daily Updates Changelog",
+      "file_type": "document",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "trading_app_dailyupdates_strategy_1_ob_fvg",
+      "label": "Strategy 1: OB + FVG",
+      "file_type": "concept",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "trading_app_dailyupdates_strategy_2_926_breakout",
+      "label": "Strategy 2: 9:26 Breakout",
+      "file_type": "concept",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "trading_app_dailyupdates_strategy_3_5_min_orb",
+      "label": "Strategy 3: 5-Minute ORB",
+      "file_type": "concept",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "trading_app_dailyupdates_strategy_4_wisdom_aligned_pullback",
+      "label": "Strategy 4: Wisdom-Aligned Pullback",
+      "file_type": "concept",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "trading_app_dailyupdates_strategy_5_aerospace_mean_reversion",
+      "label": "Strategy 5: Optimized Aerospace Mean Reversion",
+      "file_type": "concept",
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "id": "static_admin",
+      "label": "Admin Panel HTML",
+      "file_type": "document",
+      "source_file": "static/admin.html"
+    },
+    {
+      "id": "static_index",
+      "label": "Dashboard HTML",
+      "file_type": "document",
+      "source_file": "static/index.html"
+    },
+    {
+      "id": "static_landing",
+      "label": "Landing Page HTML",
+      "file_type": "document",
+      "source_file": "static/landing.html"
+    },
+    {
+      "id": "static_login",
+      "label": "Login Page HTML",
+      "file_type": "document",
+      "source_file": "static/login.html"
+    },
+    {
+      "id": "static_logo_512_logo",
+      "label": "Control N Trading Logo",
+      "file_type": "image",
+      "source_file": "static/logo-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_512_brand",
+      "label": "Control N Trading",
+      "file_type": "concept",
+      "source_file": "static/logo-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_512_tagline",
+      "label": "AI Automated Trades",
+      "file_type": "concept",
+      "source_file": "static/logo-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_192_logo",
+      "label": "Control N Trading Logo",
+      "file_type": "image",
+      "source_file": "trading-app/static/logo-192.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_192_ai_automated_trades",
+      "label": "AI Automated Trades",
+      "file_type": "concept",
+      "source_file": "trading-app/static/logo-192.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_logo",
+      "label": "Control N Trading Logo",
+      "file_type": "image",
+      "source_file": "static/logo.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_control_n_trading",
+      "label": "Control N Trading",
+      "file_type": "concept",
+      "source_file": "static/logo.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "static_logo_ai_automated_trades",
+      "label": "AI Automated Trades",
+      "file_type": "concept",
+      "source_file": "static/logo.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "backtest_all",
+      "target": "engine_order_blocks",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "trading-app/backtest_all.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_automation",
+      "target": "engine_notifier",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "trading-app/engine/automation.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_fvg",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_key_levels",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_signals",
+      "target": "engine_order_blocks",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "trading-app/engine/signals.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_ws_feed_fyerswsfeed",
+      "target": "engine_candle_builder_candle_builder",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "engine/ws_feed.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "engine_ws_feed_fyerswsfeed",
+      "target": "engine_ws_feed_index_prev_close_reconstruction",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "engine/ws_feed.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "models_database",
+      "target": "models_risk_management_settings",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "models.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fyers_client_fyersclient",
+      "target": "models_database",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fyers_client_fyersclient",
+      "target": "engine_ws_feed_ws_feed",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fyers_client_fyersclient",
+      "target": "state_user_contexts",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fyers_client_fyersclient",
+      "target": "fyers_client_saas_master_credentials",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "fyers_client.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "state_get_current_client",
+      "target": "state_user_contexts",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "state.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "state_get_user_state",
+      "target": "state_user_states",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "state.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "state_broadcast_log",
+      "target": "models_database",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "state.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "state_broadcast_log",
+      "target": "engine_notifier_trigger_webhook_background",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "state.py",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "static_app_checkauthstatus",
+      "target": "fyers_client_fyersclient",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "static/app.js",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "workers_auto_trader_trailing_monitor",
+      "target": "workers_auto_trader_is_symbol_expiry_today",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "source": "workers_auto_trader_calculate_smart_sl",
+      "target": "workers_auto_trader_is_symbol_expiry_today",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "source": "workers_market_worker_market_data_worker",
+      "target": "workers_market_worker_get_market_phase",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "workers/market_worker.py"
+    },
+    {
+      "source": "workers_news_worker_newsworker_update_summary",
+      "target": "workers_news_worker_newsworker_fetch_rss_headlines",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "source": "workers_news_worker_newsworker_run",
+      "target": "workers_news_worker_newsworker_update_summary",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "workers/news_worker.py"
+    },
+    {
+      "source": "trading_app_test_login2_test",
+      "target": "models_database_get_user_by_username",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "test_login2.py"
+    },
+    {
+      "source": "trading_app_test_login2_test",
+      "target": "models_database_verify_password",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "test_login2.py"
+    },
+    {
+      "source": "trading_app_dailyupdates",
+      "target": "trading_app_dailyupdates_strategy_1_ob_fvg",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "source": "trading_app_dailyupdates",
+      "target": "trading_app_dailyupdates_strategy_2_926_breakout",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "source": "trading_app_dailyupdates",
+      "target": "trading_app_dailyupdates_strategy_3_5_min_orb",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "source": "trading_app_dailyupdates",
+      "target": "trading_app_dailyupdates_strategy_4_wisdom_aligned_pullback",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "source": "trading_app_dailyupdates",
+      "target": "trading_app_dailyupdates_strategy_5_aerospace_mean_reversion",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dailyupdates.md"
+    },
+    {
+      "source": "static_landing",
+      "target": "trading_app_dailyupdates_strategy_1_ob_fvg",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/landing.html"
+    },
+    {
+      "source": "static_landing",
+      "target": "trading_app_dailyupdates_strategy_2_926_breakout",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/landing.html"
+    },
+    {
+      "source": "static_landing",
+      "target": "trading_app_dailyupdates_strategy_3_5_min_orb",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/landing.html"
+    },
+    {
+      "source": "static_landing",
+      "target": "trading_app_dailyupdates_strategy_4_wisdom_aligned_pullback",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/landing.html"
+    },
+    {
+      "source": "static_landing",
+      "target": "trading_app_dailyupdates_strategy_5_aerospace_mean_reversion",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/landing.html"
+    },
+    {
+      "source": "static_index",
+      "target": "trading_app_dailyupdates_strategy_1_ob_fvg",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/index.html"
+    },
+    {
+      "source": "static_index",
+      "target": "trading_app_dailyupdates_strategy_2_926_breakout",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "static/index.html"
+    },
+    {
+      "source": "workers_auto_trader_trailing_monitor",
+      "target": "trading_app_dailyupdates_strategy_5_aerospace_mean_reversion",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "source": "workers_auto_trader_trailing_monitor",
+      "target": "trading_app_dailyupdates_strategy_3_5_min_orb",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "workers/auto_trader.py"
+    },
+    {
+      "source": "static_logo_512_logo",
+      "target": "static_logo_512_brand",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "static/logo-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "static_logo_512_logo",
+      "target": "static_logo_512_tagline",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "static/logo-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "static_logo_192_logo",
+      "target": "static_logo_192_ai_automated_trades",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "trading-app/static/logo-192.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "static_logo_logo",
+      "target": "static_logo_control_n_trading",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "static/logo.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "static_logo_logo",
+      "target": "static_logo_ai_automated_trades",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "static/logo.png",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "authentication_flow",
+      "label": "Fyers Authentication Flow",
+      "nodes": [
+        "fyers_client_fyersclient",
+        "models_database",
+        "state_user_contexts"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "fyers_client.py"
+    },
+    {
+      "id": "background_workers",
+      "label": "Background Workers",
+      "nodes": [
+        "workers_auto_trader_trailing_monitor",
+        "workers_market_worker_market_data_worker",
+        "workers_news_worker_newsworker_run"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "workers/auto_trader.py"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

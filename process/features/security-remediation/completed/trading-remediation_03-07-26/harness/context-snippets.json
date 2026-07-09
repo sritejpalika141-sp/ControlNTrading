@@ -1,0 +1,53 @@
+{
+  "task": "Phase 1 critical security remediation (trading-remediation)",
+  "snippets": [
+    {
+      "file": "trading-app/auth_utils.py",
+      "lines": "72-116",
+      "description": "sign_user_id + resolve_user_id_from_cookie: itsdangerous signed cookie with a 7-day legacy-raw-cookie grace window (SESSION_MIGRATION_CUTOFF).",
+      "content": "def sign_user_id(user_id) -> str: return _get_serializer().dumps(int(user_id)) ; def resolve_user_id_from_cookie(raw_cookie, now=None): valid signed -> int; grace-period raw digit -> int; else None"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "804-838",
+      "description": "resolve_authenticated_user_id(request) shared helper + get_current_client rewired through it. All 19 other route handlers migrated to this helper (see route-coverage grep).",
+      "content": "async def resolve_authenticated_user_id(request) -> Optional[int]: return resolve_user_id_from_cookie(request.cookies.get('user_id'))"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "login_api set_cookie + oauth callback set_cookie",
+      "description": "Cookie is signed at every write site (login + both OAuth-callback writes) so a raw forgeable cookie is never re-issued.",
+      "content": "response.set_cookie(key='user_id', value=sign_user_id(user['id']), ...)"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "telegram_webhook top",
+      "description": "hmac.compare_digest(provided, TELEGRAM_WEBHOOK_SECRET) before request.json(); fail-closed 403 when secret unset or mismatched.",
+      "content": "if not hmac.compare_digest(provided, webhook_secret): return JSONResponse({'status':'error','message':'unauthorized'}, status_code=403)"
+    },
+    {
+      "file": "trading-app/models.py",
+      "lines": "230-243",
+      "description": "Hardcoded admin/admin123 removed; admin created only from INITIAL_ADMIN_PASSWORD env, else warn.",
+      "content": "initial_admin_password = os.getenv('INITIAL_ADMIN_PASSWORD'); if not set -> warn and create nothing"
+    },
+    {
+      "file": "trading-app/workers/auto_trader.py",
+      "lines": "133-135, 248-273",
+      "description": "automation_enabled/hard_exit_triggered set BEFORE square-off loop (race fix); exit_position -> cancel_order(sl_order_id) with confirm-before-clear bookkeeping.",
+      "content": "state.automation_enabled = False; state.hard_exit_triggered = True (pre-loop). result = await asyncio.to_thread(client.cancel_order, sl_order_id)"
+    },
+    {
+      "file": "trading-app/app.py",
+      "lines": "place_order widened lock",
+      "description": "order_lock now wraps limit-check + regime checks + place_order + record_trade as one atomic section (TOCTOU fix).",
+      "content": "async with state.order_lock: <check> ... result = client.place_order(...); if result.get('success'): state.record_trade()"
+    },
+    {
+      "file": "trading-app/scripts/migrate_reencrypt_credentials.py",
+      "lines": "full file",
+      "description": "One-time re-encryption: decrypt with ENCRYPTION_KEY_OLD, re-encrypt with ENCRYPTION_KEY, auto pre-migration backup, single transaction.",
+      "content": "Fernet(old).decrypt -> Fernet(new).encrypt; shutil.copy2 backup; conn.commit single tx"
+    }
+  ]
+}

@@ -1,0 +1,2765 @@
+"""
+NIFTY Options Trading Dashboard — FastAPI Backend
+"""
+print("🏁 TOP OF APP.PY REACHED", flush=True)
+print("📦 Importing os, json, logging...", flush=True)
+import os
+import json
+import logging
+print("📦 Importing asyncio...", flush=True)
+import asyncio
+print("📦 Importing sqlite3...", flush=True)
+import sqlite3
+print("📦 Importing threading...", flush=True)
+import threading
+# import pandas as pd (REMOVED: hanging in venv)
+print("📦 Importing pytz...", flush=True)
+import pytz
+IST = pytz.timezone('Asia/Kolkata')
+print("📦 Importing datetime...", flush=True)
+from datetime import datetime, timedelta
+print("📦 Importing typing...", flush=True)
+from typing import Optional, List, Set, Dict
+print("📦 Importing fastapi...", flush=True)
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Query, BackgroundTasks, Depends
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Setup logging with rotation (prevents disk full on GCP)
+from logging.handlers import RotatingFileHandler
+os.makedirs("logs", exist_ok=True)
+log_formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(log_formatter)
+
+# Rotating file handler (5MB per file, keep last 3)
+file_handler = RotatingFileHandler('logs/dashboard.log', maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(log_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
+logger = logging.getLogger("DASHBOARD")
+
+# Dynamic path resolution for portability (must happen BEFORE imports that need env vars)
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+ENV_PATH = PROJECT_ROOT / "fyers-mcp-server" / ".env"
+LOG_DIR = BASE_DIR / "logs"
+
+# Ensure logs directory exists
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Load .env files FIRST — before any module that needs ENCRYPTION_KEY or FYERS_* vars
+print("🔍 Debug: Loading environment...", flush=True)
+load_dotenv(BASE_DIR / ".env")  # trading-app/.env (ENCRYPTION_KEY)
+load_dotenv(ENV_PATH)           # fyers-mcp-server/.env (FYERS_CLIENT_ID, etc.)
+print("🔍 Debug: Environment loaded.", flush=True)
+
+print("📦 Importing fyers_client...", flush=True)
+from fyers_client import FyersClient
+print("📦 Importing engine.signals...", flush=True)
+from engine.signals import generate_signals
+# Try to import the real AI engine; fall back to a mock if google-generativeai is missing
+try:
+    print("📦 Importing engine.ai_engine...", flush=True)
+    from engine.ai_engine import ai_engine
+except ImportError:
+    print("⚠️ google-generativeai not installed. Using MockAIEngine.", flush=True)
+    class MockAIEngine:
+        enabled = False
+        async def confirm_signal(self, symbol, signal, context):
+            return {"ai_confidence": signal.get("confidence", 70), "ai_status": "mocked"}
+        async def get_ai_trend(self, symbol, context):
+            return {"trend": "NEUTRAL", "strength": 50, "rationale": "Mock AI: Defaulting to Neutral."}
+    ai_engine = MockAIEngine()
+
+print("📦 Importing engine.strikes...", flush=True)
+from engine.strikes import select_strike, get_strike_recommendations
+print("📦 Importing engine.logger...", flush=True)
+from engine.logger import log_signal, log_trade, get_signal_history
+print("📦 Importing engine.automation...", flush=True)
+from engine.automation import TradingState
+print("📦 Importing engine.strategy_926...", flush=True)
+from engine.strategy_orb import evaluate_orb_strategy
+from engine.strategy_926 import evaluate_926_strategy
+from engine.ws_feed import ws_feed
+print("📦 Importing models...", flush=True)
+from models import Database
+print("📦 Imports complete.", flush=True)
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    """Application lifespan: start background tasks on startup."""
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+
+    # Start background tasks
+    asyncio.create_task(trailing_monitor())
+    asyncio.create_task(automation_loop())
+    asyncio.create_task(market_data_worker())
+
+    # Prune old logs on startup
+    try:
+        Database.prune_system_logs(months_limit=6)
+        print("✅ System logs pruned (6 months retention).", flush=True)
+    except Exception as e:
+        print(f"⚠️ Failed to prune system logs: {e}", flush=True)
+
+    print("✅ All background tasks started.", flush=True)
+
+    yield  # Application is running
+
+app = FastAPI(title="ControlN Trading Dashboard", lifespan=lifespan)
+VERSION = "5.2.0"
+SERVER_START_TIME = datetime.now(pytz.timezone('Asia/Kolkata'))
+
+# Ensure Database is initialized
+Database.init_db()
+print("🗄️ Database Initialized & Tables Verified.")
+
+# Multi-User Session Cache & State Map
+USER_CONTEXTS = {}
+USER_STATES = {}
+
+def get_user_state(user_id) -> TradingState:
+    """Get or create TradingState for a user. Always normalizes user_id to int."""
+    u_id = int(user_id)
+    if u_id not in USER_STATES:
+        USER_STATES[u_id] = TradingState(user_id=u_id)
+    return USER_STATES[u_id]
+
+def get_lot_size(symbol: str) -> int:
+    """Get the official NSE lot size (effective Jan 2026)."""
+    symbol_upper = symbol.upper()
+    if "BANKNIFTY" in symbol_upper:
+        return 30
+    if "FINNIFTY" in symbol_upper:
+        return 60
+    if "MIDCPNIFTY" in symbol_upper:
+        return 120
+    if "NIFTY" in symbol_upper:
+        return 65
+    return 65  # Default fallback
+
+# --- AUTHENTICATION ROUTES (v4.2.0) ---
+@app.get("/login")
+async def login_page():
+    return FileResponse(BASE_DIR / "static" / "login.html")
+
+@app.post("/api/login")
+async def login_api(request: Request):
+    try:
+        data = await request.json()
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+        print(f"🔐 Login attempt for: '{username}' with password length: {len(password)}")
+        
+        user = await asyncio.to_thread(Database.get_user_by_username, username)
+        if user:
+            print(f"✅ User found in DB. Verifying password...")
+            if Database.verify_password(password, user["password_hash"]):
+                print("✅ Password matches!")
+                response = JSONResponse({"success": True})
+                response.set_cookie(key="user_id", value=str(user["id"]), max_age=86400 * 30, path="/", httponly=True, samesite="lax")
+                response.set_cookie(key="username", value=user["username"], max_age=86400 * 30, path="/", samesite="lax")
+                return response
+            else:
+                print("❌ Password did not match!")
+        else:
+            print("❌ User not found!")
+            
+        return JSONResponse({"success": False, "message": "Invalid credentials"})
+    except Exception as e:
+        print(f"💥 Login API Exception: {e}")
+        return JSONResponse({"success": False, "message": str(e)})
+
+@app.get("/logout")
+async def logout(request: Request):
+    reason = request.query_params.get("reason")
+    url = "/login"
+    if reason:
+        url += f"?reason={reason}"
+    response = RedirectResponse(url=url)
+    response.delete_cookie("user_id", path="/")
+    response.delete_cookie("username", path="/")
+    return response
+
+# Protected main route
+@app.get("/")
+async def root(request: Request):
+    user_id = request.cookies.get("user_id")
+    auth_code = request.query_params.get("auth_code")
+    
+    print(f"🏠 Root route: user_id cookie = '{user_id}', auth_code = '{bool(auth_code)}'", flush=True)
+    
+    if auth_code and user_id:
+        try:
+            user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+            if user:
+                from fyers_apiv3 import fyersModel
+                client_id = user.get("fyers_client_id")
+                secret_key = user.get("fyers_secret")
+                if client_id and secret_key:
+                    session = fyersModel.SessionModel(
+                        client_id=client_id,
+                        secret_key=secret_key,
+                        redirect_uri=os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html"),
+                        response_type='code',
+                        grant_type='authorization_code'
+                    )
+                    session.set_token(auth_code)
+                    token_resp = session.generate_token()
+                    if "access_token" in token_resp:
+                        token = token_resp["access_token"]
+                        await asyncio.to_thread(Database.update_fyers_token, user_id, token)
+                        u_id_int = int(user_id)
+                        if u_id_int in USER_CONTEXTS:
+                            del USER_CONTEXTS[u_id_int]
+                        return RedirectResponse(url="/?msg=Connected")
+                    else:
+                        print(f"⚠️ Fyers token exchange failed: {token_resp}", flush=True)
+                else:
+                    print(f"⚠️ User {user_id} missing fyers_client_id or fyers_secret", flush=True)
+        except Exception as e:
+            print(f"❌ Auth code exchange error: {e}", flush=True)
+
+    if not user_id:
+        print("🏠 → Serving landing.html (no user_id cookie)", flush=True)
+        response = FileResponse(BASE_DIR / "static" / "landing.html")
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+    
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user:
+        print(f"🏠 → Serving landing.html (user_id={user_id} not found in DB)", flush=True)
+        response = FileResponse(BASE_DIR / "static" / "landing.html")
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.delete_cookie("user_id", path="/")
+        response.delete_cookie("username", path="/")
+        return response
+    
+    print(f"🏠 → Serving index.html for user '{user.get('username', '?')}' (id={user_id})", flush=True)
+    response = FileResponse(BASE_DIR / "static" / "index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
+
+# --- ADMIN ROUTES (v4.2.0) ---
+@app.get("/admin")
+async def admin_page(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id: return RedirectResponse(url="/login")
+    
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user or not user["is_admin"]:
+        return "Unauthorized: Admins only"
+    return FileResponse(BASE_DIR / "static" / "admin.html")
+
+@app.get("/api/admin/users")
+async def admin_get_users(request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user or not user["is_admin"]: return JSONResponse({"error": "Unauthorized"}, 403)
+    
+    conn = sqlite3.connect(Database.DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT id, username, is_admin, automation_enabled, created_at FROM users")
+    users = [dict(u) for u in c.fetchall()]
+    conn.close()
+    return users
+
+@app.post("/api/admin/users")
+async def admin_add_user(request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user or not user["is_admin"]: return JSONResponse({"error": "Unauthorized"}, 403)
+    
+    data = await request.json()
+    new_id = await asyncio.to_thread(Database.create_user, 
+        data.get("username"), 
+        data.get("password"), 
+        is_admin=data.get("is_admin", 0)
+    )
+    if new_id: return {"success": True, "id": new_id}
+    return {"success": False, "message": "User already exists"}
+
+@app.delete("/api/admin/users/{id}")
+async def admin_delete_user(id: int, request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user or not user["is_admin"]: return JSONResponse({"error": "Unauthorized"}, 403)
+    
+    conn = sqlite3.connect(Database.DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE id=?", (id,))
+    c.execute("DELETE FROM user_states WHERE user_id=?", (id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+@app.post("/api/admin/users/{id}/password")
+async def admin_change_password(id: int, request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user or not user["is_admin"]: return JSONResponse({"error": "Unauthorized"}, 403)
+    
+    data = await request.json()
+    new_password = data.get("new_password")
+    if not new_password or len(new_password) < 6:
+        return {"success": False, "message": "Password must be at least 6 characters"}
+        
+    await asyncio.to_thread(Database.update_password, id, new_password)
+    return {"success": True, "message": "Password updated successfully"}
+
+@app.get("/api/fyers/login_url")
+async def get_fyers_login_url(request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user: return JSONResponse({"error": "Unauthorized"}, 401)
+    
+    client_id = user.get("fyers_client_id")
+    secret = user.get("fyers_secret")
+    if not client_id or not secret: return JSONResponse({"error": "Missing API IDs"}, 400)
+    
+    from fyers_apiv3 import fyersModel
+    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+    session = fyersModel.SessionModel(
+        client_id=client_id,
+        secret_key=secret,
+        redirect_uri=redirect_url,
+        response_type='code',
+        grant_type='authorization_code'
+    )
+    return {"url": session.generate_authcode()}
+
+@app.post("/api/user/settings")
+async def save_settings(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        return JSONResponse({"success": False, "message": "Unauthorized"}, 401)
+    
+    data = await request.json()
+    client_id = data.get("client_id")
+    secret_id = data.get("secret_id")
+    
+    await asyncio.to_thread(Database.update_fyers_creds, user_id, client_id, secret_id)
+    
+    # Refresh context
+    try:
+        u_id_int = int(user_id)
+        if u_id_int in USER_CONTEXTS:
+            del USER_CONTEXTS[u_id_int]
+    except Exception as e:
+        print(f"Error clearing user context: {e}")
+        
+    return {"success": True}
+
+@app.get("/api/user/settings")
+async def get_settings(request: Request):
+    user_id = request.cookies.get("user_id")
+    user = await asyncio.to_thread(Database.get_user_by_id, user_id)
+    if not user: return JSONResponse({"error": "Unauthorized"}, 401)
+    return {
+        "client_id": user.get("fyers_client_id", ""),
+        "secret_id": user.get("fyers_secret", "")
+    }
+
+class AuthSubmission(BaseModel):
+    code: str
+
+@app.get("/api/login")
+async def get_fyers_login_url_legacy(request: Request):
+    """Handle the legacy GET /api/login call from app.js (v4.4.2 fix)."""
+    client = get_current_client(request)
+    url = await asyncio.to_thread(client.get_login_url)
+    return {"success": bool(url), "url": url}
+
+@app.post("/api/submit-auth-code")
+async def submit_auth_code(request: Request, data: AuthSubmission):
+    """Receive auth code (or full redirect URL) and exchange for token (v4.4.2 multi-user)."""
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        return JSONResponse({"success": False, "message": "Unauthorized"}, 401)
+    print(f"📥 Received Auth Submission for User {user_id}", flush=True)
+    try:
+        client = get_current_client(request)
+        code = data.code.strip()
+        print(f"🔍 Auth code received (length={len(code)})", flush=True)
+        
+        # If the user pasted the full URL, extract the code
+        if "auth_code=" in code:
+            import urllib.parse as urlparse
+            parsed = urlparse.urlparse(code)
+            params = urlparse.parse_qs(parsed.query)
+            if 'auth_code' in params:
+                code = params['auth_code'][0]
+                print(f"✂️ Extracted Code: {code[:10]}...", flush=True)
+        
+        # Perform exchange using the per-user client
+        print(f"🚀 Calling client.set_auth_code for user {user_id}...", flush=True)
+        res = await asyncio.to_thread(client.set_auth_code, code)
+        print(f"🏁 Exchange result: {res}", flush=True)
+        
+        # Force cache update for this user
+        cache = get_user_cache(user_id)
+        cache["is_auth"] = res.get("success", False)
+        
+        return res
+    except Exception as e:
+        import traceback
+        err_msg = f"Auth Submission Error: {e}\n{traceback.format_exc()}"
+        print(f"❌ {err_msg}", flush=True)
+        logger.error(err_msg)
+        return {"success": False, "message": str(e)}
+
+@app.post("/api/scripts/add")
+async def add_script(request: Request, data: Dict):
+    symbol = data.get("symbol", "").strip().upper()
+    if not symbol: return {"success": False, "message": "Symbol required"}
+    
+    # Auto-format for common shorthand
+    # 1. If no prefix, add NSE:
+    if ":" not in symbol:
+        symbol = f"NSE:{symbol}"
+    
+    # 2. If no suffix, check if it's a known index or option
+    if "-" not in symbol:
+        indices = ["NIFTY50", "NIFTYBANK", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX", "NIFTYNXT50"]
+        is_index = any(idx in symbol for idx in indices)
+        # Options usually have long numeric strings like NIFTY26505...
+        is_option = len(symbol) > 12 and any(char.isdigit() for char in symbol)
+        
+        if is_index:
+            symbol = f"{symbol}-INDEX"
+        elif not is_option:
+            symbol = f"{symbol}-EQ"
+    
+    # Special case: SBI -> SBIN
+    if "NSE:SBI-EQ" in symbol: symbol = "NSE:SBIN-EQ"
+    if "NSE:BANKNIFTY-INDEX" in symbol: symbol = "NSE:NIFTYBANK-INDEX"
+    if "NSE:BANKNIFTY-EQ" in symbol: symbol = "NSE:NIFTYBANK-INDEX"
+
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    state.add_symbol(symbol)
+    return {"success": True, "scripts": state.active_symbols, "formatted": symbol}
+
+@app.get("/api/scripts")
+async def get_scripts(request: Request):
+    """Get currently tracked scripts/symbols."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    return {"success": True, "scripts": state.active_symbols}
+
+@app.post("/api/scripts/remove")
+async def remove_script(request: Request):
+    data = await request.json()
+    symbol = data.get("symbol", "")
+    if not symbol: return {"success": False, "message": "Symbol required"}
+    
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    state.remove_symbol(symbol)
+    return {"success": True, "scripts": state.active_symbols}
+
+
+
+# User-Specific Market Caches
+USER_CACHES = {}
+
+def get_user_cache(user_id):
+    u_id = str(user_id)
+    if u_id not in USER_CACHES:
+        USER_CACHES[u_id] = {
+            "spot": {}, "vix": None, "analysis": {}, "strikes": {},
+            "positions": [], "active_positions": [], "orders": [], "funds": {},
+            "last_update": 0, "total_pnl": 0, "is_auth": False
+        }
+    return USER_CACHES[u_id]
+
+# Global Caches for specific workers
+dashboard_cache = {}
+ai_trend_cache = {} # Cache for AI predictions to prevent rate-limits
+
+# Global dependencies
+_analysis_store = {}
+
+
+
+# Event loop reference for background tasks
+main_loop = None
+
+
+# Serve static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Track active WebSocket connections
+active_connections: Set[WebSocket] = set()
+
+async def broadcast_log(msg: str, level: str = "info", user_id: int = None):
+    """Send a log message to connected clients and store in DB."""
+    import pytz
+    from datetime import datetime
+    ist = pytz.timezone('Asia/Kolkata')
+    timestamp_ws = datetime.now(ist).strftime("%H:%M:%S")
+    timestamp_db = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
+
+    # 1. Asynchronously write to DB
+    try:
+        asyncio.create_task(asyncio.to_thread(Database.insert_log, level, msg, timestamp_db, user_id))
+    except Exception as e:
+        print(f"⚠️ DB log insert error: {e}")
+
+    if not active_connections:
+        return
+    
+    payload = {
+        "type": "log",
+        "msg": msg,
+        "level": level,
+        "time": timestamp_ws
+    }
+    
+    disconnected = set()
+    for ws in active_connections:
+        # Route to specific user if user_id is provided, else broadcast to all
+        if user_id is None or getattr(ws, "user_id", None) == user_id:
+            try:
+                await ws.send_json(payload)
+            except:
+                disconnected.add(ws)
+    
+    for ws in disconnected:
+        active_connections.discard(ws)
+
+
+
+
+
+def get_current_client(request: Request):
+    user_id = request.cookies.get("user_id")
+    if not user_id:
+        user_id = 0 # Default to guest/unauthenticated user context
+    
+    u_id = int(user_id)
+    if u_id not in USER_CONTEXTS:
+        USER_CONTEXTS[u_id] = FyersClient(user_id=u_id)
+    
+    return USER_CONTEXTS[u_id]
+
+@app.get("/api/status")
+async def get_status(request: Request):
+    """Get connection and auth status."""
+    client = get_current_client(request)
+    authenticated = await asyncio.to_thread(client.is_authenticated)
+    return {
+        "authenticated": authenticated,
+        "timestamp": datetime.now(IST).isoformat(),
+        "market_open": True,
+    }
+
+async def get_nse_public_quotes() -> Dict[str, Dict]:
+    """Helper that queries the NSE India indices API and maps Nifty 50 and India VIX."""
+    try:
+        cookies = await asyncio.get_event_loop().run_in_executor(None, _get_nse_cookies)
+        raw = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _nse_get("https://www.nseindia.com/api/allIndices", cookies)
+        )
+        quotes = {}
+        for d in raw.get("data", []):
+            name = d.get("index", d.get("indexSymbol", ""))
+            if name == "NIFTY 50":
+                quotes["NSE:NIFTY50-INDEX"] = {
+                    "lp": float(d.get("last", 0)),
+                    "ch": float(d.get("variation", 0)),
+                    "chp": float(d.get("percentChange", 0)),
+                    "open": float(d.get("open", 0)),
+                    "high": float(d.get("high", 0)),
+                    "low": float(d.get("low", 0)),
+                    "prev_close": float(d.get("previousClose", 0))
+                }
+            elif name == "INDIA VIX":
+                quotes["NSE:INDIAVIX-INDEX"] = {
+                    "lp": float(d.get("last", 0)),
+                    "ch": float(d.get("variation", 0)),
+                    "chp": float(d.get("percentChange", 0)),
+                    "open": float(d.get("open", 0)),
+                    "high": float(d.get("high", 0)),
+                    "low": float(d.get("low", 0)),
+                    "prev_close": float(d.get("previousClose", 0))
+                }
+        return quotes
+    except Exception as e:
+        print(f"[NSE Public Quotes] Scrape failed: {e}", flush=True)
+        return {}
+
+async def get_quotes_with_fallback(client, symbols: List[str]) -> Dict[str, Dict]:
+    """Get quotes from WS feed if available, otherwise fallback to REST API."""
+    if not symbols: return {}
+    
+    quotes = {}
+    if ws_feed.is_connected():
+        quotes = ws_feed.get_quotes_from_ws(symbols)
+        
+    missing = [s for s in symbols if s not in quotes]
+    if missing:
+        try:
+            rest_quotes = await asyncio.to_thread(client.get_quotes, missing)
+            quotes.update(rest_quotes)
+            # If we had to fall back, ensure WS is subscribed
+            if ws_feed.is_connected():
+                ws_feed.subscribe(missing)
+        except Exception as e:
+            logger.error(f"Fallback quotes fetch failed: {e}")
+            
+    return quotes
+
+@app.get("/api/quotes")
+async def get_quotes_endpoint(request: Request, symbols: str):
+    """Endpoint for retrieving quotes for a comma-separated list of symbols."""
+    client = get_current_client(request)
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not client.is_authenticated():
+        # Fallback to cached/public quotes
+        cache = get_user_cache(client.user_id)
+        res = {}
+        for sym in symbol_list:
+            res[sym] = (cache.get("all_spots") or {}).get(sym, {})
+        return res
+    return await get_quotes_with_fallback(client, symbol_list)
+
+@app.get("/api/spot")
+async def get_spot(request: Request):
+    """Get live NIFTY spot price and VIX."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    cache = get_user_cache(client.user_id)
+    
+    # Try Fyers client first if authenticated
+    res = {}
+    if client.is_authenticated():
+        try:
+            quotes = await get_quotes_with_fallback(client, state.active_symbols + ["NSE:INDIAVIX-INDEX"])
+            if quotes:
+                res = {symbol: quotes.get(symbol, {}) for symbol in state.active_symbols}
+                res["vix"] = quotes.get("NSE:INDIAVIX-INDEX", {})
+                return res
+        except Exception as e:
+            print(f"Error in Fyers spot fetch: {e}")
+            
+    # Fallback to cached public quotes
+    for symbol in state.active_symbols:
+        res[symbol] = (cache.get("all_spots") or {}).get(symbol, {})
+        if not res[symbol] and symbol == "NSE:NIFTY50-INDEX":
+            res[symbol] = cache.get("spot") or {}
+    res["vix"] = cache.get("vix") or {}
+    
+    # Hard fallback: scrape directly if cache is empty
+    if not res.get("NSE:NIFTY50-INDEX") or not res["NSE:NIFTY50-INDEX"].get("lp"):
+        try:
+            public_quotes = await get_nse_public_quotes()
+            if public_quotes:
+                for symbol in state.active_symbols:
+                    res[symbol] = public_quotes.get(symbol, {})
+                res["vix"] = public_quotes.get("NSE:INDIAVIX-INDEX", {})
+        except:
+            pass
+    return res
+
+@app.get("/api/auth-status")
+async def auth_status(request: Request):
+    """Check if we are authenticated."""
+    try:
+        client = get_current_client(request)
+        status = await asyncio.to_thread(client.is_authenticated)
+        # Check if user is admin and get username
+        is_admin = False
+        username = "Guest"
+        if str(client.user_id).isdigit():
+            user = await asyncio.to_thread(Database.get_user_by_id, int(client.user_id))
+            if user:
+                if user.get("is_admin"):
+                    is_admin = True
+                username = user.get("username", "Guest")
+        return {"authenticated": status, "is_admin": is_admin, "username": username}
+    except Exception as e:
+        return {"authenticated": False, "is_admin": False, "username": "Guest"}
+
+
+async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
+    """
+    Core analysis logic for a specific symbol.
+    Fetches historical data, detects levels, and generates signals.
+    """
+    if not client:
+        # Fallback to a default client if needed (e.g. for background shared tasks)
+        from fyers_client import FyersClient
+        client = FyersClient()
+    state = get_user_state(client.user_id)
+    now = datetime.now(IST)
+    now_ts = now.timestamp()
+    
+    # 15-second cache to respect Fyers API limits
+    if symbol in _analysis_store:
+        acache = _analysis_store[symbol]
+        if acache:
+            cache_time = datetime.fromtimestamp(acache.get("timestamp", 0), tz=IST)
+            if cache_time.date() == now.date() and (now_ts - acache.get("timestamp", 0) < 15):
+                return acache["data"]
+
+    try:
+        # Fetch spot and VIX using WS with fallback
+        quotes = await get_quotes_with_fallback(client, [symbol, "NSE:INDIAVIX-INDEX"])
+        spot_data = quotes.get(symbol)
+        vix_data = quotes.get("NSE:INDIAVIX-INDEX")
+
+        # Parallelize historical candle fetches
+        # Use get_historical instead of get_candles
+        tasks = [
+            asyncio.to_thread(client.get_historical, symbol, "60", days_back=3),  # 1H candles
+            asyncio.to_thread(client.get_historical, symbol, "5", days_back=4),   # 5M candles
+            asyncio.to_thread(client.get_historical, symbol, "D", days_back=10),  # Daily candles
+        ]
+        
+        candles_1h, candles_5m, candles_daily = await asyncio.gather(*tasks)
+
+        if not candles_1h or not candles_5m:
+            return None
+
+        # Derive spot from quotes or fallback to latest candle close
+        if spot_data and spot_data.get("lp", 0) > 0:
+            spot = spot_data.get("lp", 0)
+        elif candles_5m:
+            spot = candles_5m[-1].get("close", 0)
+        else:
+            return None
+        
+        vix = (vix_data or {}).get("lp", 15.0)
+
+        # Run signal engine
+        result = generate_signals(candles_1h, candles_5m, spot, candles_daily, vix)
+
+        # Find nearest expiry
+        expiry = None
+        if not expiry:
+            try:
+                expiry = await asyncio.to_thread(client.find_nearest_expiry, spot)
+            except:
+                expiry = None
+        result["expiry"] = expiry
+        
+        # Option Chain Analysis for AI
+        if expiry:
+            try:
+                # Fetch 5 strikes on each side of ATM for OI analysis
+                oc_data = await asyncio.to_thread(client.get_option_chain_strikes, spot, expiry["code"], 5)
+                result["option_chain"] = oc_data
+            except Exception as e:
+                logger.error(f"Option Chain Fetch Error: {e}")
+                result["option_chain"] = None
+        else:
+            result["option_chain"] = None
+
+        # Add daily change data and intraday high/low for AI trend analysis
+        result["chp"] = spot_data.get("chp", 0.0) if spot_data else 0.0
+        result["ch"] = spot_data.get("ch", 0.0) if spot_data else 0.0
+        result["day_high"] = spot_data.get("high_price", 0) if spot_data else 0
+        result["day_low"] = spot_data.get("low_price", 0) if spot_data else 0
+        result["open_price"] = spot_data.get("open_price", 0) if spot_data else 0
+        result["prev_close"] = spot_data.get("prev_close_price", 0) if spot_data else 0
+
+        # Add 3-day summary for AI
+        try:
+            last_3_days = candles_daily[-3:] if len(candles_daily) >= 3 else candles_daily
+            summary = []
+            for i, c in enumerate(last_3_days):
+                summary.append(f"Day {i+1} (High: {c.get('high', c.get('h', 0))}, Low: {c.get('low', c.get('l', 0))})")
+            result["three_day_summary"] = " | ".join(summary)
+        except Exception as e:
+            result["three_day_summary"] = "Not Available"
+
+        # AI Trend Confirmation with Caching (15 minutes)
+        try:
+            current_time = datetime.now(IST).timestamp()
+            
+            # Check cache first
+            cached_data = ai_trend_cache.get(symbol)
+            if cached_data and (current_time - cached_data['timestamp']) < 900: # 15 minutes
+                ai_trend = cached_data['trend']
+                ai_trend['cached'] = True
+                print(f"🤖 AI Trend for {symbol} (CACHED): {ai_trend.get('trend')} ({ai_trend.get('strength')}%) - Reason: {ai_trend.get('rationale')}", flush=True)
+            else:
+                # Cache miss or expired, fetch live
+                ai_trend = await ai_engine.get_ai_trend(symbol, result)
+                ai_trend['cached'] = False
+                ai_trend_cache[symbol] = {
+                    'timestamp': current_time,
+                    'trend': ai_trend
+                }
+                print(f"🤖 AI Trend for {symbol} (LIVE): {ai_trend.get('trend')} ({ai_trend.get('strength')}%) - Reason: {ai_trend.get('rationale')}", flush=True)
+            
+            result["trend"] = ai_trend # Override technical trend
+        except Exception as e:
+            print(f"⚠️ Failed to get AI trend: {e}", flush=True)
+
+        # Filter OBs and FVGs strictly near Key Levels
+        filtered_obs = []
+        for ob in result.get("order_blocks", []):
+            is_near = False
+            for kl in result.get("key_levels", []):
+                if abs(ob["top"] - kl["price"]) / kl["price"] < 0.004 or \
+                   abs(ob["bottom"] - kl["price"]) / kl["price"] < 0.004:
+                    is_near = True
+                    break
+            if is_near: filtered_obs.append(ob)
+        
+        filtered_fvgs = []
+        for fvg in result.get("fvgs", []):
+            is_near = False
+            for kl in result.get("key_levels", []):
+                if abs(fvg["top"] - kl["price"]) / kl["price"] < 0.004 or \
+                   abs(fvg["bottom"] - kl["price"]) / kl["price"] < 0.004:
+                    is_near = True
+                    break
+            if is_near: filtered_fvgs.append(fvg)
+        
+        result["order_blocks"] = filtered_obs
+        result["fvgs"] = filtered_fvgs
+        result["active_order_blocks"] = [ob for ob in filtered_obs if ob.get("active")]
+        result["candles_5m"] = candles_5m
+        
+        # BANKNIFTY Correlation Data (v3.2.0)
+        try:
+            bnf_symbol = "NSE:NIFTYBANK-INDEX"
+            bnf_quotes = await get_quotes_with_fallback(client, [bnf_symbol])
+            bnf_data = bnf_quotes.get(bnf_symbol, {})
+            result["bnf_spot"] = bnf_data.get("lp", 0)
+            
+            # Fetch 1H candles for BNF trend
+            bnf_candles_1h = await asyncio.to_thread(client.get_historical, bnf_symbol, "60", days_back=2)
+            from engine.key_levels import detect_trend
+            bnf_trend_res = detect_trend(bnf_candles_1h) if bnf_candles_1h else {"trend": "NEUTRAL"}
+            result["bnf_trend"] = bnf_trend_res.get("trend", "NEUTRAL")
+        except Exception as e:
+            logger.error(f"BNF Correlation Fetch Error: {e}")
+            result["bnf_spot"] = 0
+            result["bnf_trend"] = "UNKNOWN"
+        
+        # Heavyweight Monitoring (v3.3.0)
+        try:
+            heavy_symbols = ["NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ"]
+            h_quotes = await get_quotes_with_fallback(client, heavy_symbols)
+            h_data_list = []
+            for hs in heavy_symbols:
+                q = h_quotes.get(hs, {})
+                # Fetch trend for each heavyweight
+                h_candles_1h = await asyncio.to_thread(client.get_historical, hs, "60", days_back=2)
+                from engine.key_levels import detect_trend
+                h_tr = detect_trend(h_candles_1h) if h_candles_1h else {"trend": "NEUTRAL"}
+                h_data_list.append({
+                    "symbol": hs,
+                    "lp": q.get("lp", 0),
+                    "trend": h_tr.get("trend", "NEUTRAL")
+                })
+            result["heavyweights"] = h_data_list
+        except Exception as e:
+            logger.error(f"Heavyweight Fetch Error: {e}")
+            result["heavyweights"] = []
+
+        # Pass PnL context for AI
+        result["pnl_today"] = state.pnl_today
+        result["profit_target_met"] = state.profit_target_met
+
+        # Filter out skipped signals
+        if result["signals"]:
+            filtered_signals = []
+            for sig in result["signals"]:
+                sig["symbol"] = symbol
+                bottom = round(sig.get('entry_zone_bottom', 0), 2)
+                sig_id = f"{sig.get('type')}_{sig.get('reason')}_{bottom}"
+                if sig_id not in state.skipped_signals:
+                    filtered_signals.append(sig)
+            
+            # AI Confirmation for filtered signals
+            confirmed_signals = []
+            for sig in filtered_signals:
+                if sig.get("type") in ("CALL", "PUT"):
+                    sig["tech_confidence"] = sig.get("confidence")
+                    ai_result = await ai_engine.confirm_signal(symbol, sig, result)
+                    sig.update(ai_result)
+                confirmed_signals.append(sig)
+                
+            result["signals"] = confirmed_signals
+
+            # Generate strike recommendations for the top signal
+            if confirmed_signals and result.get("expiry") and result.get("option_chain"):
+                top_sig = confirmed_signals[0]
+                dte = result["expiry"].get("dte", 5)
+                from engine.strikes import get_strike_recommendations
+                try:
+                    recs = get_strike_recommendations(result["option_chain"], top_sig["type"], spot, dte)
+                    result["strike_recommendations"] = recs
+                except Exception as e:
+                    logger.error(f"Failed to generate strike recommendations: {e}")
+                    result["strike_recommendations"] = []
+            else:
+                result["strike_recommendations"] = []
+        else:
+            result["strike_recommendations"] = []
+        
+        # Store in per-symbol cache
+        _analysis_store[symbol] = {
+            "data": result,
+            "timestamp": now_ts
+        }
+        return result
+        
+    except Exception as e:
+        print(f"⚠️ Analysis failed for {symbol}: {e}")
+        return None
+
+@app.get("/api/analysis")
+async def get_analysis_api(request: Request, symbol: str = "NSE:NIFTY50-INDEX"):
+    """Fetch analysis for a specific symbol."""
+    client = get_current_client(request)
+    res = await get_analysis(symbol, client=client)
+    if res: return res
+    raise HTTPException(429, f"Rate limited or no data for {symbol}")
+
+@app.get("/api/candles")
+async def get_candles_api(request: Request, symbol: str = "NSE:NIFTY50-INDEX", resolution: str = "5", days: int = 3):
+    """Fetch candles for a specific symbol."""
+    client = get_current_client(request)
+    candles = await asyncio.to_thread(client.get_historical, symbol, resolution, days_back=days)
+    return {"candles": candles}
+
+
+@app.get("/api/test-signal")
+async def test_signal():
+    """Manually trigger a test signal to verify UI and History logic."""
+    try:
+        # Simulate a high-confidence signal
+        test_sig = {
+            "type": "CALL",
+            "reason": "BREAKOUT ABOVE RESISTANCE (TEST)",
+            "confidence": 98,
+            "entry_zone_bottom": 24350.0,
+            "entry_zone_top": 24380.0,
+            "ai_confidence": 92,
+            "ai_rationale": "High confluence of OB + FVG near Support. Trend is strongly bullish.",
+            "ai_status": "confirmed",
+            "advisory_only": False,
+            "timestamp": datetime.now(IST).timestamp()
+        }
+        
+        # Get current spot from cache
+        spot = 24400.0
+        
+        # Mock Strike Selection
+        trade_details = {
+            "strike": "24400 CE (TEST)",
+            "entry": 150.0,
+            "sl": 138.0,
+            "target": 174.0,
+            "score": 95.5,
+            "moneyness": "ATM",
+            "type_label": "ATM CALL (OI Optimized)",
+            "ltp": 150.0,
+            "symbol": "NSE:NIFTY24APR24400CE"
+        }
+            
+        # 1. Log to history
+        from engine.logger import log_signal
+        log_signal([test_sig], spot, "⚪ TEST SIMULATED", trade_details)
+        
+        # 2. Forcibly Inject into Global Analysis Store so UI picks it up
+        _analysis_store["test"] = {
+            "timestamp": datetime.now(IST).timestamp(),
+            "data": {
+                "signals": [test_sig],
+                "strike_recommendations": [trade_details],
+                "trend": {"trend": "BULLISH", "strength": 95},
+                "key_levels": [],
+                "order_blocks": [],
+                "active_order_blocks": [],
+                "fvgs": [],
+                "bos_events": [],
+                "spot": spot,
+                "timestamp": datetime.now(IST).timestamp()
+            }
+        }
+        
+        return {"success": True, "message": "Test signal injected and logged."}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/api/option-chain")
+async def get_option_chain(request: Request):
+    """Get option chain around ATM."""
+    client = get_current_client(request)
+    spot_data = client.get_quote("NSE:NIFTY50-INDEX")
+    if not spot_data:
+        raise HTTPException(500, "Could not fetch spot")
+    spot = spot_data["lp"]
+
+    expiry = client.find_nearest_expiry(spot)
+    if not expiry:
+        raise HTTPException(500, "No expiry found")
+
+    chain = client.get_option_chain_strikes(spot, expiry["code"], 8)
+    chain["expiry"] = expiry
+    chain["spot"] = spot
+    return chain
+
+@app.get("/api/signal-history")
+async def get_signal_history_api():
+    """Get signal history from logger."""
+    history = get_signal_history()
+    return {"success": True, "history": history}
+
+
+@app.post("/api/skip-signal")
+async def skip_signal(request: Request, req: Dict):
+    try:
+        client = get_current_client(request)
+        state = get_user_state(client.user_id)
+        idx = req.get("index")
+        if idx is not None:
+            # We record this in the automation state so it's not picked up again
+            state.add_skipped_signal(f"manual_skip_{idx}_{datetime.now(IST).strftime('%H%M')}")
+            
+            # Log to history so it shows up in the UI
+            try:
+                from engine.logger import log_signal
+                log_signal([{"type": "MANUAL", "reason": "User skipped signal", "confidence": 0}], 0, "⚪ SKIPPED (Manual)")
+            except: pass
+            
+            return {"success": True}
+        return {"success": False, "message": "Index missing"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+class OrderRequest(BaseModel):
+    symbol: str
+    qty: int
+    side: str  # BUY or SELL
+    order_type: str = "MARKET"
+    product: str = "INTRADAY"
+    limit_price: float = 0
+    stop_price: float = 0
+    sl_points: float = 12.0
+    target_points: float = 0.0
+
+
+@app.post("/api/order")
+async def place_order(request: Request, order: OrderRequest):
+    """Place a manual trade order with safety checks."""
+    client = get_current_client(request)
+    
+    # Policy check: BUY ONLY
+    if order.side.upper() != "BUY":
+        return {"success": False, "message": "⛔ SELL trades are blocked. Only BUY trades are allowed."}
+
+    # Query user state for daily limits
+    state = get_user_state(client.user_id)
+    if state.trades_today >= state.max_trades_per_day:
+        return {"success": False, "message": f"⛔ Daily trade limit reached ({state.max_trades_per_day} trades today). Manual order blocked."}
+
+    # ═══════════════════════════════════════════
+    # REGIME LOCKOUT: Block manual trades in flat/choppy markets & enforce alignment
+    # ═══════════════════════════════════════════
+    underlying = "NSE:NIFTY50-INDEX"
+    if order.symbol:
+        sym_upper = order.symbol.upper()
+        if "BANK" in sym_upper:
+            underlying = "NSE:NIFTYBANK-INDEX"
+        elif "FIN" in sym_upper:
+            underlying = "NSE:FINNIFTY-INDEX"
+        elif "MID" in sym_upper:
+            underlying = "NSE:MIDCPNIFTY-INDEX"
+
+    trend_cache = ai_trend_cache.get(underlying)
+    if trend_cache:
+        current_trend = (trend_cache.get("trend", {}).get("trend", "") or "").upper()
+        if any(x in current_trend for x in ["NEUTRAL", "RANGE_BOUND", "RANGE", "SIDEWAYS", "CHOOPY", "CHOPPY"]):
+            return {"success": False, "message": f"⛔ Manual trade blocked: Trend regime is {current_trend} (Zero-Trading lockout active)."}
+        
+        # Also restrict to CALL/PUT depending on direction
+        if "BULL" in current_trend and "PE" in order.symbol.upper():
+            return {"success": False, "message": f"⛔ Manual trade blocked: Trend is bullish (only CALL CE trades allowed)."}
+        if "BEAR" in current_trend and "CE" in order.symbol.upper():
+            return {"success": False, "message": f"⛔ Manual trade blocked: Trend is bearish (only PUT PE trades allowed)."}
+
+    # Strict Position Check for NIFTY
+    if order.symbol.startswith("NSE:NIFTY"):
+        live_pos = await asyncio.to_thread(client.get_positions)
+        if any(p.get("symbol").startswith("NSE:NIFTY") and p.get("netQty", 0) != 0 for p in live_pos):
+            return {"success": False, "message": "Active trade in progress. Close it before firing another."}
+
+    result = await asyncio.to_thread(client.place_order, 
+        symbol=order.symbol,
+        qty=order.qty,
+        side=order.side,
+        order_type=order.order_type,
+        product=order.product,
+        limit_price=order.limit_price,
+        stop_price=order.stop_price,
+        sl_points=order.sl_points,
+        target_points=order.target_points
+    )
+    if result.get("success"):
+        state.record_trade()
+    return result
+
+@app.get("/api/positions")
+async def get_positions(request: Request):
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    state.check_daily_reset()
+    positions = await asyncio.to_thread(client.get_positions)
+    # Determine if there are any active open positions
+    has_open = any(p.get("netQty", 0) != 0 or p.get("qty", 0) != 0 for p in positions)
+    if not has_open and state.trades_today == 0:
+        positions = []
+        overall_pnl = 0.0
+    else:
+        # Positions is a list. Calculate overall PnL:
+        overall_pnl = sum(float(p.get("pl", 0) or 0) for p in positions)
+    return {
+        "netPositions": positions,
+        "overallPnl": overall_pnl
+    }
+
+
+@app.get("/api/funds")
+async def get_funds(request: Request):
+    client = get_current_client(request)
+    return await asyncio.to_thread(client.get_funds)
+
+@app.get("/api/orders")
+async def get_orders(request: Request):
+    client = get_current_client(request)
+    return await asyncio.to_thread(client.get_orders)
+
+
+# ===== GLOBAL DATA WORKER =====
+def _get_market_phase() -> str:
+    """Determine current market phase for smart polling.
+    Returns: 'pre_open', 'market', 'post_close', 'closed'
+    """
+    now = datetime.now(IST)
+    if now.weekday() >= 5:  # Weekend
+        return "closed"
+    hour, minute = now.hour, now.minute
+    time_val = hour * 60 + minute  # Minutes since midnight
+    
+    if time_val < 540:      # Before 9:00 AM
+        return "closed"
+    elif time_val < 555:     # 9:00 - 9:15 AM (Pre-open)
+        return "pre_open"
+    elif time_val < 930:     # 9:15 AM - 3:30 PM (Market hours)
+        return "market"
+    elif time_val < 945:     # 3:30 - 3:45 PM (Post-close / closing auction)
+        return "post_close"
+    else:                    # After 3:45 PM
+        return "closed"
+
+# Polling intervals per phase (in loop iterations, each ~1s base)
+POLL_CONFIG = {
+    "market":     {"quotes_every": 1,  "sync_every": 12,  "sleep": 0.5},   # Every 0.5s quotes, 6s sync
+    "pre_open":   {"quotes_every": 10, "sync_every": 30,  "sleep": 2},   # Every 20s quotes, 60s sync
+    "post_close": {"quotes_every": 15, "sync_every": 30,  "sleep": 3},   # Every 45s quotes, 90s sync
+    "closed":     {"quotes_every": 0,  "sync_every": 30,  "sleep": 10},  # No quotes, 300s sync
+}
+
+async def market_data_worker():
+    """Background task to fetch all market data and update the shared cache.
+    Uses smart adaptive polling based on market phase to prevent API rate limiting."""
+    print("🚀 Multi-User Market Worker started.", flush=True)
+    await broadcast_log("🚀 Market Data Worker started.", "success")
+    tick = 0
+    last_phase_log = ""
+    backoff_seconds = 0  # Exponential backoff for 429 errors
+    
+    while True:
+        try:
+            phase = _get_market_phase()
+            config = POLL_CONFIG[phase]
+            
+            # Log phase transitions
+            if phase != last_phase_log:
+                last_phase_log = phase
+                phase_names = {
+                    "market": "🟢 Market Open — Full-speed polling (every 3s)",
+                    "pre_open": "🟡 Pre-Open — Reduced polling (every 10s)",
+                    "post_close": "🟠 Post-Close — Minimal polling (every 15s)",
+                    "closed": "🔴 Market Closed — Paused (auth-only every 5 min)"
+                }
+                await broadcast_log(phase_names.get(phase, phase), "info")
+            
+            # Handle exponential backoff (from 429 errors)
+            if backoff_seconds > 0:
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = 0  # Reset after waiting
+            
+            # Fetch public quotes if appropriate (every 5 ticks)
+            public_quotes = {}
+            if tick % 5 == 0:
+                try:
+                    public_quotes = await get_nse_public_quotes()
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch public NSE quotes: {e}")
+            
+            # 1. Maintenance: Cleanup stale contexts or restore missing ones
+            for u_id_key in list(USER_CACHES.keys()):
+                u_id = int(u_id_key)  # Normalize to int for consistent key usage
+                if u_id not in USER_CONTEXTS:
+                    try:
+                        # Try to restore context from DB if possible
+                        client = FyersClient(user_id=u_id)
+                        if client.is_authenticated():
+                            USER_CONTEXTS[u_id] = client
+                            USER_CACHES[u_id_key]["is_auth"] = True
+                    except: pass
+
+            active_users = list(USER_CONTEXTS.keys())
+            if not active_users and tick % 20 == 0:
+                await broadcast_log("⏳ Waiting for active connections...", "info")
+            
+            for u_id in active_users:
+                client = USER_CONTEXTS[u_id]
+                cache = get_user_cache(u_id)
+                state = get_user_state(u_id)
+                state.check_daily_reset()
+                
+                # Check auth status (always, but at reduced frequency outside market)
+                auth_check_interval = 5 if phase == "market" else 30
+                if tick % auth_check_interval == 0:
+                    try:
+                        new_auth = await asyncio.to_thread(client.is_authenticated)
+                        old_auth = cache.get("is_auth", False)
+                        cache["is_auth"] = new_auth
+                        if new_auth != old_auth:
+                            status = "Connected" if new_auth else "Disconnected"
+                            await broadcast_log(f"🔄 Fyers {status} for user {u_id}", "success" if new_auth else "warning")
+                            if new_auth:
+                                cache["login_attempts"] = 0
+                    except:
+                        cache["is_auth"] = False
+
+                if not cache.get("is_auth"):
+                    # Try auto-login at most once every 60 seconds, max 3 attempts
+                    login_attempts = cache.get("login_attempts", 0)
+                    if login_attempts < 3:
+                        last_auto_login = cache.get("last_auto_login", 0)
+                        now = datetime.now(IST).timestamp()
+                        if (now - last_auto_login) > 60:
+                            cache["last_auto_login"] = now
+                            cache["login_attempts"] = login_attempts + 1
+                            await broadcast_log(f"⚠️ User {u_id} disconnected. Attempting auto-login ({login_attempts + 1}/3)...", "warning")
+                            login_success = await asyncio.to_thread(client.auto_login)
+                            if login_success:
+                                cache["is_auth"] = True
+                                cache["login_attempts"] = 0
+                                await broadcast_log(f"✅ Auto-login successful for user {u_id}", "success")
+                            else:
+                                if cache["login_attempts"] >= 3:
+                                    await broadcast_log(f"❌ Auto-login disabled for user {u_id} after 3 failed attempts. Please login manually.", "error")
+                                else:
+                                    await broadcast_log(f"❌ Auto-login failed for user {u_id}. Retrying in 60s.", "error")
+                    continue
+                
+                # --- DYNAMIC TASK MAPPING PER USER ---
+                task_defs = {}
+                
+                # Start WS feed if not started yet using this user's client
+                if not ws_feed._started and cache.get("is_auth"):
+                    await ws_feed.start(client)
+                
+                # 1. Quotes (Polling from WS Cache) — Only during trading phases, respecting phase interval
+                quotes_interval = config["quotes_every"]
+                if quotes_interval > 0 and tick % quotes_interval == 0:
+                    is_stale = (datetime.now(IST).timestamp() - cache.get("last_update", 0)) > (quotes_interval * 0.8)
+                    if is_stale:
+                        base_symbols = ["NSE:NIFTY50-INDEX", "NSE:INDIAVIX-INDEX"]
+                        # Add any other active symbols
+                        for sym in state.active_symbols:
+                            if sym not in base_symbols: base_symbols.append(sym)
+                            
+                        # Subscribe to WS
+                        if ws_feed.is_connected():
+                            ws_feed.subscribe(base_symbols)
+                            quotes = ws_feed.get_quotes_from_ws(base_symbols)
+                            if not quotes and cache.get("is_auth"):
+                                task_defs["quotes"] = asyncio.to_thread(client.get_quotes, base_symbols)
+                            elif quotes:
+                                # We have quotes from WS directly
+                                if "NSE:NIFTY50-INDEX" in quotes: cache["spot"] = quotes["NSE:NIFTY50-INDEX"]
+                                if "NSE:INDIAVIX-INDEX" in quotes: cache["vix"] = quotes["NSE:INDIAVIX-INDEX"]
+                                
+                                if "all_spots" not in cache: cache["all_spots"] = {}
+                                for sym, q in quotes.items():
+                                    cache["all_spots"][sym] = q
+                                
+                                cache["last_update"] = datetime.now(IST).timestamp()
+                                cache["_quotes_failed_count"] = 0
+                                backoff_seconds = 0
+                        else:
+                            # Not connected, use REST
+                            if cache.get("is_auth"):
+                                task_defs["quotes"] = asyncio.to_thread(client.get_quotes, base_symbols)
+                
+                # 2. Sync Core Data (Funds, Positions, Orders) — Frequency depends on phase
+                sync_interval = config["sync_every"]
+                if tick % sync_interval == 0 and cache.get("is_auth"):
+                    task_defs["synced"] = asyncio.to_thread(client.get_synced_data)
+
+                # Execute tasks
+                if task_defs:
+                    names = list(task_defs.keys())
+                    cors = [task_defs[n] for n in names]
+                    results_list = await asyncio.gather(*cors, return_exceptions=True)
+                    results = dict(zip(names, results_list))
+                    
+                    # Handle Quotes from REST fallback
+                    quotes = results.get("quotes")
+                    if isinstance(quotes, dict) and quotes:
+                        if "NSE:NIFTY50-INDEX" in quotes: cache["spot"] = quotes["NSE:NIFTY50-INDEX"]
+                        if "NSE:INDIAVIX-INDEX" in quotes: cache["vix"] = quotes["NSE:INDIAVIX-INDEX"]
+                        
+                        if "all_spots" not in cache: cache["all_spots"] = {}
+                        for sym, q in quotes.items():
+                            cache["all_spots"][sym] = q
+                        
+                        cache["last_update"] = datetime.now(IST).timestamp()
+                        cache["_quotes_failed_count"] = 0  # Reset failure counter
+                        backoff_seconds = 0  # Reset backoff on success
+                    elif "quotes" in task_defs:
+                        # Quotes were attempted but returned empty
+                        fail_count = cache.get("_quotes_failed_count", 0) + 1
+                        cache["_quotes_failed_count"] = fail_count
+                        
+                        # Exponential backoff: 5s → 10s → 20s → 40s → 60s max
+                        if fail_count <= 5:
+                            backoff_seconds = min(5 * (2 ** (fail_count - 1)), 60)
+                        
+                        # FALLBACK: Use latest candle close as spot price (every 5 failures)
+                        if fail_count % 5 == 1:
+                            try:
+                                candles = await asyncio.to_thread(client.get_historical, "NSE:NIFTY50-INDEX", "1", days_back=1)
+                                if candles and len(candles) > 0:
+                                    latest = candles[-1]
+                                    prev = candles[-2] if len(candles) > 1 else candles[0]
+                                    close = latest.get("close", 0)
+                                    prev_close = prev.get("close", close)
+                                    change = round(close - prev_close, 2)
+                                    change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
+                                    
+                                    fallback_spot = {"lp": close, "ch": change, "chp": change_pct}
+                                    cache["spot"] = fallback_spot
+                                    if "all_spots" not in cache: cache["all_spots"] = {}
+                                    cache["all_spots"]["NSE:NIFTY50-INDEX"] = fallback_spot
+                                    cache["last_update"] = datetime.now(IST).timestamp()
+                                    
+                                    if fail_count == 1:
+                                        await broadcast_log(f"⚠️ Quotes API throttled. Using candle fallback (backoff: {backoff_seconds}s).", "warning")
+                            except Exception as fb_err:
+                                if fail_count == 1:
+                                    print(f"⚠️ Candle fallback also failed: {fb_err}", flush=True)
+                        
+                    # Handle Sync
+                    synced = results.get("synced")
+                    if isinstance(synced, dict):
+                        updated_any = False
+                        if synced.get("positions") is not None:
+                            pos_list = synced["positions"]
+                            has_open = any(p.get("netQty", 0) != 0 or p.get("qty", 0) != 0 for p in pos_list)
+                            if not has_open and state.trades_today == 0:
+                                pos_list = []
+                                total_pnl = 0.0
+                            else:
+                                total_pnl = sum(p.get("pl", 0) for p in pos_list)
+                            cache["active_positions"] = pos_list
+                            cache["total_pnl"] = total_pnl
+                            state.update_pnl(total_pnl)
+                            updated_any = True
+                        if synced.get("orders") is not None:
+                            cache["orders"] = synced["orders"][-10:]
+                            updated_any = True
+                        if synced.get("funds") is not None:
+                            cache["funds"] = synced["funds"]
+                            updated_any = True
+                        if updated_any:
+                            cache["last_update"] = datetime.now(IST).timestamp()
+            
+            # Update public quotes for all users in USER_CACHES if we fetched new ones
+            if public_quotes:
+                for u_id_key in list(USER_CACHES.keys()):
+                    u_cache = USER_CACHES[u_id_key]
+                    is_stale = (datetime.now(IST).timestamp() - u_cache.get("last_update", 0)) > 10
+                    if not u_cache.get("is_auth") or is_stale or phase == "closed":
+                        if "NSE:NIFTY50-INDEX" in public_quotes:
+                            u_cache["spot"] = public_quotes["NSE:NIFTY50-INDEX"]
+                        if "NSE:INDIAVIX-INDEX" in public_quotes:
+                            u_cache["vix"] = public_quotes["NSE:INDIAVIX-INDEX"]
+                        if "all_spots" not in u_cache:
+                            u_cache["all_spots"] = {}
+                        for sym, q in public_quotes.items():
+                            u_cache["all_spots"][sym] = q
+                        u_cache["last_update"] = datetime.now(IST).timestamp()
+            
+            tick += 1
+            await asyncio.sleep(config["sleep"])
+        except Exception as e:
+            print(f"⚠️ Market Data Worker Error: {e}")
+            await asyncio.sleep(5)
+
+
+@app.websocket("/ws/live")
+async def websocket_live(ws: WebSocket):
+    print(f"📡 Incoming WebSocket connection from {ws.client}", flush=True)
+    await ws.accept()
+    print(f"📡 WebSocket handshake accepted for {ws.client}", flush=True)
+    
+    # Identify user from cookies
+    cookie_str = ws.headers.get("cookie", "")
+    user_id_raw = None
+    if "user_id=" in cookie_str:
+        user_id_raw = cookie_str.split("user_id=")[1].split(";")[0].strip()
+            
+    if not user_id_raw:
+        print("❌ WebSocket rejected: Missing user_id cookie")
+        await ws.close(code=4001)
+        return
+
+    # Normalize to string for consistent key usage in USER_CACHES
+    user_id = str(user_id_raw)
+
+    # Immediate initialization for this user if needed
+    cache = get_user_cache(user_id)
+    u_id_int = int(user_id)
+    is_admin = False
+    username = "Guest"
+    try:
+        user = await asyncio.to_thread(Database.get_user_by_id, u_id_int)
+        if user:
+            is_admin = bool(user.get("is_admin"))
+            username = user.get("username", "Guest")
+    except Exception as db_e:
+        print(f"Error fetching user details in WS: {db_e}")
+
+    if u_id_int not in USER_CONTEXTS:
+        try:
+            client = FyersClient(user_id=u_id_int)
+            if client.is_authenticated():
+                USER_CONTEXTS[u_id_int] = client
+                cache["is_auth"] = True
+                await broadcast_log(f"✅ Fyers connected for User {user_id}", "success")
+            else:
+                cache["is_auth"] = False
+                await broadcast_log(f"⚠️ Fyers login required for User {user_id}", "warning")
+        except Exception as e:
+            print(f"Error during WS init for {user_id}: {e}")
+            cache["is_auth"] = False
+
+    ws.user_id = u_id_int
+    active_connections.add(ws)
+    last_spot_update = 0
+    print(f"📡 WebSocket linked for User {user_id}. Total: {len(active_connections)}")
+    
+    try:
+        while True:
+            # Refresh local cache reference each loop
+            cache = get_user_cache(user_id)
+            is_auth = cache.get("is_auth", False)
+            
+            # Send Auth Status (Heartbeat) - Always send this
+            await ws.send_json({
+                "type": "auth_status",
+                "authenticated": is_auth,
+                "is_admin": is_admin,
+                "username": username,
+                "message": "Connected" if is_auth else "Fyers Not Linked"
+            })
+
+            # Force initial data push even if no updates yet
+            if not hasattr(ws, "_initial_push_done"):
+                ws._initial_push_done = True
+                state = get_user_state(user_id)
+                await ws.send_json({
+                    "type": "positions", 
+                    "positions": cache.get("active_positions", []), 
+                    "total_pnl": cache.get("total_pnl", 0),
+                    "active_trades": state.active_auto_trades,
+                    "automation_stats": {
+                        "trades_today": state.trades_today,
+                        "pnl_today": state.pnl_today,
+                        "max_trades": state.max_trades_per_day
+                    }
+                })
+                await ws.send_json({"type": "orders", "orders": cache.get("orders", [])})
+
+            # Check if cache has new data
+            if cache["last_update"] > last_spot_update:
+                last_spot_update = cache["last_update"]
+                
+                # Prepare spots for all active symbols
+                spot_data = cache.get("spot", {})
+                if not spot_data:
+                    spot_data = {"lp": 0, "ch": 0, "chp": 0}
+
+                all_spots = {
+                    "NSE:NIFTY50-INDEX": {
+                        "lp": spot_data.get("lp", 0),
+                        "change": spot_data.get("ch", 0),
+                        "change_pct": spot_data.get("chp", 0)
+                    }
+                }
+                
+                # Add others if available in all_spots
+                if "all_spots" in cache:
+                    for sym, q in cache["all_spots"].items():
+                        if sym not in all_spots:
+                            all_spots[sym] = {
+                                "lp": q.get("lp", 0),
+                                "change": q.get("ch", 0),
+                                "change_pct": q.get("chp", 0)
+                            }
+
+                # Send Market Update
+                await ws.send_json({
+                    "type": "market_update",
+                    "spots": all_spots,
+                    "vix": {
+                        "lp": cache["vix"].get("lp", 0) if cache["vix"] else 0,
+                        "change": cache["vix"].get("chp", 0) if cache["vix"] else 0
+                    }
+                })
+                
+                # Send Account Data
+                state = get_user_state(user_id)
+                await ws.send_json({
+                    "type": "positions",
+                    "positions": cache["active_positions"],
+                    "active_positions": cache["active_positions"],
+                    "total_pnl": cache.get("total_pnl", 0),
+                    "active_trades": state.active_auto_trades,
+                    "automation_stats": {
+                        "trades_today": state.trades_today,
+                        "pnl_today": state.pnl_today,
+                        "max_trades": state.max_trades_per_day
+                    }
+                })
+                
+                if cache["funds"]:
+                    await ws.send_json({
+                        "type": "funds",
+                        "funds": cache["funds"]
+                    })
+
+            await asyncio.sleep(0.8) # Sub-second push for real-time feel
+    except Exception as e:
+        print(f"📡 WebSocket error for User {user_id}: {e}")
+    finally:
+        active_connections.discard(ws)
+        print(f"📡 WebSocket disconnected for User {user_id}. Remaining: {len(active_connections)}")
+
+def _is_market_open() -> bool:
+    """Check if market is currently open (9:15 - 15:30 IST, weekdays)."""
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    if now.weekday() >= 5:
+        return False
+    market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_start <= now <= market_end
+
+
+@app.get("/api/automation")
+async def get_automation(request: Request):
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    # Ensure daily counters are reset when a new day starts
+    state.check_daily_reset()
+    return {
+        "enabled": state.automation_enabled,
+        "trades_today": state.trades_today,
+        "pnl_today": state.pnl_today,
+        "max_trades": state.max_trades_per_day,
+        "max_loss": state.max_loss_per_day
+    }
+
+@app.post("/api/automation/toggle")
+async def toggle_automation(request: Request):
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    body = await request.json()
+    enabled = body.get("enabled", False)
+    
+    if enabled:
+        is_auth = await asyncio.to_thread(client.is_authenticated)
+        if not is_auth:
+            return {"success": False, "message": "Fyers account is not active. Please authenticate your Fyers account first."}
+            
+    state.automation_enabled = enabled
+    state.save()
+    return {"success": True, "enabled": state.automation_enabled}
+
+@app.post("/api/automation/reset")
+async def reset_automation(request: Request):
+    """Manually reset daily trade counters (trades, PnL, skipped signals)."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    state.reset_day()
+    await broadcast_log("🔄 Manual reset: Trade counters cleared (0/2)", "success")
+    return {
+        "success": True,
+        "trades_today": state.trades_today,
+        "pnl_today": state.pnl_today,
+        "message": "Daily counters reset to 0"
+    }
+
+@app.get("/api/trading-config")
+async def get_trading_config(request: Request):
+    """Get current configurable trading parameters."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    return state.get_trading_config()
+
+@app.post("/api/trading-config")
+async def update_trading_config(request: Request):
+    """Update configurable trading parameters from Settings UI."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    try:
+        config = await request.json()
+        state.update_trading_config(config)
+        await broadcast_log(
+            f"⚙️ Risk settings updated: {state.max_trades_per_day} trades, ₹{state.max_loss_per_day} max loss, ₹{state.daily_profit_target} target, SL trend={state.max_sl_trending}pts, SL range={state.max_sl_range}pts",
+            "success"
+        )
+        return {"success": True, "config": state.get_trading_config()}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+@app.get("/api/user-config")
+async def get_user_config():
+    """Missing endpoint called by frontend."""
+    return {"success": True, "config": {"theme": "dark", "notifications": True}}
+
+@app.get("/api/pnl-history")
+async def get_pnl_history(request: Request):
+    try:
+        client = get_current_client(request)
+        if not client or not client.user_id:
+            return {"success": False, "message": "Not authenticated"}
+        
+        # Query history from Database
+        from models import Database
+        history = Database.get_pnl_history(int(client.user_id), months_limit=6)
+        
+        # Get active live state for today's running PnL
+        state = get_user_state(client.user_id)
+        state.check_daily_reset()
+        
+        today_str = state.last_reset_date
+        history_dates = {item["date"] for item in history}
+        
+        if today_str not in history_dates:
+            history.insert(0, {
+                "date": today_str,
+                "pnl": state.pnl_today,
+                "trades": state.trades_today,
+                "active": True
+            })
+        else:
+            for item in history:
+                if item["date"] == today_str:
+                    item["active"] = True
+                    item["pnl"] = state.pnl_today
+                    item["trades"] = state.trades_today
+                    break
+                    
+        return {"success": True, "history": history}
+    except Exception as e:
+        logger.error(f"❌ Error getting PnL history: {e}", exc_info=True)
+        return {"success": False, "message": str(e)}
+
+@app.get("/api/health")
+async def health_check():
+    """Production health check — returns uptime, active users, memory, task status."""
+    import resource
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    uptime_delta = now - SERVER_START_TIME
+    hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    # Memory usage (RSS in MB)
+    mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+    
+    # Active user count
+    active_users = len(USER_CONTEXTS)
+    ws_connections = len(active_connections)
+    
+    # Auth status per user
+    user_auth = {}
+    for u_id in USER_CONTEXTS:
+        cache = get_user_cache(u_id)
+        user_auth[str(u_id)] = cache.get("is_auth", False)
+    
+    return {
+        "status": "healthy",
+        "version": VERSION,
+        "uptime": f"{hours}h {minutes}m {seconds}s",
+        "started_at": SERVER_START_TIME.strftime("%Y-%m-%d %H:%M:%S IST"),
+        "memory_mb": round(mem_mb, 1),
+        "active_users": active_users,
+        "ws_connections": ws_connections,
+        "user_auth": user_auth,
+        "market_open": _is_market_open(),
+        "timestamp": now.isoformat()
+    }
+
+# ══════════════════════════════════════════════════════
+# NSE INDIA MARKET DATA PROXY — Server-side fetch
+# (avoids CORS issues from browser-direct calls)
+# ══════════════════════════════════════════════════════
+import urllib.request
+import xml.etree.ElementTree as ET
+
+_NSE_CACHE = {"indices": None, "news": None, "last_indices": None, "last_news": None}
+_NSE_CACHE_TTL = 60  # seconds
+
+_NSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
+    "Connection": "keep-alive",
+}
+
+def _nse_get(url: str, cookies: str = "") -> dict:
+    req = urllib.request.Request(url)
+    for k, v in _NSE_HEADERS.items():
+        req.add_header(k, v)
+    if cookies:
+        req.add_header("Cookie", cookies)
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def _rss_get(url: str) -> list:
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", _NSE_HEADERS["User-Agent"])
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        raw = resp.read()
+    root = ET.fromstring(raw)
+    items = []
+    for item in root.findall(".//item")[:10]:
+        title = item.findtext("title", "").strip()
+        pub   = item.findtext("pubDate", "").strip()
+        link  = item.findtext("link", "").strip()
+        if title:
+            items.append({"title": title, "pubDate": pub, "link": link})
+    return items
+
+def _get_nse_cookies() -> str:
+    """Hit NSE home to get session cookies."""
+    try:
+        req = urllib.request.Request("https://www.nseindia.com/")
+        for k, v in _NSE_HEADERS.items():
+            req.add_header(k, v)
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw_cookies = resp.getheader("Set-Cookie") or ""
+            # Extract key=value pairs
+            parts = [p.strip().split(";")[0] for p in raw_cookies.split(",") if "=" in p.split(";")[0]]
+            return "; ".join(parts)
+    except Exception:
+        return ""
+
+@app.get("/api/market-data")
+async def get_market_data():
+    """Proxy endpoint: fetches live index prices from NSE India."""
+    now = datetime.now(IST)
+    last = _NSE_CACHE.get("last_indices")
+    if _NSE_CACHE["indices"] and last and (now - last).total_seconds() < _NSE_CACHE_TTL:
+        return JSONResponse(content=_NSE_CACHE["indices"])
+
+    try:
+        cookies = await asyncio.get_event_loop().run_in_executor(None, _get_nse_cookies)
+        raw = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _nse_get("https://www.nseindia.com/api/allIndices", cookies)
+        )
+        # Filter to indices we care about
+        wanted = {"NIFTY 50", "NIFTY BANK", "NIFTY MIDCAP 50", "NIFTY NEXT 50",
+                  "NIFTY IT", "NIFTY AUTO", "NIFTY FMCG", "NIFTY PHARMA",
+                  "INDIA VIX", "NIFTY FINANCIAL SERVICES"}
+        filtered = [
+            {
+                "name": d.get("index", d.get("indexSymbol", "")),
+                "last": d.get("last", 0),
+                "change": round(d.get("variation", 0), 2),
+                "pct": round(d.get("percentChange", 0), 2),
+                "open": d.get("open", 0),
+                "high": d.get("high", 0),
+                "low":  d.get("low", 0),
+                "prev": d.get("previousClose", 0),
+            }
+            for d in raw.get("data", [])
+            if d.get("index") in wanted or d.get("indexSymbol") in wanted
+        ]
+        # Add market status
+        market_status = raw.get("marketStatus", {})
+        result = {"indices": filtered, "market": market_status, "source": "NSE India", "fetched_at": now.strftime("%H:%M:%S IST")}
+        _NSE_CACHE["indices"] = result
+        _NSE_CACHE["last_indices"] = now
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"[NSE] Market data fetch failed: {e}")
+        if _NSE_CACHE["indices"]:
+            cached = dict(_NSE_CACHE["indices"])
+            cached["cached"] = True
+            return JSONResponse(content=cached)
+        return JSONResponse(content={"error": str(e), "indices": []}, status_code=503)
+
+
+@app.get("/api/market-news")
+async def get_market_news():
+    """Proxy endpoint: fetches latest Indian market news from Economic Times RSS."""
+    now = datetime.now(IST)
+    last = _NSE_CACHE.get("last_news")
+    if _NSE_CACHE["news"] and last and (now - last).total_seconds() < 300:  # 5-min cache
+        return JSONResponse(content=_NSE_CACHE["news"])
+
+    feeds = [
+        {"url": "https://economictimes.indiatimes.com/markets/rss.cms", "source": "Economic Times"},
+        {"url": "https://www.moneycontrol.com/rss/MCtopnews.xml",        "source": "Moneycontrol"},
+    ]
+    all_news = []
+    for feed in feeds:
+        try:
+            items = await asyncio.get_event_loop().run_in_executor(None, lambda u=feed["url"]: _rss_get(u))
+            for item in items[:5]:
+                item["source"] = feed["source"]
+                all_news.append(item)
+        except Exception as ex:
+            print(f"[NEWS] RSS fetch failed for {feed['source']}: {ex}")
+
+    result = {"news": all_news[:12], "fetched_at": now.strftime("%H:%M:%S IST")}
+    if all_news:
+        _NSE_CACHE["news"] = result
+        _NSE_CACHE["last_news"] = now
+    return JSONResponse(content=result)
+
+
+@app.get("/api/version")
+async def get_version(request: Request):
+    """Return dashboard version and system info."""
+    client = get_current_client(request)
+    state = get_user_state(client.user_id)
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    uptime_delta = now - SERVER_START_TIME
+    hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return {
+        "version": VERSION,
+        "name": "ControlN Trading Dashboard",
+        "active_symbols": len(state.active_symbols),
+        "automation": state.automation_enabled,
+        "ai_active": ai_engine.enabled or ai_engine.openai_enabled,
+        "ai_provider": "Both" if (ai_engine.enabled and ai_engine.openai_enabled) else "Gemini" if ai_engine.enabled else "ChatGPT" if ai_engine.openai_enabled else "None",
+        "uptime": f"{hours}h {minutes}m {seconds}s",
+        "started_at": SERVER_START_TIME.strftime("%H:%M:%S IST")
+    }
+
+async def trailing_monitor():
+    """Background task to monitor active auto-trades, trail SL, and enforce max loss limit."""
+    
+    while True:
+        try:
+            for u_id, client in USER_CONTEXTS.items():
+                state = get_user_state(u_id)
+                MAX_LOSS_LIMIT = -abs(state.max_loss_per_day)
+                
+                if not state.active_auto_trades:
+                    continue
+                    
+                try:
+                    if not await asyncio.to_thread(client.is_authenticated):
+                        continue
+                except:
+                    continue
+                    
+                # ═══════════════════════════════════════════
+                # MAX LOSS CHECK — Emergency Exit
+                # ═══════════════════════════════════════════
+                cache = get_user_cache(u_id)
+                positions = cache.get("active_positions", [])
+                has_open = any(p.get("netQty", 0) != 0 or p.get("qty", 0) != 0 for p in positions)
+                if not has_open and state.trades_today == 0:
+                    total_pnl = 0.0
+                else:
+                    total_pnl = sum(p.get("pl", 0) for p in positions) if positions else 0
+                
+                # Update state PnL
+                state.update_pnl(total_pnl)
+                
+                if total_pnl <= MAX_LOSS_LIMIT:
+                    logger.warning(f"🚨 MAX LOSS BREACHED! PnL: ₹{total_pnl:.2f} <= ₹{MAX_LOSS_LIMIT}")
+                    await broadcast_log(f"🚨 EMERGENCY EXIT: Loss ₹{abs(total_pnl):.0f} exceeded ₹{abs(MAX_LOSS_LIMIT):.0f} limit!", "error")
+                
+                    # Square off ALL open positions
+                    open_positions = [p for p in positions if p.get("qty", 0) != 0]
+                    for pos in open_positions:
+                        try:
+                            qty = abs(pos.get("qty", 0))
+                            symbol = pos.get("symbol", "")
+                            side = "SELL" if pos.get("side", 1) > 0 else "BUY"
+                            
+                            logger.info(f"🔴 Emergency exit: {side} {qty} x {symbol}")
+                            await broadcast_log(f"🔴 Exiting: {side} {qty} x {symbol}", "error", user_id=u_id)
+                            
+                            result = await asyncio.to_thread(
+                                client.place_order,
+                                symbol=symbol,
+                                qty=qty,
+                                side=side,
+                                order_type="MARKET",
+                                product="INTRADAY"
+                            )
+                            logger.info(f"Emergency exit result: {result}")
+                        except Exception as exit_err:
+                            logger.error(f"Emergency exit error for {pos.get('symbol')}: {exit_err}")
+                    
+                    # Disable automation and clear active trades
+                    state.automation_enabled = False
+                    state.active_auto_trades = []
+                    state.hard_exit_triggered = True
+                    state.record_loss()
+                    state.save()
+                    
+                    await broadcast_log("🛑 AUTOMATION DISABLED — Max loss limit hit. All positions exited.", "error")
+                    continue
+                    
+                # ═══════════════════════════════════════════
+                # CLEANUP COMPLETED TRADES
+                # ═══════════════════════════════════════════
+                completed_trades = []
+                for t in state.active_auto_trades:
+                    # Skip cleanup if the trade was opened less than 20 seconds ago
+                    if time.time() - t.get("opened_at", 0) < 20:
+                        continue
+                    sym = t["symbol"]
+                    pos = next((p for p in positions if p.get("symbol") == sym), None)
+                    # If the position exists in cache and qty is 0, the trade is closed
+                    if pos is not None and abs(pos.get("qty", 0)) == 0:
+                        completed_trades.append((sym, pos))
+                        
+                if completed_trades:
+                    for sym, pos in completed_trades:
+                        trade_pnl = pos.get("pl", 0)
+                        if trade_pnl > 0:
+                            # Profitable trade
+                            state.trades_today = max(0, state.trades_today - 1)
+                            state.record_trade_close("profit")  # 3 min cooldown
+                            await broadcast_log(f"🎉 Trade PROFIT ₹{trade_pnl:.2f}! ⏳ Cooldown: 3 minutes before next trade.", "success", user_id=u_id)
+                        elif trade_pnl < 0:
+                            # Loss trade
+                            state.record_trade_close("loss")  # 5 min cooldown
+                            await broadcast_log(f"📉 Trade LOSS ₹{trade_pnl:.2f}. ⏳ Cooldown: 5 minutes before next trade.", "warning", user_id=u_id)
+                        else:
+                            # Breakeven
+                            state.record_trade_close("breakeven")  # 3 min cooldown
+                            await broadcast_log(f"➖ Trade BREAKEVEN. ⏳ Cooldown: 3 minutes before next trade.", "info")
+                        state.remove_active_trade(sym)
+                    logger.info(f"🧹 Cleaned up completed trades: {[s for s, _ in completed_trades]}")
+                    
+                # ═══════════════════════════════════════════
+                # TRAILING SL MONITOR (10-Point Step Trailing)
+                # ═══════════════════════════════════════════
+                symbols = [t["symbol"] for t in state.active_auto_trades]
+                if not symbols:
+                    await asyncio.sleep(5)
+                    continue
+                    
+                # Try to get quotes from WS feed first
+                quotes = ws_feed.get_quotes_from_ws(symbols) if ws_feed.is_connected() else {}
+                missing_symbols = [s for s in symbols if s not in quotes]
+                
+                if missing_symbols:
+                    rest_quotes = await asyncio.to_thread(client.get_quotes, missing_symbols)
+                    quotes.update(rest_quotes)
+                
+                for t in state.active_auto_trades:
+                    sym = t["symbol"]
+                    quote = quotes.get(sym, {})
+                    ltp = quote.get("lp", 0)
+                    
+                    if ltp == 0: continue
+                    
+                    entry = t["entry_price"]
+                    side = t.get("side", "BUY")
+                    pos = next((p for p in positions if p.get("symbol") == sym), None)
+
+                    # Strategy 3 (ORB) Target Monitoring
+                    if t.get("strategy") == "Strategy 3: 5-Minute ORB":
+                        target_1 = t.get("target_1")
+                        target_2 = t.get("target_2")
+                        trailed = t.get("trailed", False)
+                        
+                        if target_1 and target_2:
+                            is_target_1_hit = False
+                            is_target_2_hit = False
+                            
+                            if side == "BUY":
+                                if ltp >= target_1:
+                                    is_target_1_hit = True
+                                if ltp >= target_2:
+                                    is_target_2_hit = True
+                            else: # SELL
+                                if ltp <= target_1:
+                                    is_target_1_hit = True
+                                if ltp <= target_2:
+                                    is_target_2_hit = True
+                                    
+                            if is_target_2_hit:
+                                logger.info(f"🎯 Strategy 3 Target 2 Hit for {sym} at ₹{ltp} (Target: ₹{target_2})! Exiting.")
+                                await broadcast_log(f"🎯 Strategy 3 Target 2 Hit for {sym} at ₹{ltp}! Exiting...", "success", user_id=u_id)
+                                
+                                # Cancel SL order
+                                sl_order_id = t.get("sl_order_id")
+                                if sl_order_id:
+                                    try:
+                                        await asyncio.to_thread(client.cancel_order, sl_order_id)
+                                    except Exception as e:
+                                        logger.error(f"Error cancelling SL order: {e}")
+                                
+                                # Exit position
+                                exit_side = "SELL" if side == "BUY" else "BUY"
+                                qty = t.get("qty", 65)
+                                if pos:
+                                    qty = abs(pos.get("qty", qty))
+                                
+                                product_type = "INTRADAY" if "INDEX" not in sym and "-EQ" in sym else "MARGIN"
+                                exit_res = await asyncio.to_thread(
+                                    client.place_order,
+                                    symbol=sym,
+                                    qty=qty,
+                                    side=exit_side,
+                                    order_type="MARKET",
+                                    product=product_type,
+                                    sl_points=0.0,
+                                    target_points=0.0
+                                )
+                                if exit_res.get("success"):
+                                    trade_pnl = (ltp - entry) if side == "BUY" else (entry - ltp)
+                                    result_type = "profit" if trade_pnl > 0 else "loss"
+                                    state.record_trade_close(result_type)
+                                    await broadcast_log(f"✅ Strategy 3 exit at ₹{ltp}. ⏳ Cooldown: {3 if result_type == 'profit' else 5} minutes.", "success", user_id=u_id)
+                                    state.remove_active_trade(sym)
+                                else:
+                                    await broadcast_log(f"⚠️ Strategy 3 exit failed: {exit_res.get('message')}", "error", user_id=u_id)
+                                continue
+                                
+                            if is_target_1_hit and not trailed:
+                                logger.info(f"🛡️ Strategy 3 Target 1 Hit for {sym} at ₹{ltp}! Trailing SL to breakeven (₹{entry}).")
+                                sl_order_id = t.get("sl_order_id")
+                                if sl_order_id:
+                                    limit_price = entry - 1.0 if side == "BUY" else entry + 1.0
+                                    limit_price = round(round(limit_price / 0.05) * 0.05, 2)
+                                    mod_res = await asyncio.to_thread(
+                                        client.modify_order,
+                                        order_id=sl_order_id,
+                                        order_type=t.get("sl_order_type", 4),
+                                        stop_price=entry,
+                                        limit_price=limit_price
+                                    )
+                                    if mod_res.get("success"):
+                                        await broadcast_log(f"🛡️ Strategy 3 SL trailed to breakeven (₹{entry})", "success", user_id=u_id)
+                                        state.update_trade_sl_price(sl_order_id, entry)
+                                        state.mark_trade_trailed(sl_order_id)
+                                    else:
+                                        await broadcast_log(f"⚠️ Strategy 3 SL trail failed: {mod_res.get('message')}", "warning", user_id=u_id)
+                                else:
+                                    t["trailed"] = True
+                                    state.save()
+                        continue
+                    
+                    sl_pts = t["sl_points"]
+                    last_step = t.get("last_trail_step", 0)
+                    
+                    if side == "BUY":
+                        points_gained = ltp - entry
+                        step = int(points_gained / 10.0)
+                        
+                        if step > last_step:
+                            initial_sl = entry - sl_pts
+                            new_sl_price = initial_sl + (step * 10.0)
+                            new_sl_price = round(round(new_sl_price / 0.05) * 0.05, 2)
+                            
+                            # Double check that we are actually moving the SL price up
+                            current_sl_price = initial_sl + (last_step * 10.0)
+                            if new_sl_price > current_sl_price:
+                                logger.info(f"🚀 Trailing Milestone Hit for {sym}! LTP: {ltp} | Step: {step} | Prev Step: {last_step}")
+                                
+                                if t.get("sl_order_id"):
+                                    mod_res = await asyncio.to_thread(
+                                        client.modify_order,
+                                        order_id=t["sl_order_id"],
+                                        order_type=t.get("sl_order_type", 4),
+                                        stop_price=new_sl_price,
+                                        limit_price=new_sl_price - 1.0
+                                    )
+                                    if mod_res.get("success"):
+                                        logger.info(f"🛡️ Trailed SL to ₹{new_sl_price} for {sym}")
+                                        await broadcast_log(f"🛡️ SL trailed to ₹{new_sl_price} (step {step})", "success")
+                                        state.update_trade_sl_price(t["sl_order_id"], new_sl_price)
+                                        state.update_trade_trail_step(t["sl_order_id"], step)
+                                    else:
+                                        logger.error(f"❌ Failed to trail SL to ₹{new_sl_price} for {sym}: {mod_res.get('message')}")
+                                        await broadcast_log(f"⚠️ Trailing SL failed: {mod_res.get('message')}", "warning")
+                                else:
+                                    logger.warning(f"⚠️ No SL order ID tracked for {sym}, cannot modify on-exchange SL.")
+                                    # Fallback: still update state step so we don't spam errors
+                                    state.update_trade_trail_step(t.get("sl_order_id", ""), step)
+
+                    elif side == "SELL":
+                        # For SELL trades: profit when price drops
+                        points_gained = entry - ltp
+                        step = int(points_gained / 10.0)
+                        
+                        if step > last_step:
+                            initial_sl = entry + sl_pts
+                            new_sl_price = initial_sl - (step * 10.0)
+                            new_sl_price = round(round(new_sl_price / 0.05) * 0.05, 2)
+                            
+                            # Double check that we are actually moving the SL price down
+                            current_sl_price = initial_sl - (last_step * 10.0)
+                            if new_sl_price < current_sl_price:
+                                logger.info(f"🚀 [SELL] Trailing Milestone Hit for {sym}! LTP: {ltp} | Step: {step} | Prev Step: {last_step}")
+                                
+                                if t.get("sl_order_id"):
+                                    mod_res = await asyncio.to_thread(
+                                        client.modify_order,
+                                        order_id=t["sl_order_id"],
+                                        order_type=t.get("sl_order_type", 4),
+                                        stop_price=new_sl_price,
+                                        limit_price=new_sl_price + 1.0
+                                    )
+                                    if mod_res.get("success"):
+                                        logger.info(f"🛡️ [SELL] Trailed SL to ₹{new_sl_price} for {sym}")
+                                        await broadcast_log(f"🛡️ SL trailed to ₹{new_sl_price} (step {step})", "success")
+                                        state.update_trade_sl_price(t["sl_order_id"], new_sl_price)
+                                        state.update_trade_trail_step(t["sl_order_id"], step)
+                                    else:
+                                        logger.error(f"❌ [SELL] Failed to trail SL to ₹{new_sl_price} for {sym}: {mod_res.get('message')}")
+                                        await broadcast_log(f"⚠️ Trailing SL failed: {mod_res.get('message')}", "warning")
+                                else:
+                                    logger.warning(f"⚠️ No SL order ID tracked for {sym}, cannot modify on-exchange SL.")
+                                    state.update_trade_trail_step(t.get("sl_order_id", ""), step)
+
+        except Exception as e:
+            logger.error(f"Trailing monitor error: {e}")
+            
+        await asyncio.sleep(1)  # Monitor every 1 second for fast trailing
+
+async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, client) -> Dict:
+    """
+    Calculate smart SL based on strike's candle chart.
+    
+    TRENDING: SL = Swing Low (lowest low of recent candles), capped at 12 pts
+    RANGE-BOUND: SL = ATR × 1.5, capped at 8 pts
+    
+    Returns: {"sl_points": float, "target_points": float, "method": str}
+    """
+    state = get_user_state(client.user_id)
+    MAX_SL = state.max_sl_trending  # Configurable via Settings UI
+    RANGE_MAX_SL = state.max_sl_range  # Configurable via Settings UI
+    
+    try:
+        # Fetch strike's 5-min candle history (today only = 1 day back)
+        candles = await asyncio.to_thread(
+            client.get_historical, strike_symbol, "5", 1
+        )
+        
+        if not candles or len(candles) < 3:
+            # Fallback: use fixed SL if no candle data
+            logger.warning(f"Not enough candle data for {strike_symbol}. Using fixed SL.")
+            return {"sl_points": MAX_SL, "target_points": MAX_SL * 2, "method": "fixed_fallback"}
+        
+        # Only use recent candles (last 10 or all available)
+        recent = candles[-10:]
+        
+        is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
+        
+        if is_trending:
+            # ═══ TRENDING: SL = Swing Low ═══
+            lowest_low = min(c["low"] for c in recent)
+            sl_distance = round(entry_ltp - lowest_low, 2)
+            
+            # Ensure SL is positive and reasonable
+            if sl_distance <= 0:
+                sl_distance = 5.0  # Minimum 5 pts
+            
+            sl_points = min(sl_distance, MAX_SL)
+            sl_points = max(sl_points, 3.0)  # At least 3 pts to avoid noise
+            target_points = round(sl_points * 2, 2)  # 1:2 RR
+            
+            logger.info(f"📊 TRENDING SL: Swing Low={lowest_low}, Distance={sl_distance}, SL={sl_points}, TGT={target_points}")
+            return {"sl_points": sl_points, "target_points": target_points, "method": "swing_low"}
+        
+        else:
+            # ═══ RANGE-BOUND: SL = ATR × 1.5 ═══
+            atrs = []
+            for c in recent:
+                atr_val = c["high"] - c["low"]
+                atrs.append(atr_val)
+            
+            avg_atr = sum(atrs) / len(atrs) if atrs else 5.0
+            sl_points = round(avg_atr * 1.5, 2)
+            
+            # Range-bound: tighter limits
+            sl_points = min(sl_points, RANGE_MAX_SL)
+            sl_points = max(sl_points, 3.0)
+            target_points = round(sl_points * 1.5, 2)  # 1:1.5 RR
+            
+            logger.info(f"📊 RANGE SL: ATR={avg_atr:.2f}, SL={sl_points}, TGT={target_points}")
+            return {"sl_points": sl_points, "target_points": target_points, "method": "atr_range"}
+            
+    except Exception as e:
+        logger.error(f"Smart SL calculation error: {e}")
+        return {"sl_points": MAX_SL, "target_points": MAX_SL * 2, "method": "error_fallback"}
+
+
+async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
+    """Execute an automated trade based on confirmed signal with smart SL.
+    POLICY: Only BUY trades on CE/PE options. SELL trades are blocked."""
+    try:
+        state = get_user_state(client.user_id)
+        
+        # ═══════════════════════════════════════════
+        # GUARD: Block if already in a trade
+        # ═══════════════════════════════════════════
+        if len(state.active_auto_trades) > 0:
+            logger.warning(f"⛔ Trade blocked: Already have {len(state.active_auto_trades)} active trade(s).")
+            await broadcast_log(f"⛔ Trade blocked: Already in an active trade.", "warning", user_id=client.user_id)
+            return
+        
+        # ═══════════════════════════════════════════
+        # POLICY: BUY ONLY — Block all SELL trades
+        # ═══════════════════════════════════════════
+        requested_side = sig.get("side", "BUY")
+        if requested_side.upper() != "BUY":
+            logger.warning(f"⛔ SELL trade blocked by policy. Signal side={requested_side}. Only BUY trades allowed.")
+            await broadcast_log(f"⛔ SELL trade blocked: Only BUY trades on CE/PE allowed.", "warning", user_id=client.user_id)
+            return
+        
+        # ═══════════════════════════════════════════
+        # REGIME LOCKOUT: Block trades in flat/choppy markets
+        # ═══════════════════════════════════════════
+        norm_analysis = analysis if isinstance(analysis, dict) else {}
+        trend_info = norm_analysis.get("trend", {})
+        if isinstance(trend_info, str):
+            current_trend = trend_info.upper()
+        elif isinstance(trend_info, dict):
+            current_trend = (trend_info.get("trend", "") or "").upper()
+        else:
+            current_trend = "NEUTRAL"
+            
+        if any(x in current_trend for x in ["NEUTRAL", "RANGE_BOUND", "RANGE", "SIDEWAYS", "CHOOPY", "CHOPPY"]):
+            logger.warning(f"⛔ Auto-trade blocked: Trend regime is {current_trend} (Zero-Trading lockout active).")
+            await broadcast_log(f"⛔ Auto-trade blocked: Regime is {current_trend} (Choppy/Sideways Lockout).", "warning", user_id=client.user_id)
+            return
+            
+        sig_type = sig.get("type", "").upper()
+        if "BULL" in current_trend and sig_type != "CALL":
+            logger.warning(f"⛔ Auto-trade blocked: Trend is {current_trend} but signal is {sig_type} (only CALL CE allowed).")
+            await broadcast_log(f"⛔ Auto-trade blocked: Trend is {current_trend} but signal is {sig_type}.", "warning", user_id=client.user_id)
+            return
+        if "BEAR" in current_trend and sig_type != "PUT":
+            logger.warning(f"⛔ Auto-trade blocked: Trend is {current_trend} but signal is {sig_type} (only PUT PE allowed).")
+            await broadcast_log(f"⛔ Auto-trade blocked: Trend is {current_trend} but signal is {sig_type}.", "warning", user_id=client.user_id)
+            return
+        
+        # ═══════════════════════════════════════════
+        # STRATEGY 2: Direct Option Trade (skip strike selection)
+        # ═══════════════════════════════════════════
+        if sig.get("is_direct_option"):
+            strike_info = sig.get("strike_info", {})
+            strike_symbol = strike_info.get("symbol")
+            if not strike_symbol:
+                logger.error("Direct option trade missing symbol!")
+                await broadcast_log(f"❌ {sig.get('strategy', 'Strategy 2')}: Missing symbol", "error", user_id=client.user_id)
+                return
+            
+            # Fetch fresh LTP
+            fresh_quote = await asyncio.to_thread(client.get_quote, strike_symbol)
+            entry_price = fresh_quote.get("lp", 0) if fresh_quote else 0
+            if entry_price <= 0:
+                entry_price = strike_info.get("ltp", sig.get("entry_price", 180))
+            
+            sl_points = sig.get("sl_points", 20.0)
+            qty = sig.get("qty", 65)
+
+            # Determine product and targets based on strategy
+            is_orb = sig.get("strategy") == "Strategy 3: 5-Minute ORB"
+            
+            if is_orb:
+                # For Strategy 3 (ORB): Use standard MARGIN for options or INTRADAY for stock equity
+                if "INDEX" not in strike_symbol and "-EQ" in strike_symbol:
+                    product_type = "INTRADAY"
+                else:
+                    product_type = "MARGIN"
+                target_points = 0.0  # programmatically exit at target 2
+            else:
+                trend_info = analysis.get("trend", {})
+                current_trend = (trend_info.get("trend", "") or "").upper()
+                is_trending = "BULL" in current_trend or "BEAR" in current_trend
+                
+                if is_trending:
+                    product_type = "CO"
+                    target_points = 0.0
+                else:
+                    product_type = "BO"
+                    target_points = 150.0
+
+            side = sig.get("side", "BUY")
+            strategy_name = sig.get("strategy", "Strategy 2: 9:26 - 180 Buy")
+
+            logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Product: {product_type}")
+            await broadcast_log(                f"🚀 {strategy_name}: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | Product: {product_type}",
+                "success"
+            )
+            
+            result = await asyncio.to_thread(
+                client.place_order,
+                symbol=strike_symbol,
+                qty=qty,
+                side=side,
+                order_type="MARKET",
+                product=product_type,
+                sl_points=sl_points,
+                target_points=target_points
+            )
+            
+            if result.get("success"):
+                state.record_trade()
+                state.add_active_trade(
+                    symbol=strike_symbol,
+                    entry_price=entry_price,
+                    sl_points=sl_points,
+                    side=side,
+                    sl_order_id=result.get("sl_order_id", ""),
+                    tgt_order_id=result.get("tgt_order_id", ""),
+                    strategy=strategy_name if is_orb else None,
+                    target_1=sig.get("target_1") if is_orb else None,
+                    target_2=sig.get("target_2") if is_orb else None,
+                    sl_order_type=result.get("sl_order_type", 4)
+                )
+                log_trade({
+                    "symbol": strike_symbol, "side": side, "qty": qty,
+                    "price": entry_price, "signal_type": f"{strategy_name}_{sig['type']}",
+                    "status": "PLACED", "sl": sl_points, "target": target_points,
+                    "sl_method": "orb_checklist" if is_orb else "strategy_926_fixed"
+                })
+                await broadcast_log(                    f"✅ {strategy_name} Order placed: {strike_symbol} @ ₹{entry_price} | {result.get('message', '')}",
+                    "success"
+                )
+                logger.info(f"✅ {strategy_name} trade executed: {result}")
+            else:
+                logger.error(f"❌ {strategy_name} trade failed: {result.get('message', 'Unknown')}")
+                await broadcast_log(f"❌ {strategy_name} failed: {result.get('message', '')}", "error", user_id=client.user_id)
+            return  # Exit — Strategy 2 is done
+        
+        # ═══════════════════════════════════════════
+        # STRATEGY 1: Standard OB + FVG Trade Flow
+        # ═══════════════════════════════════════════
+        spot = analysis.get("spot", 0)
+        expiry = analysis.get("expiry")
+        
+        if not expiry:
+            logger.warning(f"No expiry found for {symbol}. Skipping auto-trade.")
+            await broadcast_log(f"⚠️ No expiry found for auto-trade", "warning", user_id=client.user_id)
+            return
+        
+        # ═══════════════════════════════════════════
+        # SPOT VALIDATION — Don't trade stale signals
+        # ═══════════════════════════════════════════
+        entry_zone_top = sig.get("entry_zone_top", sig.get("entry_price", spot))
+        entry_zone_bottom = sig.get("entry_zone_bottom", sig.get("entry_price", spot) - 50)
+        
+        if sig.get("type") == "CALL":
+            # For CALL: spot should not be far below the entry zone
+            if spot < entry_zone_bottom - 20:
+                logger.info(f"⏭️ SPOT VALIDATION: Spot {spot} dropped below entry zone {entry_zone_bottom}. Signal stale.")
+                await broadcast_log(f"⏭️ Signal stale: Spot ₹{spot:.0f} below entry zone ₹{entry_zone_bottom:.0f}", "warning", user_id=client.user_id)
+                return
+        elif sig.get("type") == "PUT":
+            # For PUT: spot should not be far above the entry zone
+            if spot > entry_zone_top + 20:
+                logger.info(f"⏭️ SPOT VALIDATION: Spot {spot} rose above entry zone {entry_zone_top}. Signal stale.")
+                await broadcast_log(f"⏭️ Signal stale: Spot ₹{spot:.0f} above entry zone ₹{entry_zone_top:.0f}", "warning", user_id=client.user_id)
+                return
+        
+        # ═══════════════════════════════════════════
+        # SELECT STRIKE
+        # ═══════════════════════════════════════════
+        option_chain = analysis.get("option_chain")
+        if not option_chain:
+            try:
+                option_chain = await asyncio.to_thread(
+                    client.get_option_chain_strikes, spot, expiry["code"], 5
+                )
+            except Exception as e:
+                logger.error(f"Option chain fetch failed: {e}")
+                await broadcast_log(f"❌ Option chain error: {str(e)[:80]}", "error", user_id=client.user_id)
+                return
+        
+        dte = expiry.get("dte", 5)
+        recommendations = get_strike_recommendations(option_chain, sig["type"], spot, dte)
+        
+        if not recommendations:
+            logger.warning(f"No suitable strikes found for {sig['type']} at spot {spot}")
+            await broadcast_log(f"⚠️ No strikes found for {sig['type']}", "warning", user_id=client.user_id)
+            return
+        
+        best_strike = recommendations[0]
+        strike_symbol = best_strike.get("symbol")
+        
+        if not strike_symbol:
+            logger.warning(f"Invalid strike data: {best_strike}")
+            return
+        
+        # ═══════════════════════════════════════════
+        # FETCH FRESH LIVE LTP (with candle fallback)
+        # ═══════════════════════════════════════════
+        entry_price = 0
+        
+        # Try 1: Live quote
+        fresh_quote = await asyncio.to_thread(client.get_quote, strike_symbol)
+        if fresh_quote and fresh_quote.get("lp", 0) > 0:
+            entry_price = fresh_quote["lp"]
+            logger.info(f"📊 Fresh LTP for {strike_symbol}: ₹{entry_price}")
+        
+        # Try 2: Cached LTP from option chain
+        if entry_price <= 0:
+            entry_price = best_strike.get("ltp", 0)
+            if entry_price > 0:
+                logger.info(f"📊 Cached LTP for {strike_symbol}: ₹{entry_price}")
+        
+        # Try 3: Historical candle fallback (latest 1-min close)
+        if entry_price <= 0:
+            try:
+                candle_data = await asyncio.to_thread(
+                    client.get_historical, strike_symbol, "1", 1
+                )
+                if candle_data and len(candle_data) > 0:
+                    entry_price = candle_data[-1].get("close", 0)
+                    if entry_price > 0:
+                        logger.info(f"📊 Candle fallback LTP for {strike_symbol}: ₹{entry_price}")
+            except Exception as e:
+                logger.warning(f"Candle fallback failed for {strike_symbol}: {e}")
+        
+        # Try 4: Estimate ATM premium from spot-strike distance
+        # For NIFTY ATM options with 3-7 DTE, premium ≈ 150-250
+        if entry_price <= 0:
+            try:
+                strike_price = best_strike.get("strike", 0)
+                if strike_price > 0 and spot > 0:
+                    distance = abs(spot - strike_price)
+                    # Rough Black-Scholes estimate for NIFTY options
+                    # ATM: ~200, ITM adds intrinsic, OTM reduces
+                    intrinsic = max(0, spot - strike_price) if "CE" in strike_symbol else max(0, strike_price - spot)
+                    time_value = max(80, 200 - distance * 0.5)  # Decay with distance from ATM
+                    entry_price = round(intrinsic + time_value, 2)
+                    logger.info(f"📊 ESTIMATED premium for {strike_symbol}: ₹{entry_price} (spot={spot}, strike={strike_price}, intrinsic={intrinsic})")
+                    await broadcast_log(f"📊 Using estimated premium ₹{entry_price} (quotes API throttled)", "warning", user_id=client.user_id)
+            except Exception as e:
+                logger.warning(f"Premium estimation failed: {e}")
+        
+        if entry_price <= 0:
+            logger.warning(f"Invalid entry price for {strike_symbol}")
+            await broadcast_log(f"⚠️ Cannot get price for {strike_symbol}. Retrying next cycle.", "warning", user_id=client.user_id)
+            return
+        
+        # ═══════════════════════════════════════════
+        # SMART SL CALCULATION (Chart-based)
+        # ═══════════════════════════════════════════
+        trend_info = analysis.get("trend", {})
+        current_trend = (trend_info.get("trend", "") or "").upper()
+        
+        sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
+        sl_points = sl_data["sl_points"]
+        sl_method = sl_data["method"]
+        
+        # Determine market regime for order type
+        is_trending = "BULL" in current_trend or "BEAR" in current_trend
+        if is_trending:
+            product_type = "CO"
+            target_points = 0.0
+        else:
+            product_type = "BO"
+            target_points = 150.0
+
+        lot_size = get_lot_size(strike_symbol)
+        qty = state.trade_lots * lot_size
+        
+        logger.info(f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points} ({sl_method}) | TGT: {target_points} | Regime: {'TRENDING (CO)' if is_trending else 'RANGE (BO)'}")
+        await broadcast_log(            f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Regime: {'TRENDING' if is_trending else 'RANGE'}",
+            "success"
+        )
+        
+        # ═══════════════════════════════════════════
+        # PLACE ORDER
+        # ═══════════════════════════════════════════
+        result = await asyncio.to_thread(
+            client.place_order,
+            symbol=strike_symbol,
+            qty=qty,
+            side="BUY",
+            order_type="MARKET",
+            product=product_type,
+            limit_price=entry_price,  # Pass pre-fetched price to avoid double-quote
+            sl_points=sl_points,
+            target_points=target_points
+        )
+        
+        if result.get("success"):
+            state.record_trade()
+            state.add_active_trade(
+                symbol=strike_symbol,
+                entry_price=entry_price,
+                sl_points=sl_points,
+                side="BUY",
+                sl_order_id=result.get("sl_order_id", ""),
+                tgt_order_id=result.get("tgt_order_id", ""),
+                sl_order_type=result.get("sl_order_type", 4)
+            )
+            
+            log_trade({
+                "symbol": strike_symbol,
+                "side": "BUY",
+                "qty": qty,
+                "price": entry_price,
+                "signal_type": f"AUTO_{sig['type']}",
+                "status": "PLACED",
+                "sl": sl_points,
+                "target": target_points,
+                "sl_method": sl_method
+            })
+            log_signal([sig], spot, f"🟢 AUTO EXECUTED ({sig['type']})", best_strike)
+            
+            await broadcast_log(                f"✅ Order placed: {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | {result.get('message', '')}",
+                "success"
+            )
+            logger.info(f"✅ Auto-trade executed: {result}")
+        else:
+            logger.error(f"❌ Auto-trade failed: {result.get('message', 'Unknown error')}")
+            await broadcast_log(f"❌ Auto-trade failed: {result.get('message', '')}", "error", user_id=client.user_id)
+            
+    except Exception as e:
+        logger.error(f"Auto-trade execution error: {e}")
+        await broadcast_log(f"❌ Auto-trade error: {str(e)[:100]}", "error", user_id=client.user_id)
+
+
+async def automation_loop():
+    """Continuously monitor symbols and execute AI-confirmed signals."""
+    logger.info("🤖 Automation Loop Started.")
+    while True:
+        try:
+            # EOD Report Check & Sleep if market is closed
+            if not _is_market_open():
+                for u_id in list(USER_CONTEXTS.keys()):
+                    state = get_user_state(u_id)
+                    state.check_daily_reset()
+                    state.check_and_send_eod_report()
+                await asyncio.sleep(30)
+                continue
+
+            for u_id, client in USER_CONTEXTS.items():
+                try:
+                    if not await asyncio.to_thread(client.is_authenticated):
+                        continue
+                except:
+                    continue
+                    
+                state = get_user_state(u_id)
+                trade_placed = False
+                
+                # Daily reset check per user
+                if state.check_daily_reset():
+                    await broadcast_log(f"🔄 New trading day! Counters reset for User {u_id}.", "success", user_id=client.user_id)
+
+                if not state.automation_enabled:
+                    continue
+
+                # Enforce strictly one active trade (both local state and live Fyers positions)
+                cache = get_user_cache(u_id)
+                positions = cache.get("active_positions", [])
+                open_positions = [p for p in positions if p.get("qty", 0) != 0]
+                if len(state.active_auto_trades) > 0 or len(open_positions) > 0:
+                    continue
+
+                # Strategy 2: 9:26 - 9:35 Breakout (Independent of Strategy 1)
+                try:
+                    sig_926 = await evaluate_926_strategy(client, state)
+                    if sig_926:
+                        logger.info(f"⚡ Strategy 2 Signal detected for User {u_id}: {sig_926['type']}")
+                        can_trade, reason = state.can_trade("STRATEGY_926")
+                        if can_trade:
+                            entry = sig_926.get('entry_price', 180)
+                            await broadcast_log(f"🚀 Strategy 2 (User {u_id}): {sig_926['type']} triggered at ₹{entry}!", "success", user_id=client.user_id)
+                            analysis_nifty = await get_analysis("NSE:NIFTY50-INDEX", client=client)
+                            trend_dict = analysis_nifty.get("trend", {}) if analysis_nifty else {"trend": "NEUTRAL"}
+                            await execute_auto_trade(sig_926['symbol'], sig_926, {"trend": trend_dict}, client)
+                            trade_placed = True
+                            continue  # ← CRITICAL: Skip all other strategies after placing a trade
+                        else:
+                            logger.info(f"⏭️ Strategy 2 blocked for User {u_id}: {reason}")
+                except Exception as e:
+                    logger.error(f"Error in Strategy 2 loop for User {u_id}: {e}")
+
+                # Strategy 3: 5-Minute ORB (Opening Range Breakout)
+                try:
+                    if not trade_placed and "Strategy 3: 5-Minute ORB" in state.active_strategies and not getattr(state, "strat_orb_triggered", False):
+                        now = datetime.now(IST)
+                        current_time_str = now.strftime("%H:%M:%S")
+                        if "09:25:00" <= current_time_str <= "09:30:00":
+                            for symbol in state.active_symbols:
+                                if len(state.active_auto_trades) > 0 or trade_placed:
+                                    break
+                                
+                                candles_5m = await asyncio.to_thread(client.get_historical, symbol, "5", days_back=4)
+                                candles_daily = await asyncio.to_thread(client.get_historical, symbol, "D", days_back=10)
+                                if candles_5m and candles_daily:
+                                    sig_orb = await evaluate_orb_strategy(client, state, symbol, candles_5m, candles_daily, vix=15.0)
+                                    if sig_orb:
+                                        logger.info(f"⚡ Strategy 3 Signal detected for User {u_id} on {symbol}: {sig_orb['type']}")
+                                        can_trade, reason = state.can_trade("STRATEGY_ORB")
+                                        if can_trade:
+                                            entry = sig_orb.get('entry_price', 0)
+                                            await broadcast_log(f"🚀 Strategy 3 (User {u_id}) ORB Triggered on {symbol} ({sig_orb['type']}) at ₹{entry}!", "success", user_id=client.user_id)
+                                            await execute_auto_trade(symbol, sig_orb, {"trend": "NEUTRAL"}, client)
+                                            state.strat_orb_triggered = True
+                                            state.save()
+                                            trade_placed = True
+                                            break
+                                        else:
+                                            logger.info(f"⏭️ Strategy 3 blocked for User {u_id}: {reason}")
+                except Exception as e:
+                    logger.error(f"Error in Strategy 3 loop for User {u_id}: {e}")
+
+                for symbol in state.active_symbols:
+                    if trade_placed:
+                        break
+                    # 1. Get Analysis
+                    analysis = await get_analysis(symbol, client=client)
+                    if not analysis or not analysis.get("signals"):
+                        continue
+                    
+                    logger.info(f"🔍 LOOP [{symbol} - User {u_id}]: Found {len(analysis.get('signals', []))} raw signals. Active Strats: {state.active_strategies}")
+
+                    # 2. Check for actionable signals
+                    for sig in analysis["signals"]:
+                        if trade_placed:
+                            break
+                        if sig.get("type") not in ("CALL", "PUT"):
+                            continue
+                        
+                        tech_conf = sig.get("confidence", 0)
+                        if tech_conf < 50:
+                            continue
+                        
+                        trend_info = analysis.get("trend", {})
+                        current_trend = (trend_info.get("trend", "") or "").upper()
+                        trend_strength = trend_info.get("strength", 0)
+                        signal_type = sig.get("type")
+                        
+                        if signal_type == "CALL" and "BEAR" in current_trend:
+                            continue
+                        elif signal_type == "PUT" and "BULL" in current_trend:
+                            continue
+                        
+                        if "NEUTRAL" in current_trend or "SIDEWAYS" in current_trend:
+                            if tech_conf < 70:
+                                continue
+                        
+                        if state.profit_target_met:
+                            if tech_conf < 85:
+                                continue
+                        
+                        can_trade, reason = state.can_trade(symbol.replace(':','_'))
+                        if not can_trade:
+                            # Broadcast cooldown status (but only once per 30s to avoid spam)
+                            if "Cooldown" in reason:
+                                last_log = getattr(state, '_last_cooldown_log', 0)
+                                now_ts = datetime.now(IST).timestamp()
+                                if (now_ts - last_log) > 30:
+                                    state._last_cooldown_log = now_ts
+                                    await broadcast_log(f"{reason} | Signal: {sig['type']} {tech_conf}%", "info", user_id=client.user_id)
+                            continue
+
+                        if tech_conf >= 75:
+                            logger.info(f"🚀 TIER 1 AUTO-TRADE (User {u_id}): {symbol} {sig['type']} | Tech: {tech_conf}%")
+                            await broadcast_log(f"🚀 HIGH CONFIDENCE ({tech_conf}%) — Auto-executing {sig['type']} trade for User {u_id}!", "success", user_id=client.user_id)
+                            await execute_auto_trade(symbol, sig, analysis, client)
+                            trade_placed = True
+                            break
+                            
+                        elif tech_conf >= 50:
+                            ai_conf = sig.get("ai_confidence", 0)
+                            ai_status = sig.get("ai_status", "unknown")
+                            ai_rationale = sig.get("ai_rationale", "")
+                            
+                            if ai_status == "error":
+                                continue
+                            
+                            ai_threshold = 70
+                            if ai_conf >= ai_threshold:
+                                logger.info(f"🚀 AI APPROVED (User {u_id}): {sig['type']} | AI: {ai_conf}%")
+                                await broadcast_log(f"🧠 AI APPROVED ({ai_conf}%): {sig['type']} — {ai_rationale[:60]} (User {u_id})", "success", user_id=client.user_id)
+                                await execute_auto_trade(symbol, sig, analysis, client)
+                                trade_placed = True
+                                break
+                            else:
+                                logger.info(f"⏭️ AI REJECTED (User {u_id}): {sig['type']} | AI: {ai_conf}%")
+        except Exception as e:
+            logger.error(f"Automation loop error: {e}")
+        
+        await asyncio.sleep(5)
+
+
+@app.get("/api/logs")
+async def get_logs(request: Request, limit: int = 100):
+    """Fetch the latest system logs for the authenticated user (and global logs)."""
+    try:
+        user_id = request.cookies.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        logs = Database.get_user_logs(user_id=int(user_id), limit=limit)
+        return {"status": "success", "logs": logs}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching logs: {str(e)}")
+
+# Startup logic moved to lifespan() context manager at top of file
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    print(f"🚀 Starting NIFTY Trading Dashboard on http://localhost:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+

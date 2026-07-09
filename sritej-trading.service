@@ -1,0 +1,20 @@
+[Unit]
+Description=Sritej Trading App v5.2
+After=network.target
+Wants=network-online.target
+
+[Service]
+User=sritejpalika
+WorkingDirectory=/home/sritejpalika/trading-app
+ExecStartPre=/home/sritejpalika/trading-app/.venv/bin/python -c "import py_compile; py_compile.compile('app.py', doraise=True)"
+ExecStart=/home/sritejpalika/trading-app/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+StandardOutput=append:/home/sritejpalika/trading-app/app.log
+StandardError=append:/home/sritejpalika/trading-app/app.log
+Environment=PATH=/home/sritejpalika/trading-app/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

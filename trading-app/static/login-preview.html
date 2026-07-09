@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0A0B0F">
+    <title>ControlN Trading — Sign In</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="apple-touch-icon" href="/static/logo.png">
+
+    <!-- Shared design system (tokens + components) — foundation for all pages -->
+    <link rel="stylesheet" href="/static/design-system.css">
+
+    <!-- Apply saved theme before paint to avoid a flash (compatible with app.js) -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('theme') === 'light') {
+            document.documentElement.dataset.pretheme = 'light';
+          }
+        } catch (e) {}
+      })();
+    </script>
+
+    <style>
+        /* ── Page-specific layout (uses design-system.css tokens) ───────────── */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { overflow-x: hidden; }
+        body {
+            font-family: var(--ds-font-body);
+            background: var(--ds-bg);
+            color: var(--ds-text);
+            min-height: 100dvh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .auth {
+            display: grid;
+            grid-template-columns: 1.05fr 0.95fr;
+            min-height: 100dvh;
+        }
+
+        /* ── LEFT: brand + value panel ─────────────────────────────────────── */
+        .brand-panel {
+            position: relative;
+            overflow: hidden;
+            padding: clamp(28px, 4vw, 56px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background:
+                radial-gradient(115% 90% at 8% 0%, rgba(124, 58, 237, 0.20) 0%, transparent 46%),
+                radial-gradient(120% 120% at 100% 100%, rgba(20, 209, 155, 0.07) 0%, transparent 42%),
+                var(--ds-bg-elev-0);
+            border-right: 1px solid var(--ds-border);
+        }
+        /* Subtle chart-grid texture — evokes a trading terminal, no neon */
+        .brand-panel::before {
+            content: '';
+            position: absolute; inset: 0;
+            background-image:
+                linear-gradient(var(--ds-border) 1px, transparent 1px),
+                linear-gradient(90deg, var(--ds-border) 1px, transparent 1px);
+            background-size: 46px 46px;
+            -webkit-mask-image: radial-gradient(120% 100% at 30% 20%, #000 20%, transparent 78%);
+                    mask-image: radial-gradient(120% 100% at 30% 20%, #000 20%, transparent 78%);
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        .brand-panel > * { position: relative; z-index: 1; }
+
+        .brand-lockup { display: flex; align-items: center; gap: 12px; }
+        .brand-lockup img { width: 38px; height: 38px; border-radius: 9px; object-fit: cover; }
+        .brand-lockup .name { font-family: var(--ds-font-display); font-weight: 700; font-size: 1.15rem; letter-spacing: -0.02em; }
+        .brand-lockup .name b { color: var(--ds-accent); }
+
+        .pitch { max-width: 30ch; }
+        .pitch .eyebrow { margin-bottom: 18px; }
+        .pitch h1 {
+            font-family: var(--ds-font-display);
+            font-weight: 700;
+            font-size: clamp(2.1rem, 3.6vw, 3.05rem);
+            line-height: 1.08;
+            letter-spacing: -0.03em;
+        }
+        .pitch h1 .accent { color: var(--ds-accent); }
+        .pitch p { margin-top: 20px; font-size: 1.02rem; line-height: 1.6; color: var(--ds-text-2); max-width: 42ch; }
+
+        .stats { display: flex; gap: 14px; margin-top: 34px; flex-wrap: wrap; }
+        .stat {
+            background: var(--ds-surface-1);
+            border: 1px solid var(--ds-border);
+            border-radius: var(--ds-r-md);
+            padding: 14px 18px;
+            box-shadow: var(--ds-inset-hi);
+            min-width: 128px;
+        }
+        .stat .val {
+            font-family: var(--ds-font-mono);
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: 'tnum' 1;
+            font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em;
+            display: flex; align-items: baseline; gap: 4px;
+        }
+        .stat .val.up { color: var(--ds-profit); }
+        .stat .lbl { margin-top: 4px; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ds-text-muted); font-weight: 600; }
+
+        .compliance {
+            display: flex; align-items: center; gap: 12px;
+            font-size: 0.78rem; color: var(--ds-text-muted); line-height: 1.5;
+            border-top: 1px solid var(--ds-border);
+            padding-top: 20px; margin-top: 28px;
+        }
+        .compliance .shield {
+            flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+            display: grid; place-items: center; font-size: 16px;
+            background: var(--ds-accent-soft); color: var(--ds-violet-200);
+            border: 1px solid var(--ds-border-accent);
+        }
+
+        /* ── RIGHT: form panel ─────────────────────────────────────────────── */
+        .form-panel {
+            position: relative;
+            display: flex; align-items: center; justify-content: center;
+            padding: clamp(28px, 4vw, 56px);
+            background: var(--ds-bg);
+        }
+        .form-topbar {
+            position: absolute; top: 20px; right: 22px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .form-card { width: 100%; max-width: 380px; }
+        .form-card > .head { margin-bottom: 28px; }
+        .form-card .head h2 { font-family: var(--ds-font-display); font-weight: 700; font-size: 1.6rem; letter-spacing: -0.02em; }
+        .form-card .head p { margin-top: 8px; color: var(--ds-text-muted); font-size: 0.92rem; }
+
+        .field-stack { display: flex; flex-direction: column; gap: 18px; }
+        .field { display: flex; flex-direction: column; gap: 8px; }
+        .field label { font-size: 0.84rem; font-weight: 600; color: var(--ds-text-2); }
+
+        .input-shell { position: relative; }
+        .input-shell input {
+            width: 100%; box-sizing: border-box;
+            font-family: var(--ds-font-body); font-size: 1rem; /* >=16px, no mobile zoom */
+            color: var(--ds-text); background: var(--ds-inset);
+            border: 1px solid var(--ds-border-strong); border-radius: var(--ds-r-sm);
+            padding: 14px 15px; min-height: 50px; outline: none;
+            box-shadow: var(--ds-inset-lo);
+            transition: border-color .16s var(--ds-ease), box-shadow .16s var(--ds-ease), background .16s var(--ds-ease);
+        }
+        .input-shell input::placeholder { color: var(--ds-text-dim); }
+        .input-shell input:hover { border-color: var(--ds-border-accent); }
+        .input-shell input:focus {
+            border-color: var(--ds-accent);
+            box-shadow: 0 0 0 3px var(--ds-accent-ring);
+            background: var(--ds-bg-elev-0);
+        }
+        .pw-toggle {
+            position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+            background: none; border: none; cursor: pointer; color: var(--ds-text-muted);
+            width: 38px; height: 38px; border-radius: var(--ds-r-xs);
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 15px; transition: color .15s, background .15s;
+        }
+        .pw-toggle:hover { color: var(--ds-text); background: var(--ds-accent-soft); }
+        .input-shell.has-toggle input { padding-right: 48px; }
+
+        .submit {
+            width: 100%; margin-top: 4px;
+            display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+            font-family: var(--ds-font-body); font-weight: 600; font-size: 1.02rem;
+            height: 52px; border: none; border-radius: var(--ds-r-sm);
+            background: var(--ds-accent); color: #fff; cursor: pointer;
+            box-shadow: var(--ds-shadow-md), var(--ds-inset-hi);
+            transition: background .18s var(--ds-ease), transform .12s var(--ds-ease), box-shadow .18s var(--ds-ease);
+        }
+        .submit:hover { background: var(--ds-accent-hover); box-shadow: var(--ds-shadow-lg); }
+        .submit:active { background: var(--ds-accent-press); transform: translateY(1px); }
+        .submit:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ds-accent-ring); }
+        .submit .arrow { transition: transform .18s var(--ds-ease); }
+        .submit:hover .arrow { transform: translateX(3px); }
+
+        .idle-note {
+            display: none;
+            align-items: flex-start; gap: 10px;
+            background: var(--ds-warn-soft); border: 1px solid rgba(245,165,36,0.28);
+            color: var(--ds-warn); font-size: 0.84rem; line-height: 1.45;
+            padding: 12px 14px; border-radius: var(--ds-r-sm); margin-bottom: 22px;
+        }
+        .error {
+            display: none;
+            align-items: center; gap: 9px;
+            color: var(--ds-loss); font-size: 0.86rem; font-weight: 500;
+            background: var(--ds-loss-soft); border: 1px solid rgba(255,77,106,0.25);
+            padding: 11px 14px; border-radius: var(--ds-r-sm); margin-top: 16px;
+        }
+        .form-foot {
+            margin-top: 26px; padding-top: 20px;
+            border-top: 1px solid var(--ds-border);
+            font-size: 0.74rem; color: var(--ds-text-dim); text-align: center; line-height: 1.5;
+        }
+
+        /* ── Responsive: collapse to single column ─────────────────────────── */
+        @media (max-width: 880px) {
+            .auth { grid-template-columns: 1fr; }
+            .brand-panel {
+                border-right: none;
+                border-bottom: 1px solid var(--ds-border);
+                padding: 26px 22px 30px;
+            }
+            .brand-panel::before { -webkit-mask-image: radial-gradient(120% 100% at 50% 0%, #000 10%, transparent 85%); mask-image: radial-gradient(120% 100% at 50% 0%, #000 10%, transparent 85%); }
+            .pitch { max-width: none; }
+            .pitch h1 { font-size: clamp(1.7rem, 7vw, 2.2rem); }
+            .pitch p { display: none; } /* keep mobile header tight */
+            .stats { margin-top: 22px; }
+            .compliance { margin-top: 22px; padding-top: 16px; }
+            .form-panel { padding: 30px 22px 40px; }
+            .form-topbar { position: static; justify-content: flex-end; margin-bottom: 8px; }
+            .form-card { margin: 0 auto; }
+        }
+        @media (max-width: 400px) {
+            .stat { min-width: 0; flex: 1; }
+            .stats { gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="auth">
+        <!-- ── LEFT: brand + honest value proposition ── -->
+        <aside class="brand-panel">
+            <div class="brand-lockup">
+                <img src="/static/logo.png" alt="ControlN Trading logo">
+                <span class="name">Control<b>N</b> Trading</span>
+            </div>
+
+            <div class="pitch">
+                <div class="eyebrow ds-eyebrow">NIFTY Options · Automated Execution</div>
+                <h1>Rules-based trading, <span class="accent">watched every tick.</span></h1>
+                <p>An AI-assisted execution desk for NIFTY index options — signal analysis, position tracking, and trailing exits, running continuously so you don't have to babysit the screen.</p>
+
+                <div class="stats">
+                    <div class="stat">
+                        <div class="val">&lt;<span class="ds-num">250</span><span style="font-size:0.9rem">ms</span></div>
+                        <div class="lbl">Signal → Order</div>
+                    </div>
+                    <div class="stat">
+                        <div class="val up ds-num">99.9%</div>
+                        <div class="lbl">Loop Uptime</div>
+                    </div>
+                    <div class="stat">
+                        <div class="val ds-num">24×7</div>
+                        <div class="lbl">Monitoring</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="compliance">
+                <div class="shield">⚖</div>
+                <div>Market participation carries risk. Derivatives trading is subject to SEBI regulations — trade only capital you can afford to lose. This is an execution tool, not investment advice.</div>
+            </div>
+        </aside>
+
+        <!-- ── RIGHT: sign-in form (all original wiring preserved) ── -->
+        <main class="form-panel">
+            <div class="form-topbar">
+                <button type="button" class="ds-theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle light or dark theme">☀️</button>
+            </div>
+
+            <div class="form-card">
+                <div class="head">
+                    <h2>Sign in</h2>
+                    <p>Access your ControlN trading dashboard.</p>
+                </div>
+
+                <!-- Idle logout notice (id preserved: idleMessage) -->
+                <div id="idleMessage" class="idle-note">
+                    <span>⏱</span>
+                    <span>You were signed out after a period of inactivity. Sign in again to continue.</span>
+                </div>
+
+                <div class="field-stack">
+                    <div class="field">
+                        <label for="username">Username</label>
+                        <div class="input-shell">
+                            <!-- id preserved: username -->
+                            <input type="text" id="username" placeholder="Enter your username" autocomplete="username" autocapitalize="none" spellcheck="false">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="password">Password</label>
+                        <div class="input-shell has-toggle">
+                            <!-- id preserved: password -->
+                            <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
+                            <button type="button" class="pw-toggle" id="pwToggle" onclick="togglePassword()" aria-label="Show or hide password">👁</button>
+                        </div>
+                    </div>
+
+                    <!-- onclick preserved: login() -->
+                    <button type="button" class="submit" onclick="login()">
+                        Sign in <span class="arrow" aria-hidden="true">→</span>
+                    </button>
+                </div>
+
+                <!-- id preserved: errorMessage -->
+                <div id="errorMessage" class="error"><span>⚠</span><span id="errorText">Invalid username or password</span></div>
+
+                <div class="form-foot">
+                    © ControlN Business Consultants · All rights reserved
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ── Theme toggle (compatible with dashboard app.js: localStorage['theme'] + body.light-theme) ──
+        (function () {
+            try {
+                if (document.documentElement.dataset.pretheme === 'light') {
+                    document.body.classList.add('light-theme');
+                }
+            } catch (e) {}
+        })();
+        function toggleTheme() {
+            const isLight = document.body.classList.toggle('light-theme');
+            try { localStorage.setItem('theme', isLight ? 'light' : 'dark'); } catch (e) {}
+            const btn = document.getElementById('themeToggleBtn');
+            if (btn) btn.textContent = isLight ? '🌙' : '☀️';
+        }
+        // Set the correct icon on load
+        (function () {
+            const btn = document.getElementById('themeToggleBtn');
+            if (btn) btn.textContent = document.body.classList.contains('light-theme') ? '🌙' : '☀️';
+        })();
+
+        // ── Show / hide password ──
+        function togglePassword() {
+            const input = document.getElementById('password');
+            const btn = document.getElementById('pwToggle');
+            const show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            if (btn) btn.textContent = show ? '🙈' : '👁';
+        }
+
+        // ── Idle redirect notice (behavior preserved) ──
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('reason') === 'idle') {
+            document.getElementById('idleMessage').style.display = 'flex';
+        }
+
+        // ── Login (logic identical to original; reads #username / #password, shows #errorMessage) ──
+        async function login() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            const err = document.getElementById('errorMessage');
+            const errText = document.getElementById('errorText');
+
+            err.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass }),
+                    credentials: 'include'
+                });
+                const data = await res.json();
+                if (data.success) {
+                    // Cache-busting redirect to prevent browser serving cached landing page
+                    window.location.replace('/?_t=' + Date.now());
+                } else {
+                    if (errText) errText.textContent = data.message || 'Invalid username or password';
+                    err.style.display = 'flex';
+                }
+            } catch (e) {
+                console.error(e);
+                if (errText) errText.textContent = 'Login failed. Server may be down.';
+                err.style.display = 'flex';
+            }
+        }
+
+        // Allow Enter key to submit (behavior preserved)
+        document.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') login();
+        });
+    </script>
+</body>
+</html>

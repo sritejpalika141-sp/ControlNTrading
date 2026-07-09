@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
+    "trade-prediction-markets": {
+      "source": "robonet-tech/skills",
+      "sourceType": "github",
+      "skillPath": "skills/trade-prediction-markets/SKILL.md",
+      "computedHash": "cf66db9c41f460069cdcf9e1476497c1c84e71bcd5e0fc6cf291d6d6732bbc17"
+    },
+    "trading-strategist": {
+      "source": "kukapay/crypto-skills",
+      "sourceType": "github",
+      "skillPath": "skills/trading-strategist/SKILL.md",
+      "computedHash": "4996644c3ba03400d9122f3720d4de224583f21f40d1a02b9313f50ed5bbe709"
+    },
+    "trading-wisdom": {
+      "source": "0xhubed/agent-trading-arena",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/trading-wisdom/SKILL.md",
+      "computedHash": "58cb319c0ad36eb059c42a8216b2f845f1af66e27d47a38130446babe633be88"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "task": "Phase 2 remaining-findings remediation (trading-remediation)",
+  "reviewer": "user (human) — explicit session decision on the OAuth callback first-use interception residual, conveyed after evidence-pack adversarial review",
+  "decision": "approved-with-concerns",
+  "timestamp": "2026-07-04",
+  "blockingFindings": [],
+  "nonBlockingFindings": [
+    "OAuth callback state — first-use interception risk: forgery, tampering, and replay of the signed single-use nonce are ruled out, but the state/auth_code pair travels through a browser redirect with no binding back to a cookie set at the auth-url-initiation step (no PKCE-style verifier). An attacker who captures both values ahead of the legitimate browser (MITM, proxy/CDN log leak, shared-device history) could complete the callback once. User explicitly accepted this as a documented residual rather than blocking Phase 2 on it. Tracked in backlog note oauth-state-binding-hardening.",
+    "A2/A3/D2 blast-radius files (auth_utils.py, state.py, requirements.txt) were not explicitly enumerated in the plan's original Blast Radius section, though logically in-scope extensions of already-approved checklist items (confirmed by EVL).",
+    "C1/C2 XSS fixes verified by direct code reading (textContent/createElement usage) only — a scripted browser probe (vc-agent-browser) was not run this session (Agent-Probe tier, optional per the validate-contract)."
+  ],
+  "notes": "All fully-automated gates pass (45/45 pytest tests; py_compile clean; live TLS re-verification against public.fyers.in succeeded). 7 highest-risk code claims independently re-verified by EVL via direct source reading, not report trust: guest-fallback 401, regime guard fail-closed on state.market_regime, decrypt_val fail-loud, TLS restored repo-wide, XSS fixes, service-worker cache exclusion, health_agent exact-token+user-scoped action matching. 3 of 4 adversarial scenarios cleanly ruled out; the OAuth first-use interception scenario is accepted as a known residual per this decision."
+}
