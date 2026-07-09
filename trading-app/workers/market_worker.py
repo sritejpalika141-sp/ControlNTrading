@@ -24,7 +24,7 @@ from fyers_client import FyersClient
 from engine.ws_feed import ws_feed
 
 
-def get_market_phase() -> str:
+def get_market_phase(active_symbols: list = None) -> str:
     """Determine current market phase for smart polling.
     Returns: 'pre_open', 'market', 'post_close', 'closed'
     """
@@ -34,15 +34,22 @@ def get_market_phase() -> str:
     hour, minute = now.hour, now.minute
     time_val = hour * 60 + minute  # Minutes since midnight
 
+    has_mcx = any(s.startswith("MCX:") for s in (active_symbols or []))
+    has_cds = any(s.startswith("CDS:") for s in (active_symbols or []))
+
     if time_val < 540:        # Before 9:00 AM
         return "closed"
     elif time_val < 555:      # 9:00 - 9:15 AM (Pre-open)
         return "pre_open"
     elif time_val < 930:      # 9:15 AM - 3:30 PM (Market hours)
         return "market"
+    elif time_val < 1020 and has_cds: # Until 5:00 PM for CDS
+        return "market"
+    elif time_val < 1410 and has_mcx: # Until 11:30 PM for MCX
+        return "market"
     elif time_val < 945:      # 3:30 - 3:45 PM (Post-close / closing auction)
         return "post_close"
-    else:                     # After 3:45 PM
+    else:                     # After 3:45 PM (or 11:30 PM for MCX)
         return "closed"
 
 
@@ -129,7 +136,15 @@ async def market_data_worker():
 
     while True:
         try:
-            phase = get_market_phase()
+            # Gather all active symbols to check if MCX/CDS are present
+            active_users = list(USER_CONTEXTS.keys())
+            all_active = []
+            for u_id in active_users:
+                st = get_user_state(u_id)
+                if hasattr(st, 'active_symbols'):
+                    all_active.extend(st.active_symbols)
+
+            phase = get_market_phase(all_active)
             config = POLL_CONFIG[phase]
 
             # Log phase transitions

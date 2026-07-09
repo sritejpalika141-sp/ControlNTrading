@@ -145,3 +145,17 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
         results.append(best)
         
     return results
+
+async def resolve_current_commodity_expiry(prefix: str) -> str:
+    """
+    Resolve a high-level prefix (MCX:CRUDEOIL) into a tradable Fyers Future symbol 
+    for the current month (e.g. MCX:CRUDEOIL24NOVFUT).
+    """
+    from datetime import datetime
+    now = datetime.now()
+    year_str = str(now.year)[-2:]  # e.g., '24' for 2024
+    month_str = now.strftime("%b").upper()  # e.g., 'NOV'
+    
+    # E.g., MCX:CRUDEOIL + 24 + NOV + FUT -> MCX:CRUDEOIL24NOVFUT
+    return f"{prefix}{year_str}{month_str}FUT"
+

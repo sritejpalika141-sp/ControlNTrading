@@ -739,16 +739,33 @@ RULES:
 Respond ONLY with this JSON format:
 {{"trend": "BULLISH" | "BEARISH" | "NEUTRAL", "strength": <0-100>, "rationale": "<1 sentence citing the actual data>"}}"""
 
-    async def get_daily_news_summary(self, headlines: List[str]) -> Dict:
-        """Summarizes market sentiment based on news headlines."""
+    async def get_global_macro_summary(self, headlines: List[str]) -> Dict:
+        """Summarizes global market sentiment for multiple asset classes."""
         if not self.enabled:
-            return {"trend": "NEUTRAL", "summary": "AI disabled."}
+            return {
+                "equities_trend": "NEUTRAL",
+                "commodities_trend": "NEUTRAL",
+                "currency_trend": "NEUTRAL",
+                "summary": "AI disabled.",
+                "high_conviction_asset": "NONE"
+            }
         
-        prompt = "You are a quantitative trading assistant for the Indian Stock Market (NIFTY 50).\n"
-        prompt += "Based on the following recent news headlines, provide a very brief, high-level summary of the overall market sentiment for the day.\n"
-        prompt += "Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
-        prompt += "Respond ONLY with this JSON format:\n"
-        prompt += '{"trend": "BULLISH" | "BEARISH" | "NEUTRAL", "summary": "<2-3 sentences max summarizing the drivers>"}'
+        prompt = (
+            "You are a Global Macro Quantitative Analyst. "
+            "Based on the following recent news headlines, provide a brief summary of the overall market sentiment "
+            "across three asset classes: Indian Equities (NIFTY), Commodities (Crude Oil, Gold), and Currencies (USDINR).\n"
+            "If there is a MASSIVE catalyst for a specific commodity or currency that warrants immediate trading, "
+            "identify it in 'high_conviction_asset' (otherwise output 'NONE').\n\n"
+            "Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
+            "Respond ONLY with this JSON format:\n"
+            '{\n'
+            '  "equities_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
+            '  "commodities_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
+            '  "currency_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
+            '  "summary": "<2-3 sentences max summarizing the drivers>",\n'
+            '  "high_conviction_asset": "CRUDEOIL" | "GOLD" | "SILVER" | "USDINR" | "NONE"\n'
+            '}'
+        )
 
         for prov_name in self.providers:
             prov = self.providers[prov_name]
@@ -775,13 +792,22 @@ Respond ONLY with this JSON format:
                     result = json.loads(raw_res)
                     prov.on_success()
                     return {
-                        "trend": result.get("trend", "NEUTRAL").upper(),
-                        "summary": result.get("summary", "No clear sentiment.")
+                        "equities_trend": result.get("equities_trend", "NEUTRAL").upper(),
+                        "commodities_trend": result.get("commodities_trend", "NEUTRAL").upper(),
+                        "currency_trend": result.get("currency_trend", "NEUTRAL").upper(),
+                        "summary": result.get("summary", "No clear sentiment."),
+                        "high_conviction_asset": result.get("high_conviction_asset", "NONE").upper()
                     }
             except Exception as e:
                 logger.warning(f"⚠️ {prov.name} news summary failed: {e}")
                 
-        return {"trend": "NEUTRAL", "summary": "Failed to parse news sentiment."}
+        return {
+            "equities_trend": "NEUTRAL",
+            "commodities_trend": "NEUTRAL",
+            "currency_trend": "NEUTRAL",
+            "summary": "Failed to parse news sentiment.",
+            "high_conviction_asset": "NONE"
+        }
 
     def _build_trend_prompt(self, symbol: str, context: Dict) -> str:
         """Constructs the prompt for trend detection."""
