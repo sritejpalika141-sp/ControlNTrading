@@ -9,6 +9,8 @@ import sqlite3
 import difflib
 import threading
 import glob
+import requests
+import urllib.parse
 from typing import Dict, Optional
 
 APP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading-app")
@@ -439,11 +441,80 @@ def git_update_monitor():
         except Exception as e:
             print(f"❌ [VM Orchestrator] Git monitor error: {e}")
 
+def get_system_state_text():
+    report = ["System State:"]
+    for svc in ["sritej-trading", "sritej-researcher"]:
+        try:
+            status_cmd = subprocess.run(["sudo", "systemctl", "is-active", svc], capture_output=True, text=True)
+            is_running = "active" in status_cmd.stdout
+            report.append(f"{svc}: {'RUNNING' if is_running else 'STOPPED'}")
+        except Exception: pass
+    try:
+        logs = subprocess.run(["journalctl", "-u", "sritej-trading", "-n", "10", "--no-pager"], capture_output=True, text=True).stdout
+        report.append(f"Recent Trading Logs:\n{logs[-500:]}")
+    except Exception: pass
+    return "\n".join(report)
+
+def telegram_bot_loop():
+    """Polls Telegram for incoming messages and acts as the Orchestrator AI."""
+    print("🤖 [VM Orchestrator] Starting Telegram Bot Loop...")
+    wh_url = get_webhook_url()
+    if not wh_url or "api.telegram.org/bot" not in wh_url:
+        print("⚠️ [VM Orchestrator] No valid Telegram webhook URL found. Bot disabled.")
+        return
+        
+    try:
+        parts = wh_url.split("api.telegram.org/bot")[1]
+        bot_token = parts.split("/")[0]
+        chat_id_part = parts.split("chat_id=")[1].split("&")[0]
+        authorized_chat_id = str(chat_id_part)
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] Failed to parse Telegram URL: {e}")
+        return
+
+    offset = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/getUpdates?timeout=30&offset={offset}"
+            resp = requests.get(url, timeout=40)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("result", []):
+                    offset = item["update_id"] + 1
+                    msg = item.get("message", {})
+                    if str(msg.get("chat", {}).get("id")) == authorized_chat_id and "text" in msg:
+                        text = msg["text"]
+                        print(f"💬 [Telegram] User: {text}")
+                        sys_state = get_system_state_text()
+                        try:
+                            reply_data = asyncio.run(ai_engine.generate_orchestrator_reply(text, sys_state))
+                            reply_text = reply_data.get("response", "Processing...")
+                            action = reply_data.get("action", "none")
+                            if action == "restart_trading":
+                                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
+                            elif action == "restart_researcher":
+                                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"])
+                            elif action == "fetch_logs":
+                                logs = subprocess.run(["journalctl", "-u", "sritej-trading", "-n", "20", "--no-pager"], capture_output=True, text=True).stdout
+                                reply_text += f"\n\nLogs:\n{logs[-2000:]}"
+                                
+                            send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                            requests.post(send_url, json={"chat_id": authorized_chat_id, "text": reply_text})
+                        except Exception as ai_e:
+                            print(f"❌ [Telegram] AI Error: {ai_e}")
+            time.sleep(1)
+        except Exception as e:
+            time.sleep(5)
+
+
 if __name__ == "__main__":
     try:
         print("🌟 [VM Orchestrator] Starting multi-service orchestration...")
         # Start health scanner
         threading.Thread(target=health_scan_loop, daemon=True).start()
+        
+        # Start Telegram polling
+        threading.Thread(target=telegram_bot_loop, daemon=True).start()
         
         # Start CD/CI Git monitor
         threading.Thread(target=git_update_monitor, daemon=True).start()

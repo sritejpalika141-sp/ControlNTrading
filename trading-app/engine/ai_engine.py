@@ -1042,6 +1042,38 @@ Respond ONLY with this JSON format:
                 logger.error(f"Failed to parse AI code fix JSON: {raw}")
         return None
 
+    async def generate_orchestrator_reply(self, user_message: str, system_state: str) -> Dict:
+        """Processes Telegram messages directed at the VM Orchestrator and decides on actions."""
+        prompt = f"""
+You are the "ControlNTrading VM Orchestrator", an advanced AI assistant directly controlling a live algorithmic trading server on Google Cloud.
+The user (your owner) has just messaged you on Telegram.
+
+CURRENT SYSTEM STATE:
+{system_state}
+
+USER MESSAGE:
+"{user_message}"
+
+You must respond to the user, and if they asked you to perform a system action, specify it.
+Allowed actions: "restart_trading", "restart_researcher", "fetch_logs", "none".
+
+Respond ONLY with this JSON format:
+{{
+    "response": "<Your natural language reply to the user (can use emojis, keep it concise but helpful)>",
+    "action": "<one of the allowed actions>"
+}}
+"""
+        raw = await self._call_chain(prompt)
+        if raw:
+            try:
+                if raw.startswith("```json"):
+                    raw = raw[7:-3]
+                elif raw.startswith("```"):
+                    raw = raw[3:-3]
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse AI orchestrator JSON: {raw}")
+        return {"response": "Sorry, my AI brain failed to process that request.", "action": "none"}
 
 # Singleton instance
 ai_engine = AIEngine()
