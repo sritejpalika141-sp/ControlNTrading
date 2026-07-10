@@ -797,7 +797,7 @@ async def serve_static(file_path: str):
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail="File not found")
     ext = os.path.splitext(file_path)[1].lower()
-    headers = _STATIC_CACHE_HEADERS if ext in (".js", ".css", ".png", ".jpg", ".svg", ".json") else {}
+    headers = _STATIC_CACHE_HEADERS if ext in (".js", ".css", ".png", ".jpg", ".svg", ".json") else {"Cache-Control": "no-cache, no-store, must-revalidate"}
     return FileResponse(full_path, headers=headers)
 
 
