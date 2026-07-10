@@ -57,7 +57,11 @@ class NewsWorker:
             "SILVER": "MCX:SILVER",
             "USDINR": "CDS:USDINR"
         }
-        return mapping.get(asset, "")
+        if asset in mapping:
+            return mapping[asset]
+        if asset and asset != "NONE":
+            return f"NSE:{asset}-EQ"
+        return ""
 
     async def update_summary(self):
         try:
@@ -85,9 +89,12 @@ class NewsWorker:
             if high_conviction and high_conviction != "NONE":
                 symbol_prefix = self._resolve_symbol(high_conviction)
                 if symbol_prefix:
-                    from engine.strikes import resolve_current_commodity_expiry
-                    # We need to resolve it to the exact futures symbol, e.g., MCX:CRUDEOIL24NOVFUT
-                    exact_symbol = await resolve_current_commodity_expiry(symbol_prefix)
+                    if symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:"):
+                        from engine.strikes import resolve_current_commodity_expiry
+                        # We need to resolve it to the exact futures symbol, e.g., MCX:CRUDEOIL24NOVFUT
+                        exact_symbol = await resolve_current_commodity_expiry(symbol_prefix)
+                    else:
+                        exact_symbol = symbol_prefix
                     if exact_symbol:
                         logger.info(f"🔥 AI selected {high_conviction} based on news trends. Injecting {exact_symbol} into user market watch!")
                         for u_id, state in USER_STATES.items():

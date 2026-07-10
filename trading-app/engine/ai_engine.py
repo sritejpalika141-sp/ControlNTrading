@@ -754,8 +754,8 @@ Respond ONLY with this JSON format:
             "You are a Global Macro Quantitative Analyst. "
             "Based on the following recent news headlines, provide a brief summary of the overall market sentiment "
             "across three asset classes: Indian Equities (NIFTY), Commodities (Crude Oil, Gold), and Currencies (USDINR).\n"
-            "If the news indicates a clear Bullish or Bearish trend for a specific commodity or currency, "
-            "identify the most promising one in 'high_conviction_asset' (otherwise output 'NONE'). You do not need a massive catalyst, just a clear directional bias.\n\n"
+            "If the news indicates a clear Bullish or Bearish trend for a specific asset (Commodity, Currency, or Indian Stock), "
+            "identify the most promising one in 'high_conviction_asset' (otherwise output 'NONE'). For Indian stocks, output the NSE ticker (e.g. RELIANCE, HDFCBANK, INFY). You do not need a massive catalyst, just a clear directional bias.\n\n"
             "Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
             "Respond ONLY with this JSON format:\n"
             '{\n'
@@ -763,7 +763,7 @@ Respond ONLY with this JSON format:
             '  "commodities_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "currency_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "summary": "<2-3 sentences max summarizing the drivers>",\n'
-            '  "high_conviction_asset": "CRUDEOIL" | "GOLD" | "SILVER" | "USDINR" | "NONE"\n'
+            '  "high_conviction_asset": "CRUDEOIL" | "GOLD" | "SILVER" | "USDINR" | "<NSE_TICKER>" | "NONE"\n'
             '}'
         )
 
