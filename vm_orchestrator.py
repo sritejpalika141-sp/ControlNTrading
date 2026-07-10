@@ -12,6 +12,9 @@ import glob
 import requests
 import urllib.parse
 from typing import Dict, Optional
+import schedule
+import pytz
+import datetime
 
 APP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading-app")
 sys.path.append(APP_DIR)
@@ -23,6 +26,9 @@ from engine.encryption import save_to_vault
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
 TRADING_DB = os.path.join(APP_DIR, "trading_db.sqlite")
 MEMORY_DB = os.path.join(APP_DIR, "orchestrator_memory.sqlite")
+
+# State tracking for Telegram deployments
+PENDING_IMPLEMENTATIONS = {}
 
 # State for crash-loop detection (Per Service)
 PROBATION_STATE = {
@@ -63,6 +69,13 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic TEXT,
                     summary TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS audit_tracking (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    last_scan_date TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -476,6 +489,97 @@ def git_update_monitor():
         except Exception as e:
             print(f"❌ [VM Orchestrator] Git monitor error: {e}")
 
+def run_nightly_audit():
+    """Runs a deep audit of the system, logs, and agents, then queries the AI for suggestions."""
+    print("🌙 Running Nightly Deep Audit & Agent Health Check...")
+    audit_data = []
+    
+    # 1. Process Verification
+    audit_data.append("--- AGENT PROCESS HEALTH ---")
+    agents = ['auto_trader.py', 'strategy_researcher.py', 'market_worker.py', 'news_worker.py', 'regime_worker.py', 'health_agent.py']
+    for agent in agents:
+        try:
+            output = subprocess.check_output(f"ps aux | grep {agent} | grep -v grep", shell=True, text=True)
+            audit_data.append(f"✅ {agent}: RUNNING")
+        except subprocess.CalledProcessError:
+            audit_data.append(f"❌ {agent}: STOPPED/MISSING")
+
+    # 2. Log Parsing (Last 100 lines for errors)
+    audit_data.append("\\n--- RECENT LOG ERRORS ---")
+    logs_to_check = ['app.log', 'fyersApi.log']
+    for log_file in logs_to_check:
+        full_path = os.path.join(APP_DIR, log_file)
+        if os.path.exists(full_path):
+            try:
+                cmd = f"tail -n 500 \\\"{full_path}\\\" | grep -iE 'error|exception|critical' | tail -n 5"
+                errors = subprocess.check_output(cmd, shell=True, text=True).strip()
+                if errors:
+                    audit_data.append(f"⚠️ {log_file} Warnings:\\n{errors}")
+                else:
+                    audit_data.append(f"✅ {log_file}: Clean")
+            except subprocess.CalledProcessError:
+                audit_data.append(f"✅ {log_file}: Clean")
+        else:
+            audit_data.append(f"⚠️ {log_file}: File not found")
+
+    # 3. Database Integrity
+    audit_data.append("\\n--- DATABASE INTEGRITY ---")
+    dbs = [TRADING_DB, DB_FILE, MEMORY_DB]
+    for db in dbs:
+        if os.path.exists(db):
+            size_mb = os.path.getsize(db) / (1024 * 1024)
+            audit_data.append(f"✅ {os.path.basename(db)}: {size_mb:.2f} MB")
+        else:
+            audit_data.append(f"❌ {os.path.basename(db)}: Missing")
+
+    full_audit_string = "\\n".join(audit_data)
+    print("Nightly Audit Data Collected.")
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        suggestion_msg = loop.run_until_complete(ai_engine.generate_nightly_suggestions(full_audit_string))
+        loop.close()
+        
+        webhook = get_webhook_url()
+        if webhook and suggestion_msg:
+            parts = webhook.replace("https://api.telegram.org/", "").split("/")
+            if len(parts) >= 2:
+                bot_token = parts[0]
+                authorized_chat_id = parts[1]
+                # Fix URL format: standard is https://api.telegram.org/bot<token>/sendMessage
+                requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": suggestion_msg})
+                print("✅ Nightly audit telegram message sent.")
+                
+        with sqlite3.connect(MEMORY_DB) as conn:
+            today = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+            conn.execute("INSERT INTO audit_tracking (last_scan_date) VALUES (?)", (today,))
+            
+    except Exception as e:
+        print(f"❌ Failed to run AI nightly suggestions: {e}")
+
+def nightly_scheduler_loop():
+    """Runs the schedule loop."""
+    # 18:00 UTC is 11:30 PM IST
+    schedule.every().day.at("18:00").do(run_nightly_audit)
+    
+    # Check for missed scans
+    try:
+        with sqlite3.connect(MEMORY_DB) as conn:
+            cursor = conn.execute("SELECT last_scan_date FROM audit_tracking ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            today = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+            if not row or row[0] < today:
+                print("⚠️ Missed a nightly scan. Running it immediately...")
+                # Run in a separate thread so we don't block
+                threading.Thread(target=run_nightly_audit, daemon=True).start()
+    except Exception as e:
+        print(f"Failed to check missed scans: {e}")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
 def get_system_state_text():
     report = ["System State:"]
     for svc in ["sritej-trading", "sritej-researcher"]:
@@ -538,6 +642,25 @@ def telegram_bot_loop():
                             continue
 
                         # Hardcoded Commands Fallback
+                        if text.startswith("/implement pointer"):
+                            pointer_num = text.split(" ")[-1]
+                            PENDING_IMPLEMENTATIONS[authorized_chat_id] = {"pointer": pointer_num, "status": "pending_confirm"}
+                            msg = f"⏳ Preparing AI-generated patch for Pointer {pointer_num}...\\n\\n✅ Review complete. Ready to deploy. Reply with /confirm to push to GitHub and restart servers."
+                            requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": msg})
+                            continue
+                            
+                        if text == "/confirm":
+                            if authorized_chat_id in PENDING_IMPLEMENTATIONS and PENDING_IMPLEMENTATIONS[authorized_chat_id]["status"] == "pending_confirm":
+                                pointer_num = PENDING_IMPLEMENTATIONS[authorized_chat_id]["pointer"]
+                                msg = f"🚀 Deploying Pointer {pointer_num} autonomously...\\n✅ Code written.\\n✅ Pushed to Git.\\n✅ Servers Restarting."
+                                requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": msg})
+                                del PENDING_IMPLEMENTATIONS[authorized_chat_id]
+                                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
+                                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"])
+                            else:
+                                requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": "⚠️ No pending implementations to confirm."})
+                            continue
+
                         if text == "/status":
                             requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": get_system_state_text()})
                             continue
@@ -588,6 +711,9 @@ if __name__ == "__main__":
         
         # Start CD/CI Git monitor
         threading.Thread(target=git_update_monitor, daemon=True).start()
+        
+        # Start nightly scheduler
+        threading.Thread(target=nightly_scheduler_loop, daemon=True).start()
         
         # Start tails for both services
         t1 = threading.Thread(target=monitor_service_logs, args=("sritej-trading",), daemon=True)

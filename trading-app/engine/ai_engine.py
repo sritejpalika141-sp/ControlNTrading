@@ -1076,5 +1076,29 @@ Respond ONLY with this JSON format:
                 logger.error(f"Failed to parse AI orchestrator JSON: {raw}")
         return {"response": "Sorry, my AI brain failed to process that request.", "action": "none"}
 
+    async def generate_nightly_suggestions(self, audit_data: str) -> Optional[str]:
+        """Generates powerful application pointers based on the nightly deep audit."""
+        prompt = f"""
+You are the Omnipotent Orchestrator for an algorithmic trading system.
+Review the following end-of-day health and agent audit.
+Provide 3-5 visionary, technical pointers on how the user can make this trading application more powerful, autonomous, and self-running, or fix any specific issues found in the audit logs.
+
+NIGHTLY AUDIT RAW DATA:
+{audit_data}
+
+Format the output strictly as a professional Telegram message:
+📊 NIGHTLY SYSTEM AUDIT
+[Brief summary of services and agent health]
+
+💡 AI ARCHITECTURE SUGGESTIONS:
+1. [Pointer 1]
+2. [Pointer 2]
+3. [Pointer 3]
+
+Reply with '/implement pointer X' to deploy.
+"""
+        raw = await self._call_chain(prompt)
+        return raw
+
 # Singleton instance
 ai_engine = AIEngine()

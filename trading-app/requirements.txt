@@ -32,3 +32,4 @@ aiosqlite==0.20.0
 # Ultra-Low Latency optimizations
 uvloop>=0.21.0
 orjson>=3.10.0
+schedule==1.2.1
