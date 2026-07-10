@@ -754,8 +754,8 @@ Respond ONLY with this JSON format:
             "You are a Global Macro Quantitative Analyst. "
             "Based on the following recent news headlines, provide a brief summary of the overall market sentiment "
             "across three asset classes: Indian Equities (NIFTY), Commodities (Crude Oil, Gold), and Currencies (USDINR).\n"
-            "If there is a MASSIVE catalyst for a specific commodity or currency that warrants immediate trading, "
-            "identify it in 'high_conviction_asset' (otherwise output 'NONE').\n\n"
+            "If the news indicates a clear Bullish or Bearish trend for a specific commodity or currency, "
+            "identify the most promising one in 'high_conviction_asset' (otherwise output 'NONE'). You do not need a massive catalyst, just a clear directional bias.\n\n"
             "Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
             "Respond ONLY with this JSON format:\n"
             '{\n'

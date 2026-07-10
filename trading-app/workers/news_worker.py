@@ -89,7 +89,7 @@ class NewsWorker:
                     # We need to resolve it to the exact futures symbol, e.g., MCX:CRUDEOIL24NOVFUT
                     exact_symbol = await resolve_current_commodity_expiry(symbol_prefix)
                     if exact_symbol:
-                        logger.info(f"🔥 AI Detected massive catalyst for {high_conviction}. Injecting {exact_symbol} into user market watch!")
+                        logger.info(f"🔥 AI selected {high_conviction} based on news trends. Injecting {exact_symbol} into user market watch!")
                         for u_id, state in USER_STATES.items():
                             if exact_symbol not in state.active_symbols:
                                 state.add_symbol(exact_symbol)
