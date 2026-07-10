@@ -478,13 +478,23 @@ def git_update_monitor():
                 # Pull updates
                 subprocess.run(["git", "pull"], cwd=APP_DIR, check=True)
                 
-                print("✅ [VM Orchestrator] Deployment successful. Restarting services...")
-                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"], check=True)
-                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"], check=True)
+                print("✅ [VM Orchestrator] Deployment successful. Installing dependencies and restarting services...")
+                
+                # Install new requirements if any
+                subprocess.run(["pip3", "install", "-r", "trading-app/requirements.txt"], cwd=APP_DIR)
+
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
+                subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"])
                 
                 wh_url = get_webhook_url()
                 if wh_url:
-                    trigger_webhook_background(wh_url, f"🚀 **New Feature Deployed**\nAutonomous deployment successful. Entering 5-minute probation period. If errors occur, AI will attempt to resolve them.", "Orchestrator CD/CI")
+                    trigger_webhook_background(wh_url, f"🚀 **New Feature Deployed**\\nAutonomous deployment successful. Entering 5-minute probation period. If errors occur, AI will attempt to resolve them.", "Orchestrator CD/CI")
+                
+                # Check if vm_orchestrator itself was updated, if so, restart it by exiting
+                diff = subprocess.run(["git", "diff", "--name-only", last_commit, "HEAD"], cwd=APP_DIR, capture_output=True, text=True)
+                if "vm_orchestrator.py" in diff.stdout:
+                    print("🔄 [VM Orchestrator] Orchestrator code updated. Restarting self...")
+                    os.execv(sys.executable, ['python3', 'vm_orchestrator.py'])
                     
         except Exception as e:
             print(f"❌ [VM Orchestrator] Git monitor error: {e}")
