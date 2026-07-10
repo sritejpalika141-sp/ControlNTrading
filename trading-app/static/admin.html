@@ -977,15 +977,15 @@
             if(!container) return;
             container.innerHTML = '<div style="color:var(--text-muted)">Loading strategies...</div>';
             try {
-                const res = await fetch('/api/learning/configs');
+                const res = await fetch('/api/admin/swarm-status');
                 const data = await res.json();
-                if(data.success && data.configs) {
+                if(data.success && data.agents) {
                     container.innerHTML = '';
-                    if(data.configs.length === 0) {
+                    if(data.agents.length === 0) {
                         container.innerHTML = '<div style="color:var(--text-muted)">No strategies found.</div>';
                         return;
                     }
-                    data.configs.forEach(cfg => {
+                    data.agents.forEach(cfg => {
                         const isPending = cfg.status === 'PENDING';
                         let html = `
                         <div class="agent-card">

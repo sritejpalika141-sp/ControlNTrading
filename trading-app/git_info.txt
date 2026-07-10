@@ -1,13 +1,6 @@
-Deploy Time: 2026-07-09 16:51:33 IST
+Deploy Time: 2026-07-09 22:09:10 IST
 Branch: main
 ---
-5832580 feat: Add Global API Queue, dynamic AI Macro injection, and strict SL rules (7 minutes ago)
-c6f2d13 Update Hermes for live production and persistent subagents (7 hours ago)
-650dbc7 feat(risk): realized-loss daily stop + per-trade catastrophic seatbelt + accurate close recording (23 hours ago)
-f088656 feat(trading): respect manual SL changes + record outcome on close (24 hours ago)
-acbde98 fix(self-improvement): nightly learning reads real win-rate data, stops wiping it (25 hours ago)
-2af6058 fix(trading): one open position per underlying — stop duplicate strikes (25 hours ago)
-87d3a9e fix(trading): fixed SL when 3-candle swing low sits above entry (SL-above-buy) (25 hours ago)
-59f52e4 fix(trading): CO-safe stop-loss — never hold an option position without a stop (26 hours ago)
-6ad516e feat(trading): high-confidence regime override + stronger tick-contamination guard (30 hours ago)
-450e62a fix(trading): restore charts/regime/trend — decouple option-chain cooldown, seed CandleBuilder (31 hours ago)
+2156fa2 feat: Add Global Macro AI and Commodities support (28 seconds ago)
+0ea2e92 ci: Add automated GitHub Actions deployment workflow (4 hours ago)
+c0b3afa Initial commit of ControlNTrading application (5 hours ago)
