@@ -90,7 +90,9 @@ def init_db():
                 )
             ''')
     except Exception as e:
-        print(f"DB Init Error: {e}")
+        print(f"DB Init Error at {DB_FILE} or {MEMORY_DB}: {e}")
+        print(f"APP_DIR was resolved as: {APP_DIR}")
+        print(f"base_dir was: {base_dir}")
         print(f"⚠️ [VM Orchestrator] Failed to init DB: {e}")
 
 init_db()
