@@ -301,6 +301,9 @@
         <div class="nav-item" onclick="switchTab('aiSwarmTab', this); fetchSwarmStatus();">
             🧠 AI Swarm
         </div>
+        <div class="nav-item" onclick="switchTab('aiStrategiesAdminTab', this); fetchAdminStrategies();">
+            🤖 AI Strategies (Upgrades)
+        </div>
         
         <div class="sidebar-footer">
             <button onclick="location.href='/'">Go to Dashboard</button>
@@ -517,6 +520,21 @@
                 <h2>Recent Git Commits</h2>
                 <div class="terminal" style="color: #fff; background: #0b1120; height: 200px;" id="git-terminal">
                     Loading git log...
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 5: AI Strategies (Upgrades) -->
+        <div id="aiStrategiesAdminTab" class="tab-content">
+            <div class="top-header">
+                <h1 class="section-title">🤖 AI Strategies (Upgrades)</h1>
+                <button class="btn-primary" onclick="fetchAdminStrategies()">Refresh Data</button>
+            </div>
+            
+            <div class="card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+                <h2 style="border: none; color: var(--text-muted); font-size: 1rem; margin-bottom: 1.5rem;">Review & Manage Strategy Configurations</h2>
+                <div id="adminStrategiesContainer" class="swarm-grid">
+                    <!-- Loaded dynamically via fetchAdminStrategies() -->
                 </div>
             </div>
         </div>
@@ -953,6 +971,81 @@
             }
         }
 
+        // --- AI Strategies Admin Logic ---
+        async function fetchAdminStrategies() {
+            const container = document.getElementById('adminStrategiesContainer');
+            if(!container) return;
+            container.innerHTML = '<div style="color:var(--text-muted)">Loading strategies...</div>';
+            try {
+                const res = await fetch('/api/learning/configs');
+                const data = await res.json();
+                if(data.success && data.configs) {
+                    container.innerHTML = '';
+                    if(data.configs.length === 0) {
+                        container.innerHTML = '<div style="color:var(--text-muted)">No strategies found.</div>';
+                        return;
+                    }
+                    data.configs.forEach(cfg => {
+                        const isPending = cfg.status === 'PENDING';
+                        let html = `
+                        <div class="agent-card">
+                            ${isPending ? '<div class="agent-glow" style="background: radial-gradient(circle, rgba(234,179,8,0.2) 0%, transparent 70%);"></div>' : '<div class="agent-glow"></div>'}
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                                <h3 style="margin:0; font-size:1.1rem; color:var(--text);">${cfg.strategy_name}</h3>
+                                <span class="badge ${isPending ? 'badge-danger' : 'badge-success'}" style="${isPending ? 'background:rgba(234,179,8,0.2); color:#facc15;' : ''}">${cfg.status}</span>
+                            </div>
+                            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;">
+                                <div><strong>Win Rate:</strong> ${cfg.win_rate}%</div>
+                                <div><strong>Trades:</strong> ${cfg.total_trades} (${cfg.winning_trades}W)</div>
+                                <div><strong>Asset:</strong> ${cfg.asset_class} | ${cfg.is_paper_trading ? 'Paper' : 'Live'}</div>
+                            </div>
+                            ${isPending && cfg.pending_config_json ? `
+                                <div style="margin-bottom:15px; padding:10px; background:rgba(0,0,0,0.3); border:1px solid rgba(234,179,8,0.3); border-radius:8px; font-size:0.75rem;">
+                                    <div style="color:#facc15; font-weight:600; margin-bottom:5px;">⚠️ Pending Upgrade Proposed:</div>
+                                    <pre style="margin:0; color:var(--text); white-space:pre-wrap; overflow-x:hidden;">${JSON.stringify(cfg.pending_config_json, null, 2)}</pre>
+                                </div>
+                                <div style="display:flex; gap:10px;">
+                                    <button class="btn-primary" style="flex:1; background:#10b981;" onclick="approveAdminStrategy('${cfg.strategy_name}')">✅ Approve</button>
+                                    <button class="btn-danger" style="flex:1;" onclick="rejectAdminStrategy('${cfg.strategy_name}')">❌ Reject</button>
+                                </div>
+                            ` : `
+                                <div style="font-size:0.75rem; color:var(--text-muted);">
+                                    <div><strong>Current Config:</strong></div>
+                                    <pre style="margin-top:5px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; white-space:pre-wrap;">${JSON.stringify(cfg.config_json, null, 2)}</pre>
+                                </div>
+                            `}
+                        </div>`;
+                        container.innerHTML += html;
+                    });
+                }
+            } catch(e) {
+                container.innerHTML = '<div style="color:var(--danger)">Failed to load strategies</div>';
+            }
+        }
+
+        async function approveAdminStrategy(name) {
+            if(!confirm(`Approve new configuration for ${name}?`)) return;
+            try {
+                const res = await fetch(`/api/learning/approve/${name}`, { method: 'POST' });
+                const data = await res.json();
+                if(data.success) {
+                    alert("Strategy approved and applied!");
+                    fetchAdminStrategies();
+                } else alert("Error: " + data.error);
+            } catch(e) { alert("Failed to approve strategy"); }
+        }
+
+        async function rejectAdminStrategy(name) {
+            if(!confirm(`Reject pending configuration for ${name}?`)) return;
+            try {
+                const res = await fetch(`/api/learning/reject/${name}`, { method: 'POST' });
+                const data = await res.json();
+                if(data.success) {
+                    alert("Strategy update rejected.");
+                    fetchAdminStrategies();
+                } else alert("Error: " + data.error);
+            } catch(e) { alert("Failed to reject strategy"); }
+        }
     </script>
 </body>
 </html>
