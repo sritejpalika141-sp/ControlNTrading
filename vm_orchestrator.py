@@ -27,11 +27,18 @@ from engine.ai_engine import ai_engine
 from engine.notifier import trigger_webhook_background
 from engine.encryption import save_to_vault
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(APP_DIR, ".env"))
-except ImportError:
-    pass
+env_path = os.path.join(APP_DIR, ".env")
+if os.path.exists(env_path):
+    try:
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip().strip("'").strip('"')
+        print(f"✅ [VM Orchestrator] Loaded environment variables from {env_path}")
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] Failed to load .env manually: {e}")
 
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
 TRADING_DB = os.path.join(APP_DIR, "trading_app.db")
