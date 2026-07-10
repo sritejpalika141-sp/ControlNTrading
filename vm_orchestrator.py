@@ -23,6 +23,12 @@ from engine.ai_engine import ai_engine
 from engine.notifier import trigger_webhook_background
 from engine.encryption import save_to_vault
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(APP_DIR, ".env"))
+except ImportError:
+    pass
+
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
 TRADING_DB = os.path.join(APP_DIR, "trading_app.db")
 MEMORY_DB = os.path.join(APP_DIR, "orchestrator_memory.sqlite")
@@ -720,6 +726,8 @@ def telegram_bot_loop():
 
 
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
     try:
         print("🌟 [VM Orchestrator] Starting multi-service orchestration...")
         # Start health scanner
