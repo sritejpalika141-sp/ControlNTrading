@@ -130,6 +130,7 @@
               <button class="tab-btn" id="tabBtnFunds" onclick="switchDashboardTab('funds')">💰 Account & Funds</button>
               <button class="tab-btn" id="tabBtnKeyLevels" onclick="switchDashboardTab('keyLevels')">🔑 Key Levels (<span id="levelCount">0</span>)</button>
               <button class="tab-btn" id="tabBtnHistory" onclick="switchDashboardTab('history')">📜 Signal History</button>
+              <button class="tab-btn" id="tabBtnStrategies" onclick="switchDashboardTab('strategies')">🧠 AI Strategies</button>
             </div>
             <span id="headerPnl" class="tab-header-pnl">P&L: --</span>
           </div>
@@ -172,6 +173,12 @@
             <div class="tab-pane" id="tabPaneHistory">
               <div class="tab-pane-content" id="historyContainer">
                 <div class="empty-state"><div class="empty-text">No history...</div></div>
+              </div>
+            </div>
+            <!-- AI Strategies Tab -->
+            <div class="tab-pane" id="tabPaneStrategies">
+              <div class="tab-pane-content" id="strategiesContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
+                <div class="empty-state"><div class="empty-text">Loading strategies...</div></div>
               </div>
             </div>
           </div>

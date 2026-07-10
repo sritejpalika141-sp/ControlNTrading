@@ -731,6 +731,11 @@ class Database:
                     data['config_json'] = json.loads(data['config_json'])
                 except:
                     pass
+            if data.get('pending_config_json'):
+                try:
+                    data['pending_config_json'] = json.loads(data['pending_config_json'])
+                except:
+                    pass
             results.append(data)
         return results
 
@@ -786,6 +791,25 @@ class Database:
                 SET config_json = ?, status = 'APPROVED', pending_config_json = NULL, last_updated = ?
                 WHERE strategy_name = ?
             """, (pending_cfg, timestamp, strategy_name))
+            await conn.commit()
+            return True
+
+    @staticmethod
+    async def reject_agent_config(strategy_name: str) -> bool:
+        """Clears pending_config_json and resets status to APPROVED."""
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute("SELECT pending_config_json FROM swarm_agent_configs WHERE strategy_name=? AND status='PENDING'", (strategy_name,)) as c:
+                row = await c.fetchone()
+                if not row:
+                    return False
+            
+            await conn.execute("""
+                UPDATE swarm_agent_configs 
+                SET status = 'APPROVED', pending_config_json = NULL, last_updated = ?
+                WHERE strategy_name = ?
+            """, (timestamp, strategy_name))
             await conn.commit()
             return True
 

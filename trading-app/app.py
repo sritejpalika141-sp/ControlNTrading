@@ -2582,6 +2582,36 @@ async def approve_learning(strategy_name: str, request: Request):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+@app.post("/api/learning/reject/{strategy_name}")
+async def reject_learning(strategy_name: str, request: Request):
+    """Reject a major strategy configuration change."""
+    client = await get_current_client(request)
+    if not client or not client.user_id:
+        return JSONResponse({"success": False, "message": "Unauthorized"}, status_code=401)
+        
+    try:
+        from models import Database
+        from engine.notifier import send_webhook_alert
+        import aiosqlite
+        import os
+        
+        success = await Database.reject_agent_config(strategy_name)
+        if success:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                cursor = await conn.execute("SELECT webhook_url FROM user_states WHERE user_id=?", (client.user_id,))
+                row = await cursor.fetchone()
+                webhook_url = row[0] if row else os.getenv("TELEGRAM_WEBHOOK", "")
+                
+            msg = f"<b>Approval Rejected ❌</b>\nThe major parameter shift for <i>{strategy_name}</i> was dismissed."
+            await send_webhook_alert(webhook_url, msg, title="🤖 AI Strategy Rejected")
+            
+            await broadcast_log(f"❌ User rejected major strategy update for {strategy_name}", "warning")
+            return {"success": True, "message": "Strategy update rejected"}
+        else:
+            return {"success": False, "message": "No pending configuration found for this strategy"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
 @app.get("/api/user-config")
 async def get_user_config():
     """Missing endpoint called by frontend."""

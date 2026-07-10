@@ -262,6 +262,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { loadVisibilityPrefs(); } catch(e) { console.error('Error loading visibility preferences:', e); }
   try { fetchScripts(); } catch(e) { console.error('Error fetching scripts:', e); }
   try { fetchSignalHistory(); } catch(e) { console.error('Error fetching signal history:', e); }
+  try { fetchStrategies(); } catch(e) { console.error('Error fetching strategies:', e); }
   try { initCharts(); } catch(e) { console.error('Error initializing charts:', e); }
   try { loadJournalEntries(); } catch(e) { console.error('Error loading journal entries:', e); }
   
@@ -3270,4 +3271,113 @@ async function fetchMarketNews() {
     }
   }
 }
+
+/* ===== AI STRATEGIES LOGIC ===== */
+
+async function fetchStrategies() {
+  try {
+    const res = await fetch('/api/admin/swarm-status');
+    const data = await res.json();
+    if (data.success && data.agents) {
+      renderStrategies(data.agents);
+    }
+  } catch (e) {
+    console.error("Error fetching strategies:", e);
+  }
+}
+
+function renderStrategies(agents) {
+  const container = document.getElementById('strategiesContainer');
+  if (!container) return;
+
+  if (!agents || agents.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-text">No strategies configured.</div></div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  
+  agents.forEach(agent => {
+    const isPending = agent.status === 'PENDING';
+    const winRateColor = (agent.win_rate >= 50) ? 'var(--success)' : 'var(--danger)';
+    
+    let pendingBanner = '';
+    let pendingActions = '';
+    
+    if (isPending && agent.pending_config_json) {
+      pendingBanner = `
+        <div class="pending-upgrade-banner">
+          ⚠️ <strong>Pending Upgrade:</strong> This strategy requires your approval to shift parameters.
+          <pre style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; font-size: 0.75rem; color: var(--text-muted); margin-top: 8px; max-height: 100px; overflow-y: auto;">${JSON.stringify(agent.pending_config_json, null, 2)}</pre>
+        </div>
+      `;
+      pendingActions = `
+        <div class="strategy-actions">
+          <button class="btn btn-sm btn-success" onclick="approveStrategy('${agent.strategy_name}')">✅ Approve</button>
+          <button class="btn btn-sm btn-danger ms-2" onclick="rejectStrategy('${agent.strategy_name}')">❌ Reject</button>
+        </div>
+      `;
+    }
+
+    const html = `
+      <div class="strategy-card glass-card">
+        <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h3 style="margin: 0; font-size: 1.1rem;">${agent.strategy_name}</h3>
+          <span style="font-size: 0.7rem; font-weight: bold; padding: 3px 8px; border-radius: 12px; background: ${isPending ? 'var(--warning-glow)' : 'rgba(0,255,157,0.1)'}; color: ${isPending ? '#ffcc00' : 'var(--success)'};">
+            ${isPending ? 'PENDING' : 'ACTIVE'}
+          </span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+          <div style="background: rgba(0,0,0,0.15); padding: 10px; border-radius: 6px;">
+            <div style="font-size: 0.7rem; color: var(--text-muted);">Win Rate</div>
+            <div style="font-size: 1.2rem; font-weight: bold; color: ${winRateColor};">${(agent.win_rate || 0).toFixed(1)}%</div>
+          </div>
+          <div style="background: rgba(0,0,0,0.15); padding: 10px; border-radius: 6px;">
+            <div style="font-size: 0.7rem; color: var(--text-muted);">Total Trades</div>
+            <div style="font-size: 1.2rem; font-weight: bold;">${agent.total_trades || 0}</div>
+          </div>
+        </div>
+        
+        ${pendingBanner}
+        ${pendingActions}
+      </div>
+    `;
+    
+    const div = document.createElement('div');
+    div.innerHTML = html.trim();
+    container.appendChild(div.firstChild);
+  });
+}
+
+async function approveStrategy(name) {
+  try {
+    const res = await fetch(\`/api/learning/approve/\${name}\`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Strategy Approved!', 'success');
+      fetchStrategies();
+    } else {
+      showToast('Failed to approve: ' + data.message, 'error');
+    }
+  } catch (e) {
+    showToast('Network error during approval', 'error');
+  }
+}
+
+async function rejectStrategy(name) {
+  try {
+    const res = await fetch(\`/api/learning/reject/\${name}\`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Strategy Rejected', 'info');
+      fetchStrategies();
+    } else {
+      showToast('Failed to reject: ' + data.message, 'error');
+    }
+  } catch (e) {
+    showToast('Network error during rejection', 'error');
+  }
+}
+
 
