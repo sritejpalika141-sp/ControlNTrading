@@ -481,7 +481,7 @@ def git_update_monitor():
                 print("✅ [VM Orchestrator] Deployment successful. Installing dependencies and restarting services...")
                 
                 # Install new requirements if any
-                subprocess.run(["pip3", "install", "-r", "trading-app/requirements.txt"], cwd=APP_DIR)
+                subprocess.run([sys.executable, "-m", "pip", "install", "-r", "trading-app/requirements.txt"], cwd=APP_DIR)
 
                 subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
                 subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"])
