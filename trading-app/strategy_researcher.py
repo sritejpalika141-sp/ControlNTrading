@@ -41,7 +41,7 @@ QUERIES = [
 
 async def search_github(query: str):
     headers = {"Accept": "application/vnd.github.v3+json"}
-    token = os.getenv("GITHUB_API_KEYS")
+    token = get_secret("GITHUB_API_KEYS")
     if token:
         headers["Authorization"] = f"token {token}"
         
@@ -60,7 +60,7 @@ async def search_github(query: str):
 
 async def fetch_file_content(owner, repo, path):
     headers = {"Accept": "application/vnd.github.v3+json"}
-    token = os.getenv("GITHUB_API_KEYS")
+    token = get_secret("GITHUB_API_KEYS")
     if token:
         headers["Authorization"] = f"token {token}"
         
@@ -77,7 +77,7 @@ async def fetch_file_content(owner, repo, path):
 
 async def explore_repo(owner, repo):
     headers = {"Accept": "application/vnd.github.v3+json"}
-    token = os.getenv("GITHUB_API_KEYS")
+    token = get_secret("GITHUB_API_KEYS")
     if token:
         headers["Authorization"] = f"token {token}"
         
@@ -131,7 +131,7 @@ async def translate_to_controln(repo_name, repo_code):
     """
     
     
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    openrouter_key = get_secret("OPENROUTER_API_KEY")
     if not openrouter_key:
         print("❌ [Strategy Researcher] OPENROUTER_API_KEY not found.")
         return None
@@ -176,7 +176,7 @@ async def optimize_strategy_code(repo_name, strategy_code, backtest_report):
     Return ONLY the RAW python code block (do not wrap in markdown ```). Do not include any imports unless absolutely necessary.
     """
     
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    openrouter_key = get_secret("OPENROUTER_API_KEY")
     if not openrouter_key:
         return None
 

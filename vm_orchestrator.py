@@ -18,14 +18,16 @@ sys.path.append(APP_DIR)
 
 from engine.ai_engine import ai_engine
 from engine.notifier import trigger_webhook_background
+from engine.encryption import save_to_vault
 
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
 TRADING_DB = os.path.join(APP_DIR, "trading_db.sqlite")
+MEMORY_DB = os.path.join(APP_DIR, "orchestrator_memory.sqlite")
 
 # State for crash-loop detection (Per Service)
 PROBATION_STATE = {
-    "sritej-trading": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None},
-    "sritej-researcher": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None}
+    "sritej-trading": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None, "strike_count": 0},
+    "sritej-researcher": {"end_time": 0, "last_patched_file": None, "last_backup_file": None, "last_cache_key": None, "strike_count": 0}
 }
 
 # State for Deployment tracking (Global)
@@ -47,7 +49,25 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+        with sqlite3.connect(MEMORY_DB) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS conversation_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS knowledge_blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic TEXT,
+                    summary TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
     except Exception as e:
+        print(f"DB Init Error: {e}")
         print(f"⚠️ [VM Orchestrator] Failed to init DB: {e}")
 
 init_db()
@@ -113,8 +133,20 @@ async def handle_crash(traceback_str: str, service_name: str):
     
     # Check Probation State
     if time.time() < state["end_time"]:
-        print(f"🛑 [VM Orchestrator] CRASH LOOP DETECTED in {service_name} during AI probation period!")
+        state["strike_count"] += 1
+        print(f"🛑 [VM Orchestrator] CRASH LOOP DETECTED in {service_name} during AI probation period! Strike {state['strike_count']}/3.")
         
+        if state["strike_count"] >= 3:
+            wh_url = get_webhook_url()
+            if wh_url:
+                trigger_webhook_background(wh_url, f"🚨 **CRITICAL: 3-STRIKE LOOP DETECTED ({service_name})**\nAI patch failed 3 times. Initiating ultimate rollback and halting AI healing for 1 hour. Please use Agent Platform.", "Orchestrator Ultimate Rollback")
+            print(f"🛑 [VM Orchestrator] 3-Strike Limit reached. Rolling back and pausing healing for 1 hour.")
+            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=APP_DIR, check=False)
+            subprocess.run(["sudo", "systemctl", "restart", service_name], check=False)
+            state["strike_count"] = 0
+            time.sleep(3600)
+            return
+
         # Check if we are in an active feature deployment window
         if time.time() < DEPLOYMENT_STATE["end_time"] and DEPLOYMENT_STATE["last_known_good_commit"]:
             print(f"🛑 [VM Orchestrator] This crash loop is from a NEW FEATURE update! Initiating Ultimate Safety Rollback.")
@@ -171,6 +203,9 @@ async def handle_crash(traceback_str: str, service_name: str):
         print(f"💤 [VM Orchestrator] Pausing healing for {service_name} for 5 minutes...")
         time.sleep(300)
         return
+    else:
+        # Reset strikes if out of probation
+        state["strike_count"] = 0
 
     # Extract Error Message
     lines = traceback_str.strip().split("\n")
@@ -485,6 +520,33 @@ def telegram_bot_loop():
                     if str(msg.get("chat", {}).get("id")) == authorized_chat_id and "text" in msg:
                         text = msg["text"]
                         print(f"💬 [Telegram] User: {text}")
+                        
+                        # Save conversation memory
+                        try:
+                            with sqlite3.connect(MEMORY_DB) as conn:
+                                conn.execute('INSERT INTO conversation_memory (role, content) VALUES (?, ?)', ('user', text))
+                        except Exception as e:
+                            print(f"⚠️ [VM Orchestrator] DB Memory save error: {e}")
+
+                        # Fyers Auth Interception
+                        if "auth_code=" in text:
+                            auth_code = text.split("auth_code=")[1].split("&")[0].strip()
+                            print(f"🔐 [VM Orchestrator] Intercepted Fyers Auth Code. Saving to vault...")
+                            save_to_vault("FYERS_AUTH_CODE", auth_code)
+                            subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
+                            requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": "✅ Fyers Auth Code securely saved to encrypted vault. Trading service restarted."})
+                            continue
+
+                        # Hardcoded Commands Fallback
+                        if text == "/status":
+                            requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": get_system_state_text()})
+                            continue
+                        elif text == "/restart":
+                            subprocess.run(["sudo", "systemctl", "restart", "sritej-trading"])
+                            subprocess.run(["sudo", "systemctl", "restart", "sritej-researcher"])
+                            requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": "✅ Services restarting..."})
+                            continue
+
                         sys_state = get_system_state_text()
                         try:
                             reply_data = asyncio.run(ai_engine.generate_orchestrator_reply(text, sys_state))
@@ -500,8 +562,16 @@ def telegram_bot_loop():
                                 
                             send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                             requests.post(send_url, json={"chat_id": authorized_chat_id, "text": reply_text})
+                            
+                            # Save reply memory
+                            try:
+                                with sqlite3.connect(MEMORY_DB) as conn:
+                                    conn.execute('INSERT INTO conversation_memory (role, content) VALUES (?, ?)', ('assistant', reply_text))
+                            except Exception: pass
                         except Exception as ai_e:
                             print(f"❌ [Telegram] AI Error: {ai_e}")
+                            if "exhausted" in str(ai_e).lower() or "limit" in str(ai_e).lower():
+                                requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": authorized_chat_id, "text": "🚨 CRITICAL: ALL AI LIMITS EXHAUSTED. AI parser is disabled. Falling back to hardcoded commands: /status, /restart"})
             time.sleep(1)
         except Exception as e:
             time.sleep(5)

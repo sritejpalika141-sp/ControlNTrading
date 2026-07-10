@@ -17,6 +17,7 @@ import httpx
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
+from .encryption import get_secret
 
 
 
@@ -88,14 +89,14 @@ class AIEngine:
         self.providers = {}
         
         # === 1. Google Gemini (Free Tier) ===
-        raw_gemini = os.getenv("GOOGLE_API_KEYS") or os.getenv("GOOGLE_API_KEY", "")
+        raw_gemini = get_secret("GOOGLE_API_KEYS") or get_secret("GOOGLE_API_KEY")
         gemini_keys = [k.strip() for k in raw_gemini.split(",") if k.strip()]
         self.providers["gemini"] = AIProvider("Gemini", enabled=bool(gemini_keys), keys=gemini_keys)
         if gemini_keys:
             logger.info(f"✅ Gemini AI initialized (free tier) with {len(gemini_keys)} keys.")
         
         # === 2. Groq (Free Tier — Llama 3.3 70B) ===
-        raw_groq = os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY", "")
+        raw_groq = get_secret("GROQ_API_KEYS") or get_secret("GROQ_API_KEY")
         groq_keys = [k.strip() for k in raw_groq.split(",") if k.strip()]
         self.providers["groq"] = AIProvider("Groq", enabled=bool(groq_keys), keys=groq_keys)
         if groq_keys:
@@ -104,7 +105,7 @@ class AIEngine:
             logger.info("ℹ️ Groq not configured. Get a free key at https://console.groq.com")
         
         # === 3. Anthropic Claude ===
-        self.claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+        self.claude_key = get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
         self.providers["claude"] = AIProvider("Claude", enabled=bool(self.claude_key))
         if self.claude_key:
             logger.info("✅ Claude AI initialized.")
@@ -112,7 +113,7 @@ class AIEngine:
             logger.info("ℹ️ Claude not configured. Set ANTHROPIC_API_KEY in .env")
         
         # === 4. OpenAI (Premium) ===
-        openai_key = os.getenv("OPENAI_API_KEY")
+        openai_key = get_secret("OPENAI_API_KEY")
         self.providers["openai"] = AIProvider("OpenAI", enabled=False)
         if openai_key:
             try:
@@ -124,7 +125,7 @@ class AIEngine:
                 logger.error(f"❌ OpenAI init failed: {e}")
         
         # === 5. OpenRouter (Free Fallback) ===
-        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        self.openrouter_key = get_secret("OPENROUTER_API_KEY")
         self.providers["openrouter"] = AIProvider("OpenRouter", enabled=bool(self.openrouter_key))
         if self.openrouter_key:
             logger.info("✅ OpenRouter AI initialized (free fallback).")
@@ -132,13 +133,13 @@ class AIEngine:
             logger.info("ℹ️ OpenRouter not configured. Get a free key at https://openrouter.ai")
 
         # === 6. Hugging Face (Free Open Source) ===
-        self.hf_key = os.getenv("HF_API_KEYS") or os.getenv("HF_API_KEY")
+        self.hf_key = get_secret("HF_API_KEYS") or get_secret("HF_API_KEY")
         self.providers["huggingface"] = AIProvider("HuggingFace", enabled=bool(self.hf_key))
         if self.hf_key:
             logger.info("✅ HuggingFace AI initialized (free open source).")
 
         # === 7. GitHub Models (GPT-4o-mini Free) ===
-        self.github_key = os.getenv("GITHUB_API_KEYS") or os.getenv("GITHUB_API_KEY")
+        self.github_key = get_secret("GITHUB_API_KEYS") or get_secret("GITHUB_API_KEY")
         self.providers["github"] = AIProvider("GitHub", enabled=bool(self.github_key))
         if self.github_key:
             logger.info("✅ GitHub AI initialized (free GPT-4o-mini).")

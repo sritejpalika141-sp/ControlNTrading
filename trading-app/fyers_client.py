@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from pathlib import Path
+from engine.encryption import get_secret, save_to_vault
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -112,16 +113,16 @@ class FyersClient:
                     db_access_token = user.get("fyers_access_token")
                     
                     # Client ID can fall back so users can share the Admin's App ID
-                    client_id = db_client_id or os.getenv("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
+                    client_id = db_client_id or get_secret("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
                     
                     # Access Token MUST NEVER fall back to Admin's token for non-admin users!
                     access_token = db_access_token
                     if not access_token and user.get("is_admin"):
-                        access_token = os.getenv("FYERS_ACCESS_TOKEN")
+                        access_token = get_secret("FYERS_ACCESS_TOKEN")
             else:
                 # Default fallback if no user_id (system internal or CLI)
-                client_id = os.getenv("FYERS_CLIENT_ID")
-                access_token = os.getenv("FYERS_ACCESS_TOKEN")
+                client_id = get_secret("FYERS_CLIENT_ID")
+                access_token = get_secret("FYERS_ACCESS_TOKEN")
 
             if not client_id or not access_token:
                 raise ValueError(f"Missing FYERS_CLIENT_ID or FYERS_ACCESS_TOKEN for user {self.user_id}")
@@ -246,8 +247,8 @@ class FyersClient:
                 if user:
                     db_client_id = user.get("fyers_client_id")
                     db_access_token = user.get("fyers_access_token")
-                    client_id = db_client_id or os.getenv("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
-                    access_token = db_access_token or os.getenv("FYERS_ACCESS_TOKEN")
+                    client_id = db_client_id or get_secret("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
+                    access_token = db_access_token or get_secret("FYERS_ACCESS_TOKEN")
                     if client_id and access_token:
                         # Allow any valid suffix like -100, -200, -300 for websocket
                         if "-" in client_id:
@@ -257,8 +258,8 @@ class FyersClient:
                 pass
             return None
         else:
-            client_id = os.getenv("FYERS_CLIENT_ID")
-            access_token = os.getenv("FYERS_ACCESS_TOKEN")
+            client_id = get_secret("FYERS_CLIENT_ID")
+            access_token = get_secret("FYERS_ACCESS_TOKEN")
             if not client_id or not access_token:
                 return None
             # Allow any suffix like -100, -200 for websocket
@@ -405,9 +406,9 @@ class FyersClient:
             from fyers_apiv3 import fyersModel
             from models import Database
             
-            client_id = os.getenv("FYERS_CLIENT_ID")
-            secret_key = os.getenv("FYERS_SECRET_KEY")
-            redirect_uri = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+            client_id = get_secret("FYERS_CLIENT_ID")
+            secret_key = get_secret("FYERS_SECRET_KEY")
+            redirect_uri = get_secret("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
             
             # Load from DB if user_id provided (v4.4.2 multi-user fix)
             if self.user_id:
@@ -443,10 +444,10 @@ class FyersClient:
             from fyers_apiv3 import fyersModel
             from models import Database
             
-            client_id = os.getenv("FYERS_CLIENT_ID")
-            secret_key = os.getenv("FYERS_SECRET_KEY")
+            client_id = get_secret("FYERS_CLIENT_ID")
+            secret_key = get_secret("FYERS_SECRET_KEY")
             # Try to determine best redirect_uri
-            redirect_uri = os.getenv("FYERS_REDIRECT_URI")
+            redirect_uri = get_secret("FYERS_REDIRECT_URI")
             if not redirect_uri:
                 redirect_uri = "https://trade.fyers.in/api-login/redirect-uri/index.html"
             
@@ -470,7 +471,7 @@ class FyersClient:
             possible_uris = list(dict.fromkeys([
                 redirect_uri,
                 "https://trade.fyers.in/api-login/redirect-uri/index.html",
-                os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html"),
+                get_secret("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html"),
             ]))
             
             response = None
@@ -550,31 +551,12 @@ class FyersClient:
             except Exception as e:
                 print(f"⚠️ Failed to save token to DB: {e}")
 
-        # 2. Update .env (Fallback / Legacy)
-        os.environ["FYERS_ACCESS_TOKEN"] = token
-
-        if os.path.exists(ENV_PATH):
-            try:
-                with open(ENV_PATH, 'r') as f:
-                    lines = f.readlines()
-
-                new_lines = []
-                found = False
-                for line in lines:
-                    if line.strip().startswith("FYERS_ACCESS_TOKEN="):
-                        new_lines.append(f"FYERS_ACCESS_TOKEN={token}\n")
-                        found = True
-                    else:
-                        new_lines.append(line)
-
-                if not found:
-                    new_lines.append(f"FYERS_ACCESS_TOKEN={token}\n")
-
-                with open(ENV_PATH, 'w') as f:
-                    f.writelines(new_lines)
-                print(f"✅ Token saved to {ENV_PATH}")
-            except Exception as e:
-                print(f"⚠️ Failed to save token to .env: {e}")
+        # 2. Update Vault
+        try:
+            save_to_vault("FYERS_ACCESS_TOKEN", token)
+            print("✅ Token securely saved to encrypted vault.")
+        except Exception as e:
+            print(f"⚠️ Failed to save token to vault: {e}")
 
     def _save_tokens(self, access_token: str, refresh_token: Optional[str]):
         """Save both access and refresh tokens. Refresh token enables ~14-day auto-refresh."""
@@ -614,9 +596,9 @@ class FyersClient:
                 print(f"⚠️ refresh_via_refresh_token: no refresh_token stored for User {self.user_id}", flush=True)
                 return False
 
-            client_id = (user or {}).get("fyers_client_id") or os.getenv("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
-            secret_key = (user or {}).get("fyers_secret") or os.getenv("FYERS_SECRET_KEY") or FyersClient._get_master_credentials()[1]
-            pin = (user or {}).get("fyers_pin") or os.getenv("FYERS_PIN")
+            client_id = (user or {}).get("fyers_client_id") or get_secret("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
+            secret_key = (user or {}).get("fyers_secret") or get_secret("FYERS_SECRET_KEY") or FyersClient._get_master_credentials()[1]
+            pin = (user or {}).get("fyers_pin") or get_secret("FYERS_PIN")
             if not (client_id and secret_key and pin):
                 print(f"⚠️ refresh_via_refresh_token: missing client_id/secret_key/PIN for User {self.user_id}", flush=True)
                 return False
