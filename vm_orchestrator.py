@@ -16,7 +16,11 @@ import schedule
 import pytz
 import datetime
 
-APP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading-app")
+base_dir = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(os.path.join(base_dir, "trading-app")):
+    APP_DIR = os.path.join(base_dir, "trading-app")
+else:
+    APP_DIR = base_dir
 sys.path.append(APP_DIR)
 
 from engine.ai_engine import ai_engine
