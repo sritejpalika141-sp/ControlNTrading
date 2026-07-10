@@ -17,10 +17,10 @@ import pytz
 import datetime
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
-if os.path.exists(os.path.join(base_dir, "trading-app")):
-    APP_DIR = os.path.join(base_dir, "trading-app")
-else:
+if os.path.exists(os.path.join(base_dir, "engine", "__init__.py")) or os.path.exists(os.path.join(base_dir, "engine", "ai_engine.py")):
     APP_DIR = base_dir
+else:
+    APP_DIR = os.path.join(base_dir, "trading-app")
 sys.path.append(APP_DIR)
 
 from engine.ai_engine import ai_engine
