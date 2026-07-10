@@ -23,22 +23,26 @@ else:
     APP_DIR = os.path.join(base_dir, "trading-app")
 sys.path.append(APP_DIR)
 
+# Manual .env loader
+_env_path = os.path.join(APP_DIR, '.env')
+if os.path.exists(_env_path):
+    with open(_env_path, 'r') as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _k, _v = _line.split('=', 1)
+                os.environ[_k.strip()] = _v.strip()
+    print(f'Loaded environment variables from {_env_path}')
+
 from engine.ai_engine import ai_engine
 from engine.notifier import trigger_webhook_background
 from engine.encryption import save_to_vault
 
-env_path = os.path.join(APP_DIR, ".env")
-if os.path.exists(env_path):
-    try:
-        with open(env_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ[k.strip()] = v.strip().strip("'").strip('"')
-        print(f"✅ [VM Orchestrator] Loaded environment variables from {env_path}")
-    except Exception as e:
-        print(f"⚠️ [VM Orchestrator] Failed to load .env manually: {e}")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(APP_DIR, ".env"))
+except ImportError:
+    pass
 
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
 TRADING_DB = os.path.join(APP_DIR, "trading_app.db")
@@ -150,6 +154,12 @@ def monitor_service_logs(service_name: str):
             traceback_buffer = []
             print(f"🚨 [VM Orchestrator] Traceback detected in {service_name}! Gathering logs...")
             traceback_buffer.append(line)
+            continue
+            
+        if "🏥 [VM-ORCHESTRATOR-HOOK] UI Error caught:" in line:
+            print(f"🚨 [VM Orchestrator] UI Error detected in {service_name}! Initiating frontend healing...")
+            # Fire and forget handle_crash with a fake traceback that has just this line
+            asyncio.run(handle_crash(line, service_name))
             continue
             
         if in_traceback:
@@ -280,15 +290,33 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
     print(f"🔧 [VM Orchestrator] Analyzing traceback ({len(traceback_str)} chars) for {service_name}...")
     
     target_file = None
-    for line in reversed(lines):
-        if "File " in line and "trading-app" in line:
-            parts = line.split('"')
-            if len(parts) > 1:
-                target_file = parts[1]
-                break
+    is_ui_error = "🏥 [VM-ORCHESTRATOR-HOOK] UI Error caught:" in traceback_str
+    
+    if is_ui_error:
+        # Extract file from url if possible. e.g. URL http://domain/static/admin.html
+        if "URL " in error_msg:
+            url_part = error_msg.split("URL ")[1].strip()
+            if "static/" in url_part:
+                rel_path = url_part.split("static/")[1]
+                # It might have query params
+                rel_path = rel_path.split("?")[0]
+                target_file = os.path.join(APP_DIR, "static", rel_path)
+            elif "admin.html" in url_part:
+                target_file = os.path.join(APP_DIR, "static/admin.html")
+            else:
+                target_file = os.path.join(APP_DIR, "static/index.html")
+        else:
+            target_file = os.path.join(APP_DIR, "static/index.html")
+    else:
+        for line in reversed(lines):
+            if "File " in line and "trading-app" in line:
+                parts = line.split('"')
+                if len(parts) > 1:
+                    target_file = parts[1]
+                    break
                 
     if not target_file or not os.path.exists(target_file):
-        print(f"❌ [VM Orchestrator] Could not determine local file from traceback in {service_name}.")
+        print(f"❌ [VM Orchestrator] Could not determine local file from traceback in {service_name}. target_file={target_file}")
         return
 
     print(f"📄 [VM Orchestrator] Target file identified: {target_file}")
@@ -350,11 +378,32 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
         
     print(f"✅ [VM Orchestrator] Patch applied to {os.path.basename(target_file)}!")
 
-    print("🔍 [VM Orchestrator] Running syntax validation...")
-    try:
-        subprocess.run(["python3", "-m", "py_compile", target_file], check=True, capture_output=True)
-        print("✅ [VM Orchestrator] Syntax is valid.")
-        
+    print(f"✅ [VM Orchestrator] Patch applied to {os.path.basename(target_file)}!")
+
+    if target_file.endswith(".py"):
+        print("🔍 [VM Orchestrator] Running syntax validation...")
+        try:
+            subprocess.run(["python3", "-m", "py_compile", target_file], check=True, capture_output=True)
+            print("✅ [VM Orchestrator] Syntax is valid.")
+            
+            if not from_cache:
+                try:
+                    with sqlite3.connect(DB_FILE) as conn:
+                        conn.execute('''
+                            INSERT OR REPLACE INTO healing_memory (hash_key, target_file, error_msg, search_content, replace_content)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (cache_key, target_file, error_msg, search_str, replace_str))
+                    print("💾 [VM Orchestrator] New solution saved to SQL database.")
+                except Exception as e:
+                    print(f"⚠️ [VM Orchestrator] Failed to save to SQL DB: {e}")
+                
+        except subprocess.CalledProcessError:
+            print("❌ [VM Orchestrator] Syntax invalid! Reverting patch.")
+            with open(target_file, "w") as f:
+                f.write(file_content)
+            return
+    else:
+        print(f"✅ [VM Orchestrator] Skipping syntax validation for non-python file: {target_file}")
         if not from_cache:
             try:
                 with sqlite3.connect(DB_FILE) as conn:
@@ -365,12 +414,6 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
                 print("💾 [VM Orchestrator] New solution saved to SQL database.")
             except Exception as e:
                 print(f"⚠️ [VM Orchestrator] Failed to save to SQL DB: {e}")
-            
-    except subprocess.CalledProcessError:
-        print("❌ [VM Orchestrator] Syntax invalid! Reverting patch.")
-        with open(target_file, "w") as f:
-            f.write(file_content)
-        return
 
     # Diff Generation & Notification
     diff = list(difflib.unified_diff(

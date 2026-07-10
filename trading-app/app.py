@@ -3172,3 +3172,18 @@ if __name__ == "__main__":
     print(f"🚀 Starting NIFTY Trading Dashboard on http://localhost:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
+
+
+class UIErrorLog(BaseModel):
+    message: str
+    source: str
+    lineno: int
+    colno: int
+    error: str
+    url: str
+
+@app.post("/api/log-ui-error")
+async def log_ui_error(error: UIErrorLog):
+    # This specifically prints in the exact format vm_orchestrator looks for
+    print(f"🏥 [VM-ORCHESTRATOR-HOOK] UI Error caught: {error.message} at {error.source}:{error.lineno}:{error.colno} - {error.error} on URL {error.url}", flush=True)
+    return {"success": True}

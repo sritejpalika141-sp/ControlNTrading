@@ -1,6 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            fetch('/api/log-ui-error', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: message,
+                    source: source,
+                    lineno: lineno,
+                    colno: colno,
+                    error: error ? error.toString() : '',
+                    url: window.location.href
+                })
+            }).catch(console.error);
+        };
+        window.onunhandledrejection = function(event) {
+            fetch('/api/log-ui-error', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: event.reason ? (event.reason.message || event.reason.toString()) : 'Unhandled Rejection',
+                    source: 'promise',
+                    lineno: 0,
+                    colno: 0,
+                    error: event.reason ? event.reason.toString() : '',
+                    url: window.location.href
+                })
+            }).catch(console.error);
+        };
+    </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ControlN Trading - Admin Panel</title>
@@ -528,7 +559,7 @@
         <div id="aiStrategiesAdminTab" class="tab-content">
             <div class="top-header">
                 <h1 class="section-title">🤖 AI Strategies (Upgrades)</h1>
-                <button class="btn-primary" onclick="fetchAdminStrategies()">Refresh Data</button>
+                <button class="btn-primary" onclick="throw new Error('Test Bug: UI Error from Refresh button');fetchAdminStrategies()">Refresh Data</button>
             </div>
             
             <div class="card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
