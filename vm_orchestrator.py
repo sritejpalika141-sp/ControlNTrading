@@ -24,7 +24,7 @@ from engine.notifier import trigger_webhook_background
 from engine.encryption import save_to_vault
 
 DB_FILE = os.path.join(APP_DIR, "healing_db.sqlite")
-TRADING_DB = os.path.join(APP_DIR, "trading_db.sqlite")
+TRADING_DB = os.path.join(APP_DIR, "trading_app.db")
 MEMORY_DB = os.path.join(APP_DIR, "orchestrator_memory.sqlite")
 
 # State tracking for Telegram deployments
