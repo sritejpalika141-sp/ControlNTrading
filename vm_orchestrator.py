@@ -86,15 +86,24 @@ def init_db():
 init_db()
 
 def get_webhook_url():
-    """Fetch webhook URL from main trading DB for User 1."""
+    """Fetch webhook URL from main trading DB for User 1, or fallback to vault."""
     try:
         with sqlite3.connect(TRADING_DB) as conn:
-            cursor = conn.execute("SELECT webhook_url FROM user_states WHERE user_id=1")
+            cursor = conn.execute("SELECT webhook_url FROM user_states WHERE webhook_url IS NOT NULL AND webhook_url != '' LIMIT 1")
             row = cursor.fetchone()
             if row and row[0]:
                 return row[0]
+    except Exception as e:
+        print(f"⚠️ [VM Orchestrator] DB read error for webhook: {e}")
+        
+    try:
+        from engine.encryption import get_secret
+        val = get_secret("TELEGRAM_WEBHOOK", fallback_env=True)
+        if val:
+            return val
     except Exception:
         pass
+        
     return None
 
 def monitor_service_logs(service_name: str):
