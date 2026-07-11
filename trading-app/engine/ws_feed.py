@@ -41,7 +41,7 @@ class FyersWSFeed:
         self._reconnect_count = 0
         self._max_reconnects = 10
         self._last_tick_time: float = 0
-        self._client = None  # FyersClient reference
+        self._client = None  # Broker reference
         self._started = False
         self._lock = threading.Lock()
         self._ws_thread = None
@@ -448,7 +448,10 @@ class FyersWSFeed:
                         last_ws_alert = getattr(self, "_last_ws_alert", None)
                         if last_ws_alert is None or (datetime.now() - last_ws_alert).total_seconds() > 900:
                             self._last_ws_alert = datetime.now()
+                            login_url = self._client.get_login_url() if hasattr(self._client, 'get_login_url') else ""
                             msg = f"⚠️ <b>Fyers Data Feed Disconnected</b>\n\nWebSocket connection lost during market hours. Attempting auto-reconnect..."
+                            if login_url:
+                                msg += f"\n\nIf manual login is required, click here:\n{login_url}\n\nOnce logged in, paste the 'auth_code=' part here."
                             trigger_webhook_background(user["webhook_url"], msg, title="Data Feed Alert")
             except Exception as e:
                 logger.error(f"Failed to send WS disconnect alert: {e}")

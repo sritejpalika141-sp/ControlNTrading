@@ -187,6 +187,13 @@ class Database:
             print("🆕 Migrated users table: added is_active column", flush=True)
         except sqlite3.OperationalError:
             pass  # column already exists
+            
+        # Migration: add active_broker column to existing DBs
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN active_broker TEXT DEFAULT 'fyers'")
+            print("🆕 Migrated users table: added active_broker column", flush=True)
+        except sqlite3.OperationalError:
+            pass  # column already exists
         
         # User States (PnL, Limits, etc)
         c.execute('''CREATE TABLE IF NOT EXISTS user_states (
@@ -428,6 +435,14 @@ class Database:
             async with conn.execute("SELECT * FROM users WHERE automation_enabled=1") as c:
                 rows = await c.fetchall()
         return [decrypt_user_dict(dict(u)) for u in rows]
+
+    @staticmethod
+
+    async def update_active_broker(user_id: int, broker: str):
+        import aiosqlite
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            await conn.execute("UPDATE users SET active_broker=? WHERE id=?", (broker, user_id))
+            await conn.commit()
 
     @staticmethod
     async def update_fyers_creds(user_id, client_id, secret, pin=""):

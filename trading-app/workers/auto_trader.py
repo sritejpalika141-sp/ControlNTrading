@@ -1144,7 +1144,15 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         # SMART SL CALCULATION (Chart-based)
         # ═══════════════════════════════════════════
         trend_info = analysis.get("trend", {})
-        current_trend = (trend_info.get("trend", "") or "").upper()
+        # Safety: analysis["trend"] can be a STRING (many strategies pass {"trend": "NEUTRAL"}) or a
+        # dict. Calling .get() on a string crashed execute_auto_trade with "'str' object has no
+        # attribute 'get'" (112 failed auto-trades in the logs).
+        if isinstance(trend_info, str):
+            current_trend = trend_info.upper()
+        elif isinstance(trend_info, dict):
+            current_trend = (trend_info.get("trend", "") or "").upper()
+        else:
+            current_trend = "NEUTRAL"
         is_trending = "BULL" in current_trend or "BEAR" in current_trend
 
         # 1-Minute Option Candle SL and Entry for Strategy 1

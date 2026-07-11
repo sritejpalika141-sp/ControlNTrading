@@ -75,12 +75,30 @@ class AIProvider:
             
         self.fail_count += 1
         self.cooldown_until = time.time() + cooldown_seconds
+        
+        try:
+            import os
+            from engine.notifier import trigger_webhook_background
+            wh_url = os.environ.get("TELEGRAM_WEBHOOK")
+            if wh_url:
+                trigger_webhook_background(wh_url, f"⚠️ <b>AI Rate Limit</b>\nProvider <b>{self.name}</b> hit a rate limit (429).\nRotating to next key/cooldown: {cooldown_seconds}s.", title="AI Alert")
+        except Exception:
+            pass
     
     def on_quota_exhausted(self):
         """Permanent disable for this session (e.g., insufficient_quota)."""
         self.quota_exhausted = True
         self.enabled = False
         logger.error(f"❌ {self.name}: Quota exhausted. Disabled for this session.")
+        
+        try:
+            import os
+            from engine.notifier import trigger_webhook_background
+            wh_url = os.environ.get("TELEGRAM_WEBHOOK")
+            if wh_url:
+                trigger_webhook_background(wh_url, f"❌ <b>AI Quota Exhausted</b>\nProvider <b>{self.name}</b> quota is completely exhausted and has been disabled.", title="AI Alert")
+        except Exception:
+            pass
 
 
 class AIEngine:

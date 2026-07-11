@@ -83,7 +83,7 @@ from auth_utils import (
     consume_oauth_state,
 )
 print("📦 Importing fyers_client...", flush=True)
-from fyers_client import FyersClient
+from engine.brokers.factory import BrokerFactory
 print("📦 Importing engine.signals...", flush=True)
 from engine.signals import generate_signals
 # Try to import the real AI engine; fall back to a mock if google-generativeai is missing
@@ -147,6 +147,37 @@ async def lifespan(app):
     asyncio.create_task(hourly_status_scheduler())
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
+
+    # ── Self-Healer (AI code-repair) — turned ON, guarded ──
+    # Starts the loop and feeds it ONLY real code exceptions (records carrying a traceback into
+    # trading-app). Operational errors (rate limits, network) are left to the bounded health_agent.
+    # The self-healer itself will NOT auto-edit trading/order/risk/broker code — it Telegram-alerts
+    # for those and only auto-fixes non-trading code (see self_healer.py CRITICAL_MARKERS).
+    try:
+        from engine.self_healer import SelfHealer
+        asyncio.create_task(SelfHealer.loop())
+        import logging as _logging, traceback as _tb
+
+        class _SelfHealLogHandler(_logging.Handler):
+            def emit(self, record):
+                try:
+                    if record.levelno < _logging.ERROR or not record.exc_info:
+                        return
+                    tb_str = "".join(_tb.format_exception(*record.exc_info))
+                    if "trading-app" not in tb_str:
+                        return
+                    if main_loop and main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            SelfHealer.push_error(record.getMessage(), tb_str), main_loop)
+                except Exception:
+                    pass
+
+        _sh_handler = _SelfHealLogHandler()
+        _sh_handler.setLevel(_logging.ERROR)
+        _logging.getLogger().addHandler(_sh_handler)
+        logging.getLogger("DASHBOARD").info("🏥 Self-Healer ON (guarded: trading code is alert-only, never auto-edited).")
+    except Exception as _sh_e:
+        logging.getLogger("DASHBOARD").error(f"Self-Healer wiring failed: {_sh_e}")
 
     # Prune old logs on startup
     try:
@@ -628,8 +659,10 @@ async def save_settings(request: Request):
     client_id = data.get("client_id")
     secret_id = data.get("secret_id")
     fyers_pin = data.get("fyers_pin", "")
+    active_broker = data.get("active_broker", "fyers")
     
     await Database.update_fyers_creds(user_id, client_id, secret_id, fyers_pin)
+    await Database.update_active_broker(user_id, active_broker)
     
     # Refresh context
     try:
@@ -867,7 +900,7 @@ async def resolve_authenticated_user_id(request: Request) -> Optional[int]:
 
 
 async def get_current_client(request: Request, allow_guest: bool = False):
-    """Resolve the FyersClient for the authenticated caller.
+    """Resolve the active broker for the authenticated caller.
 
     Phase 2 Item A1: the guest/user-0 fallback is CLOSED by default. Any trading-critical
     endpoint (order placement, positions, funds, settings, automation toggles, quotes, etc.)
@@ -890,7 +923,14 @@ async def get_current_client(request: Request, allow_guest: bool = False):
 
     u_id = int(user_id)
     if u_id not in USER_CONTEXTS:
-        USER_CONTEXTS[u_id] = FyersClient(user_id=u_id)
+        broker = BrokerFactory.get_broker(user_id=u_id)
+        if broker is None:
+            # BrokerFactory returns None for the guest context (user_id=0) — "No user_id provided".
+            # Fall back to a bare FyersClient so the allowlisted, guest-safe /api/version UI health
+            # poll works instead of 500ing on `client.user_id` (client was None).
+            from fyers_client import FyersClient
+            broker = FyersClient(user_id=u_id)
+        USER_CONTEXTS[u_id] = broker
 
     return USER_CONTEXTS[u_id]
 
@@ -913,7 +953,7 @@ async def _exchange_fyers_auth_code(user_id, auth_code: str) -> Dict:
     # Drop cached client so it re-inits with the new token on next access
     USER_CONTEXTS.pop(u_id_int, None)
 
-    client = FyersClient(user_id=u_id_int)
+    client = BrokerFactory.get_broker(user_id=u_id_int)
     res = await api_queue.enqueue(2, client.set_auth_code, auth_code)
 
     if res.get("success"):
@@ -981,7 +1021,7 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
             if uid in USER_CONTEXTS:
                 client = USER_CONTEXTS[uid]
             else:
-                client = FyersClient(user_id=uid)
+                client = BrokerFactory.get_broker(user_id=uid)
                 USER_CONTEXTS[uid] = client
 
             # Check if existing token is still valid before forcing a refresh
@@ -1102,7 +1142,7 @@ async def force_fyers_refresh(request: Request):
     if u_id_int in USER_CONTEXTS:
         client = USER_CONTEXTS[u_id_int]
     else:
-        client = FyersClient(user_id=u_id_int)
+        client = BrokerFactory.get_broker(user_id=u_id_int)
         USER_CONTEXTS[u_id_int] = client
 
     # Try refresh_token first, fallback to TOTP auto_login
@@ -1677,8 +1717,8 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
     """
     if not client:
         # Fallback to a default client if needed (e.g. for background shared tasks)
-        from fyers_client import FyersClient
-        client = FyersClient()
+        from engine.brokers.factory import BrokerFactory
+        client = BrokerFactory.get_broker(user_id=1)
     state = get_user_state(client.user_id)
     now = datetime.now(IST)
     now_ts = now.timestamp()
@@ -2117,6 +2157,7 @@ async def get_option_chain(request: Request):
         raise HTTPException(500, "Could not fetch spot")
     spot = spot_data["lp"]
 
+    base_symbol = "NSE:NIFTY50-INDEX"  # endpoint fetches the NIFTY50 spot above; was undefined -> NameError/500
     expiry = client.find_nearest_expiry(spot, base_symbol)
     if not expiry:
         raise HTTPException(500, "No expiry found")
@@ -2327,7 +2368,7 @@ async def websocket_live(ws: WebSocket):
             cache["is_auth"] = False
     else:
         try:
-            client = FyersClient(user_id=u_id_int)
+            client = BrokerFactory.get_broker(user_id=u_id_int)
             if client.is_authenticated():
                 USER_CONTEXTS[u_id_int] = client
                 cache["is_auth"] = True
@@ -3050,8 +3091,8 @@ async def telegram_webhook(request: Request):
                             
                     elif text == "/login":
                         try:
-                            from fyers_client import FyersClient
-                            fc = FyersClient(user_id=u_id)
+                            from engine.brokers.factory import BrokerFactory
+                            fc = BrokerFactory.get_broker(user_id=u_id)
                             login_url = fc.get_login_url()
                             msg = (
                                 f"🔐 *Manual Fyers Login*\n\n"
@@ -3096,8 +3137,8 @@ async def telegram_webhook(request: Request):
                                 access_token = response.get("access_token")
                                 refresh_token = response.get("refresh_token")
                                 
-                                from fyers_client import FyersClient
-                                fc = FyersClient(user_id=u_id)
+                                from engine.brokers.factory import BrokerFactory
+                                fc = BrokerFactory.get_broker(user_id=u_id)
                                 fc._save_cache(access_token, refresh_token, True)
                                 
                                 trigger_webhook_background(state_obj.webhook_url, "✅ <b>Login Successful!</b>\n\nFyers API is now connected and ready for automated trading today.", title="Auth Success")
