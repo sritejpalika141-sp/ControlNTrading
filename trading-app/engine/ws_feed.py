@@ -36,6 +36,9 @@ class FyersWSFeed:
     def __init__(self):
         self._ticks: Dict[str, Dict] = {}  # symbol -> latest tick data
         self._subscribed: Set[str] = set()
+        # Symbols Fyers rejected as invalid (-300). We NEVER re-subscribe these — otherwise every
+        # reconnect re-subscribes them, Fyers errors, and the feed churns (the disconnect storm).
+        self._quarantined: Set[str] = set()
         self._socket = None
         self._connected = False
         self._reconnect_count = 0
@@ -166,7 +169,7 @@ class FyersWSFeed:
         # not depend on the REST rate limit. The tick-contamination guard in _on_message protects
         # against any cross-symbol price bleed.
         ignored = set()
-        new_symbols = [s for s in symbols if s not in self._subscribed and s not in ignored]
+        new_symbols = [s for s in symbols if s not in self._subscribed and s not in ignored and s not in self._quarantined]
         if not new_symbols:
             return
         
@@ -426,6 +429,19 @@ class FyersWSFeed:
     def _on_error(self, message):
         """Called on WebSocket error."""
         logger.error(f"❌ WS Feed Error: {message}")
+        # -300 "invalid symbol": Fyers rejects bad/hallucinated symbols (e.g. from the nightly
+        # macro-injection). QUARANTINE them + drop from _subscribed so we never re-subscribe them
+        # on reconnect — that re-subscribe loop is what churns the feed (the disconnect storm).
+        try:
+            if isinstance(message, dict) and message.get("code") == -300:
+                bad = message.get("invalid_symbols") or []
+                if bad:
+                    for s in bad:
+                        self._quarantined.add(s)
+                        self._subscribed.discard(s)
+                    logger.warning(f"🚫 Quarantined invalid symbols (won't re-subscribe): {bad}")
+        except Exception as _e:
+            logger.error(f"Error handling invalid-symbol quarantine: {_e}")
     
     def _on_close(self, message):
         """Called when WebSocket closes."""

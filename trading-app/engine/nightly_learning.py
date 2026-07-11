@@ -44,11 +44,34 @@ async def run_nightly_learning(state, user_id: int):
                     macro_data = json.loads(json_str)
                     new_symbols = macro_data.get("symbols", [])
                     injected = 0
+                    # VALIDATE each AI-suggested symbol against Fyers before adding it. The model
+                    # hallucinates non-existent symbols (bad option/expiry strings) which Fyers then
+                    # rejects on the WebSocket (-300), churning the feed (the disconnect storm) and
+                    # wasting option-chain calls. Only real, quotable symbols get in; capped at 3 so
+                    # the watchlist doesn't balloon (each symbol adds option-chain load).
+                    try:
+                        from fyers_client import FyersClient
+                        _vc = FyersClient(user_id=user_id)
+                    except Exception:
+                        _vc = None
                     for new_symbol in new_symbols:
-                        if new_symbol and new_symbol not in state.active_symbols:
-                            state.active_symbols.append(new_symbol)
-                            injected += 1
-                            logger.info(f"💉 Injected Strict Options Script into Market Watch: {new_symbol}")
+                        if injected >= 3:
+                            break
+                        if not new_symbol or new_symbol in state.active_symbols:
+                            continue
+                        valid = False
+                        if _vc is not None:
+                            try:
+                                q = _vc.get_quote(new_symbol)
+                                valid = bool(q and q.get("lp", 0) > 0)
+                            except Exception:
+                                valid = False
+                        if not valid:
+                            logger.warning(f"⏭️ Skipped invalid/unquotable macro symbol: {new_symbol}")
+                            continue
+                        state.active_symbols.append(new_symbol)
+                        injected += 1
+                        logger.info(f"💉 Injected VALID options script into Market Watch: {new_symbol}")
                     if injected > 0:
                         state.save()
         except Exception as e:
