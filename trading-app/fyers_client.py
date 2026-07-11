@@ -438,6 +438,28 @@ class FyersClient:
             print(f"❌ Error generating login URL: {e}", flush=True)
             return ""
 
+    def get_profile(self) -> Dict[str, Any]:
+        """Compat shim for the multi-broker interface / broker-factory login flow. The original
+        FyersClient (the complete, fully-fixed client the app runs on) didn't expose this; the
+        parallel engine/brokers/fyers.py wrapper is abstract/incomplete, so the factory now returns
+        THIS client and needs get_profile()."""
+        try:
+            client = self._get_active_client()
+            return client.get_profile() if client else {}
+        except Exception as e:
+            print(f"get_profile error: {e}", flush=True)
+            return {}
+
+    def _save_cache(self, access_token: str, refresh_token: str = None, authed: bool = True):
+        """Compat shim: persist a freshly-obtained token (broker-factory login flow at app.py:3142).
+        Mirrors set_auth_code's persistence without re-doing the auth-code exchange."""
+        try:
+            from models import Database
+            Database.update_fyers_tokens_sync(self.user_id, access_token, refresh_token or "")
+        except Exception as e:
+            print(f"_save_cache token persist failed: {e}", flush=True)
+        self._cached_auth_status = bool(authed)
+
     def set_auth_code(self, code: str) -> Dict[str, Any]:
         """Exchange auth code for access token and save to Database (and .env for fallback)."""
         try:

@@ -3,7 +3,11 @@ from typing import Optional
 
 from models import Database
 from engine.brokers.base import BaseBroker
-from engine.brokers.fyers import FyersClient
+# Use the ORIGINAL, complete FyersClient — it has ALL the rate-limit / CO-safe-SL / trade-recording
+# / per-underlying-guard fixes. The parallel engine.brokers.fyers wrapper is abstract/incomplete
+# (missing get_historical_data/get_profile) and CANNOT be instantiated — routing "fyers" through it
+# 500'd every authenticated request and would also regress the fixes.
+from fyers_client import FyersClient
 from engine.brokers.zerodha import ZerodhaClient
 from engine.brokers.aliceblue import AliceBlueClient
 
