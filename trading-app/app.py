@@ -659,8 +659,17 @@ async def save_settings(request: Request):
     client_id = data.get("client_id")
     secret_id = data.get("secret_id")
     fyers_pin = data.get("fyers_pin", "")
-    active_broker = data.get("active_broker", "fyers")
-    
+    active_broker = (data.get("active_broker", "fyers") or "fyers").lower()
+
+    # SAFETY GATE: only production-ready brokers may be selected. Zerodha/AliceBlue are scaffolded
+    # but do NOT implement the app's client surface (option chain, expiry calc, is_authenticated,
+    # live WS feed, get_quote, CO-style SL orders) — selecting one would crash the live app or place
+    # trades on the wrong account. Add a broker to SUPPORTED_BROKERS only once its client fully
+    # implements the interface AND is tested against the live broker API.
+    SUPPORTED_BROKERS = {"fyers"}
+    if active_broker not in SUPPORTED_BROKERS:
+        return JSONResponse({"success": False, "message": f"⛔ Broker '{active_broker}' is not yet available for live trading (integration in progress). Supported: {', '.join(sorted(SUPPORTED_BROKERS))}."}, 400)
+
     await Database.update_fyers_creds(user_id, client_id, secret_id, fyers_pin)
     await Database.update_active_broker(user_id, active_broker)
     

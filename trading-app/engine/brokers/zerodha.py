@@ -1,9 +1,11 @@
 import logging
 from typing import Dict, List, Any
-from kiteconnect import KiteConnect
 
 from engine.brokers.base import BaseBroker
 from engine.encryption import get_secret, save_to_vault
+# NOTE: kiteconnect is imported LAZILY inside __init__ — a top-level import made a missing/broken
+# optional dependency crash the ENTIRE app (this module is imported by the broker factory, which
+# every authenticated request goes through).
 
 logger = logging.getLogger("ZERODHA_CLIENT")
 
@@ -19,10 +21,17 @@ class ZerodhaClient(BaseBroker):
         self.api_key = get_secret(f"zerodha_api_key_{self.user_id}") or ""
         self.api_secret = get_secret(f"zerodha_api_secret_{self.user_id}") or ""
         self.access_token = get_secret(f"zerodha_access_token_{self.user_id}") or ""
-        
-        self.kite = KiteConnect(api_key=self.api_key)
-        if self.access_token:
-            self.kite.set_access_token(self.access_token)
+
+        # Lazy import so a missing/broken kiteconnect dependency degrades THIS broker only,
+        # instead of crashing the whole app at import time.
+        try:
+            from kiteconnect import KiteConnect
+            self.kite = KiteConnect(api_key=self.api_key)
+            if self.access_token:
+                self.kite.set_access_token(self.access_token)
+        except ImportError:
+            logger.warning("kiteconnect not installed. Zerodha will not work.")
+            self.kite = None
 
     def _check_auth(self):
         if not self.access_token:

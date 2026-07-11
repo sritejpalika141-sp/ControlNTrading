@@ -34,7 +34,15 @@ class BrokerFactory:
         active_broker = user.get("active_broker", "fyers")
         if not active_broker: active_broker = "fyers"
         active_broker = active_broker.lower()
-        
+
+        # Defence-in-depth: Zerodha/AliceBlue are scaffolded but not yet integrated with the app's
+        # client surface (they'd crash the live app on missing methods). The settings endpoint gates
+        # selection to 'fyers'; this catches any out-of-band active_broker value and falls back to
+        # the complete Fyers client instead of returning a broken one.
+        if active_broker not in ("fyers",):
+            logger.error(f"Broker '{active_broker}' for user {user_id} is not production-ready — falling back to Fyers to avoid a live-app crash.")
+            active_broker = "fyers"
+
         if active_broker == "zerodha":
             return ZerodhaClient(user_id=user_id)
         elif active_broker == "aliceblue":
