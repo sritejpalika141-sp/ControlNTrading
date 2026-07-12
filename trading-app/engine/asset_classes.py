@@ -78,6 +78,14 @@ def get_asset_class(name: Optional[str] = None) -> AssetClass:
     return registry.get(name or DEFAULT_ASSET_CLASS, registry[DEFAULT_ASSET_CLASS])
 
 
+def register(ac: "AssetClass") -> None:
+    """Register (or replace) an asset class by name. Used by asset_configs/* modules to add
+    specialized entries (e.g. CRUDE_OIL_OPTIONS) without editing this file. Additive: registering
+    a new key never affects INDEX_OPTIONS or any existing lookup."""
+    registry[ac.name] = ac
+    logger.info(f"registered asset class: {ac.name} ({ac.exchange}, {ac.symbol_prefix})")
+
+
 def build_symbol(asset_class: str, instrument: str) -> str:
     """Prefix an instrument with its asset class's exchange prefix.
     build_symbol("INDEX_OPTIONS", "NIFTY50-INDEX") == "NSE:NIFTY50-INDEX" (byte-identical to today)."""
