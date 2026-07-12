@@ -26,14 +26,18 @@ async def run_nightly_learning(state, user_id: int):
             logger.info("🌍 Scanning Global News for Commodities, Currencies & Stocks volatility...")
             ai = AIEngine()
             macro_prompt = """
-            You are a Global Macro Analyst AI. Based on current simulated global news and market conditions, identify the top 3 most volatile and tradeable assets right now among Commodities (e.g., Crude Oil, Gold), Currencies (e.g., USDINR), or Indian Stocks.
-            IMPORTANT:
-            1. You can add Indian stock assets too if you feel they will give good profits.
-            2. For all assets, we strictly perform Options Buying only.
-            3. Some stocks do not have option chains; in that case, skip them. ONLY pick stocks that have option chains.
-            
-            Return ONLY a valid JSON object containing a "symbols" array of the generated options symbols (e.g. "MCX:CRUDEOIL24NOV7000CE", "CDS:USDINR24NOV84.50CE", "NSE:RELIANCE24NOV3000CE").
-            Example: {"symbols": ["MCX:CRUDEOIL24NOV7000CE", "NSE:HDFCBANK24NOV1700CE", "NSE:SBIN24NOV800CE"]}
+            You are a Global Macro Analyst AI. Based on current market conditions, identify the top 3 most volatile and tradeable INDIAN STOCK UNDERLYINGS right now that have LIQUID weekly/monthly option chains and are good candidates for options buying.
+
+            CRITICAL — output rules (do NOT break these):
+            1. Return the UNDERLYING symbol only, NOT a specific option contract. The app derives the
+               actual option strike/expiry itself from the live option chain.
+            2. Use the EXACT NSE equity format: "NSE:<SYMBOL>-EQ" (e.g. "NSE:RELIANCE-EQ", "NSE:SBIN-EQ").
+            3. Only real, currently-listed NSE stocks that HAVE option chains. Do NOT invent symbols,
+               strikes, or expiries. If unsure a symbol is real, skip it.
+            4. Do NOT return commodities (MCX) or currencies (CDS) — the platform cannot trade those yet.
+
+            Return ONLY a valid JSON object with a "symbols" array of underlying equity symbols.
+            Example: {"symbols": ["NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:SBIN-EQ"]}
             """
             macro_response = await ai._call_chain(macro_prompt)
             if macro_response:
