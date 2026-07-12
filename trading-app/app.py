@@ -224,9 +224,11 @@ def get_lot_size(symbol: str) -> int:
 @app.get("/login")
 async def login_page(request: Request):
     response = FileResponse(BASE_DIR / "static" / "login.html")
-    # Clear browser cache and storage when session expires
-    if request.query_params.get("reason") in ["session_expired", "idle"]:
-        response.headers["Clear-Site-Data"] = '"cache", "storage"'
+    # When a session is stale/expired, clear the browser state so a fresh login can take hold.
+    # IMPORTANT: "storage" alone does NOT clear cookies — the "cookies" directive is required, or a
+    # stale/old-key user_id cookie survives and every re-login silently fails to replace it.
+    if request.query_params.get("reason") in ["session_expired", "idle", "invalid_state", "stale"]:
+        response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
     return response
 
 @app.post("/api/login")
@@ -348,7 +350,11 @@ async def get_market_summary():
 @app.get("/admin")
 async def admin_page(request: Request):
     user_id = await resolve_authenticated_user_id(request)
-    if not user_id: return RedirectResponse(url="/login")
+    # If a user_id cookie is present but does not resolve (stale / old-key / past-grace), send them
+    # through the clearing login so the dead cookie is wiped and a fresh login can take hold.
+    if not user_id:
+        reason = "session_expired" if request.cookies.get("user_id") else "login"
+        return RedirectResponse(url=f"/login?reason={reason}")
     
     user = await Database.get_user_by_id(user_id)
     if not user or not user["is_admin"]:
@@ -1042,11 +1048,12 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                         from state import USER_STATES
                         from engine.notifier import trigger_webhook_background
                         state_obj = USER_STATES.get(uid)
-                        if state_obj and getattr(state_obj, 'webhook_url', None):
-                            trigger_webhook_background(state_obj.webhook_url, "Fyer's Connected automatically.", title="Fyers Auto-Login")
+                        wh = ((getattr(state_obj, 'webhook_url', '') or '') if state_obj else '') or os.getenv("TELEGRAM_WEBHOOK", "")
+                        if wh:
+                            trigger_webhook_background(wh, "Fyers Connected automatically.", title="Fyers Auto-Login")
                     except Exception as e:
                         pass
-                    
+
                     try:
                         ws_feed.restart(client)
                     except Exception as ws_err:
@@ -1070,8 +1077,9 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                     from state import USER_STATES
                     from engine.notifier import trigger_webhook_background
                     state_obj = USER_STATES.get(uid)
-                    if state_obj and getattr(state_obj, 'webhook_url', None):
-                        trigger_webhook_background(state_obj.webhook_url, "Fyer's Connected automatically.", title="Fyers Auto-Login")
+                    wh = ((getattr(state_obj, 'webhook_url', '') or '') if state_obj else '') or os.getenv("TELEGRAM_WEBHOOK", "")
+                    if wh:
+                        trigger_webhook_background(wh, "Fyers Connected automatically.", title="Fyers Auto-Login")
                 except Exception as e:
                     pass
                 try:
@@ -1084,7 +1092,11 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                     from state import USER_STATES
                     from engine.notifier import trigger_webhook_background
                     state_obj = USER_STATES.get(uid)
-                    if state_obj and getattr(state_obj, 'webhook_url', None):
+                    # Resolve the Telegram target: per-user webhook first, else the global
+                    # TELEGRAM_WEBHOOK env (the app-wide fallback used by nightly_learning/ai_engine).
+                    # Without this fallback the alert silently no-ops when no per-user webhook is set.
+                    wh = ((getattr(state_obj, 'webhook_url', '') or '') if state_obj else '') or os.getenv("TELEGRAM_WEBHOOK", "")
+                    if wh:
                         # Include a CONNECT LINK so the user can re-login straight from Telegram.
                         # Lead with the live app URL (robust — no OAuth-nonce TTL); append the direct
                         # Fyers login URL as a convenience when it can be generated.
@@ -1102,7 +1114,7 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                         if login_url:
                             msg += (f"\n\nOr connect directly:\n{login_url}\n\n"
                                     "After logging in, paste the <code>auth_code=</code> value into the app.")
-                        trigger_webhook_background(state_obj.webhook_url, msg, title="🔴 Fyers Re-login Needed")
+                        trigger_webhook_background(wh, msg, title="🔴 Fyers Re-login Needed")
                 except Exception as e:
                     pass
         except Exception as e:
