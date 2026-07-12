@@ -61,12 +61,14 @@ registry: Dict[str, AssetClass] = {
         expiry_cycle="monthly", volatility_measure="atr",
         hard_exit_time=(23, 20), risk_config={}, strike_interval=50,  # crude confirmed 50 from MCX_COM master
     ),
-    "CURRENCY_OPTIONS": AssetClass(                            # NSE_CD — PLACEHOLDER, unverified
+    "CURRENCY_OPTIONS": AssetClass(                            # NSE_CD segment — PLACEHOLDER, unverified
         name="CURRENCY_OPTIONS", exchange="NSE_CD",
         session_open=(9, 0), session_close=(17, 0),
-        symbol_prefix="NSE_CD:", lot_size_source="NSE_CD",
-        expiry_cycle="monthly", volatility_measure="atr",
-        hard_exit_time=(16, 50), risk_config={}, strike_interval=0.25,  # USDINR placeholder, unverified
+        # Fyers currency symbols use the "NSE:" prefix (e.g. NSE:USDINR26717 95.125 CE), NOT "NSE_CD:".
+        # Confirmed from the live NSE_CD master. lot_size_source keys the MCX/CDS master file name.
+        symbol_prefix="NSE:", lot_size_source="NSE_CD",
+        expiry_cycle="weekly", volatility_measure="atr",
+        hard_exit_time=(16, 50), risk_config={}, strike_interval=0.25,  # USDINR interval confirmed 0.25
     ),
 }
 
