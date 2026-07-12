@@ -219,13 +219,21 @@ def get_holiday_reason() -> Optional[str]:
         
     return None
 
-def is_market_open() -> bool:
-    """Check if market is currently open (9:15 - 15:30 IST, weekdays, excluding holidays)."""
+def is_market_open(asset_class: str = None) -> bool:
+    """Check if the market is currently open for the given asset class (default: INDEX_OPTIONS =
+    NIFTY's 9:15-15:30 IST, weekdays, excluding holidays). Registry-driven (multi-asset Phase 1):
+    the NO-ARG call is byte-for-byte identical to the previous hard-coded 9:15-15:30 behavior,
+    because INDEX_OPTIONS carries exactly those hours."""
     now = datetime.now(IST)
     if get_holiday_reason() is not None:
         return False
-    market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    # Lazy import to avoid any circular-import at module load.
+    from engine.asset_classes import get_asset_class
+    ac = get_asset_class(asset_class)
+    oh, om = ac.session_open
+    ch, cm = ac.session_close
+    market_start = now.replace(hour=oh, minute=om, second=0, microsecond=0)
+    market_end = now.replace(hour=ch, minute=cm, second=0, microsecond=0)
     return market_start <= now <= market_end
 
 

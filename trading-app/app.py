@@ -1432,7 +1432,11 @@ async def daily_hard_exit_scheduler():
     while True:
         try:
             now = datetime.now(IST)
-            target = now.replace(hour=15, minute=14, second=0, microsecond=0)
+            # Registry-driven (multi-asset Phase 1). INDEX_OPTIONS.hard_exit_time == (15, 14), so this
+            # is byte-for-byte identical to the previous hard-coded 15:14 square-off.
+            from engine.asset_classes import get_asset_class
+            _heh, _hem = get_asset_class().hard_exit_time
+            target = now.replace(hour=_heh, minute=_hem, second=0, microsecond=0)
             if now >= target:
                 target = target + timedelta(days=1)
             wait_seconds = (target - now).total_seconds()
