@@ -12,7 +12,7 @@ from state import get_lot_size as get_dynamic_lot_size
 
 
 def select_strike(option_chain: Dict, signal_type: str, spot: float,
-                  max_premium: float = 300) -> Optional[Dict]:
+                  max_premium: float = 300, asset_class: str = None) -> Optional[Dict]:
     """
     Select the best strike for a given signal.
 
@@ -21,11 +21,15 @@ def select_strike(option_chain: Dict, signal_type: str, spot: float,
         signal_type: 'CALL' or 'PUT'
         spot: Current spot price
         max_premium: Maximum premium budget per lot
+        asset_class: multi-asset Phase 2 bridging — registry key for the strike interval.
+            None -> INDEX_OPTIONS (interval 50), byte-identical to the old hard-coded fallback.
 
     Returns:
         Selected strike details
     """
-    atm = option_chain.get("atm", round(spot / 50) * 50)
+    from engine.asset_classes import get_asset_class
+    _si = get_asset_class(asset_class).strike_interval
+    atm = option_chain.get("atm", round(spot / _si) * _si)
 
     if signal_type == "CALL":
         options = option_chain.get("calls", [])
@@ -69,16 +73,21 @@ def select_strike(option_chain: Dict, signal_type: str, spot: float,
     return best
 
 
-def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float, dte: int = 5, exclude_symbols: List[str] = None) -> List[Dict]:
+def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float, dte: int = 5, exclude_symbols: List[str] = None, asset_class: str = None) -> List[Dict]:
     """
     Quantitative Strike Selection (OI & DTE Optimized):
     - DTE <= 1 (Expiry): Prefers ITM strikes to avoid theta decay.
     - DTE > 1: Prefers high OI strikes around ATM for liquidity.
+
+    asset_class: multi-asset Phase 2 bridging — registry key for the strike interval used by the
+    ATM fallback and the expiry-day ITM offset. None -> INDEX_OPTIONS (interval 50), byte-identical.
     """
     if signal_type in ["NO TRADE", "WAITING"]:
         return []
-        
-    atm_strike = option_chain.get("atm", round(spot / 50) * 50)
+
+    from engine.asset_classes import get_asset_class
+    _si = get_asset_class(asset_class).strike_interval
+    atm_strike = option_chain.get("atm", round(spot / _si) * _si)
     calls = option_chain.get("calls", [])
     puts = option_chain.get("puts", [])
     
@@ -95,10 +104,11 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
     def score_options(options: List[Dict], is_call: bool):
         scored = []
         # Determine target moneyness based on DTE
-        # If DTE <= 1 (Expiry), we want slightly ITM (dist -50 for CE, +50 for PE)
+        # If DTE <= 1 (Expiry), we want slightly ITM (one strike step ITM: -si for CE, +si for PE).
+        # _si comes from the asset-class registry (INDEX_OPTIONS == 50, byte-identical to the old -50/50).
         target_offset = 0
         if dte <= 1:
-            target_offset = -50 if is_call else 50
+            target_offset = -_si if is_call else _si
         
         target_price = atm_strike + target_offset
         

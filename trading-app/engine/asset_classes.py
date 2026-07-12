@@ -29,6 +29,10 @@ class AssetClass:
     volatility_measure: str            # "india_vix" | "atr" — drives get_volatility() dispatch
     hard_exit_time: Tuple[int, int]    # (hour, minute) safety-net square-off
     risk_config: dict = field(default_factory=dict)  # carried in Phase 1, wired into strategies in Phase 3
+    # strike_interval: fallback ATM rounding step used by engine/strikes.py ONLY when the live option
+    # chain does not supply "atm". INDEX_OPTIONS keeps the historical 50 (byte-identical to the old
+    # hard-coded round(spot/50)*50). Assign an int here (not 50.0) so INDEX math stays integer-identical.
+    strike_interval: float = 50
 
 
 # INDEX_OPTIONS = today's live NIFTY config, VERBATIM. These must stay byte-for-byte identical to
@@ -39,7 +43,7 @@ registry: Dict[str, AssetClass] = {
         session_open=(9, 15), session_close=(15, 30),
         symbol_prefix="NSE:", lot_size_source="NSE_FO",
         expiry_cycle="weekly-thursday", volatility_measure="india_vix",
-        hard_exit_time=(15, 14), risk_config={},
+        hard_exit_time=(15, 14), risk_config={}, strike_interval=50,
     ),
     # ─── UNVERIFIED PLACEHOLDERS — not live-tested. Phase 3 RESEARCH starting points only. ───
     # No live caller uses these in Phase 1 (the broker/order path is index-only).
@@ -48,21 +52,21 @@ registry: Dict[str, AssetClass] = {
         session_open=(9, 15), session_close=(15, 30),          # equity shares NSE hours
         symbol_prefix="NSE:", lot_size_source="NSE_FO",
         expiry_cycle="monthly-last-thursday", volatility_measure="atr",
-        hard_exit_time=(15, 14), risk_config={},
+        hard_exit_time=(15, 14), risk_config={}, strike_interval=50,
     ),
     "COMMODITY_OPTIONS": AssetClass(                            # MCX — PLACEHOLDER, unverified
         name="COMMODITY_OPTIONS", exchange="MCX",
         session_open=(9, 0), session_close=(23, 30),
         symbol_prefix="MCX:", lot_size_source="MCX_COM",
         expiry_cycle="monthly", volatility_measure="atr",
-        hard_exit_time=(23, 20), risk_config={},
+        hard_exit_time=(23, 20), risk_config={}, strike_interval=50,  # crude confirmed 50 from MCX_COM master
     ),
     "CURRENCY_OPTIONS": AssetClass(                            # NSE_CD — PLACEHOLDER, unverified
         name="CURRENCY_OPTIONS", exchange="NSE_CD",
         session_open=(9, 0), session_close=(17, 0),
         symbol_prefix="NSE_CD:", lot_size_source="NSE_CD",
         expiry_cycle="monthly", volatility_measure="atr",
-        hard_exit_time=(16, 50), risk_config={},
+        hard_exit_time=(16, 50), risk_config={}, strike_interval=0.25,  # USDINR placeholder, unverified
     ),
 }
 
