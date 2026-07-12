@@ -46,25 +46,47 @@ SESSION_MIGRATION_CUTOFF = datetime(2026, 7, 11)
 _serializer: Optional[URLSafeTimedSerializer] = None
 
 
+def _read_secret_from_env_file() -> Optional[str]:
+    """Read SECRET_KEY directly from the .env file on disk.
+
+    SAFETY: this is checked BEFORE generating a new key, so a process that imported this module
+    without loading .env (a standalone script/test) reads the REAL key instead of minting a new
+    one and clobbering .env — which would silently log out every user on the next restart.
+    """
+    try:
+        if os.path.exists(_ENV_PATH):
+            with open(_ENV_PATH, "r") as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith("SECRET_KEY=") and not s.startswith("#"):
+                        val = s.split("=", 1)[1].strip()
+                        if val:
+                            return val
+    except Exception:
+        pass
+    return None
+
+
 def _persist_secret_key(key: str) -> None:
-    """Write SECRET_KEY back to .env (mirrors ENCRYPTION_KEY discipline in models.get_cipher)."""
+    """Write SECRET_KEY to .env ONLY when one is not already present.
+
+    NEVER overwrite an existing SECRET_KEY — overwriting invalidates every signed session (a
+    surprise mass-logout). This is the hard guard behind the softer check in _get_serializer.
+    """
     try:
         existing_lines = []
         if os.path.exists(_ENV_PATH):
             with open(_ENV_PATH, "r") as f:
                 existing_lines = f.readlines()
-        new_lines = []
-        found = False
         for line in existing_lines:
-            if line.strip().startswith("SECRET_KEY="):
-                new_lines.append(f"SECRET_KEY={key}\n")
-                found = True
-            else:
-                new_lines.append(line)
-        if not found:
-            new_lines.append(f"SECRET_KEY={key}\n")
+            s = line.strip()
+            if s.startswith("SECRET_KEY=") and not s.startswith("#") and s.split("=", 1)[1].strip():
+                # An existing non-empty key is present — refuse to overwrite it.
+                print("🔑 SECRET_KEY already present in .env — NOT overwriting (session safety).")
+                return
+        existing_lines.append(f"SECRET_KEY={key}\n")
         with open(_ENV_PATH, "w") as f:
-            f.writelines(new_lines)
+            f.writelines(existing_lines)
         print(f"🔑 New SECRET_KEY generated and saved to {_ENV_PATH}")
     except Exception as e:
         print(f"⚠️ Error writing SECRET_KEY to .env: {e}")
@@ -75,7 +97,13 @@ def _get_serializer() -> URLSafeTimedSerializer:
     if _serializer is None:
         secret = os.getenv("SECRET_KEY")
         if not secret:
-            # Generate a strong random key once and persist it, same discipline as ENCRYPTION_KEY.
+            # Before generating, read any existing key straight from .env. This prevents a
+            # standalone import (script/test that didn't load .env) from overwriting the real key.
+            secret = _read_secret_from_env_file()
+            if secret:
+                os.environ["SECRET_KEY"] = secret
+        if not secret:
+            # Genuinely absent everywhere: generate a strong random key once and persist it.
             secret = os.urandom(32).hex()
             _persist_secret_key(secret)
             os.environ["SECRET_KEY"] = secret
