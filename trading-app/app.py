@@ -1085,7 +1085,24 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                     from engine.notifier import trigger_webhook_background
                     state_obj = USER_STATES.get(uid)
                     if state_obj and getattr(state_obj, 'webhook_url', None):
-                        trigger_webhook_background(state_obj.webhook_url, "Fyers not connected automatically.", title="Fyers Auto-Login Failed")
+                        # Include a CONNECT LINK so the user can re-login straight from Telegram.
+                        # Lead with the live app URL (robust — no OAuth-nonce TTL); append the direct
+                        # Fyers login URL as a convenience when it can be generated.
+                        base = os.getenv("PUBLIC_BASE_URL", "https://controlntrading.online")
+                        login_url = ""
+                        try:
+                            login_url = client.get_login_url() if hasattr(client, "get_login_url") else ""
+                        except Exception:
+                            login_url = ""
+                        msg = ("⚠️ <b>Fyers Disconnected</b>\n\n"
+                               "Auto-login failed — a manual re-login is required to resume live data "
+                               "&amp; trading.\n\n"
+                               f"👉 Open the app and reconnect:\n{base}/\n\n"
+                               "Then click <b>Connect Fyers</b> and log in.")
+                        if login_url:
+                            msg += (f"\n\nOr connect directly:\n{login_url}\n\n"
+                                    "After logging in, paste the <code>auth_code=</code> value into the app.")
+                        trigger_webhook_background(state_obj.webhook_url, msg, title="🔴 Fyers Re-login Needed")
                 except Exception as e:
                     pass
         except Exception as e:
