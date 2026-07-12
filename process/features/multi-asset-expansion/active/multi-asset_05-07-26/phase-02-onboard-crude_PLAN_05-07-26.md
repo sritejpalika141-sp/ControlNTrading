@@ -430,12 +430,39 @@ embedded in the Verification Evidence table).
 
 ---
 
+## Current Execution State (updated 12-07-26)
+
+Executed inline (hands-on, deploy-after-verify), not via the full RIPER-5 subagent ceremony.
+Commits on `main`, all live on VM (Sun, market closed, HTTP 200):
+
+- `6b17bf6` — Phase 1 asset registry (prereq)
+- `2c0ffe4` — **entry-gate bridging DONE**: NIFTY strike path routed through registry `strike_interval`
+  (byte-identical; entry gate now genuinely satisfied)
+- crude scaffold commit — Steps A / C / D / E scaffolded as **CODE DONE (not VERIFIED)**, all INERT
+  (no live NIFTY-path import): `asset_configs/crude_options.py` (CRUDE_OIL_OPTIONS registered),
+  `strategy_crude_params.py`, `strategy_crude_eia.py`, `strategy_crude_evening.py`,
+  `liquidity_guard.py`. 23 scaffold tests green; NIFTY proven unaffected.
+- `8f5d8ed` — corrected CURRENCY_OPTIONS placeholder prefix (unrelated to crude; currency DEFERRED
+  per user — prove crude first).
+
+Research banked: Fyers MCX crude symbol format `MCX:CRUDEOIL{YY}{MON}{STRIKE}{CE|PE}`, interval 50,
+confirmed from MCX_COM master. MCX segment confirmed active on the account (user).
+
+**NEXT GATE (blocks all remaining crude work): market-open MCX data probe.** Needs a fresh Fyers
+login during an MCX session → run a read-only crude quote → confirm data flow + resolve the real
+lot/qty column. THEN: wire crude into `execute_auto_trade`/`fyers_client` (Step B + order path,
+PAPER-only) → run the ≥5-trading-day paper-validation window (Step F, incl. a Wednesday for EIA) →
+Step G NIFTY regression → EVL. Provisional values (SL mult 1.75, liquidity OI 200/vol 100/spread 3%,
+EIA window 19:30-21:00 IST Wed) are marked in code and must be confirmed in the paper window.
+
 ## Resume and Execution Handoff
 
 - Selected plan file path:
   `process/features/multi-asset-expansion/active/multi-asset_05-07-26/phase-02-onboard-crude_PLAN_05-07-26.md`
-- Last completed step: not started (plan freshly written; awaiting Phase 1 completion + PVL)
-- Validate-contract status: pending
+- Last completed step: entry-gate bridging + crude paper-scaffold (Steps A/C/D/E CODE DONE, inert);
+  execute-wiring (Step B order path + F/G) BLOCKED on the market-open MCX data probe (user login)
+- Validate-contract status: pending (inline execution; PVL not run — full contract still required
+  before the live-money execute-wiring step)
 - Supporting context files loaded during planning: `trading-app/engine/strikes.py` (read in full),
   `trading-app/workers/auto_trader.py`, `trading-app/fyers_client.py`, `trading-app/state.py`,
   `trading-app/models.py` (grepped for relevant symbols — NIFTY hardcoding, lot-size lookup,
