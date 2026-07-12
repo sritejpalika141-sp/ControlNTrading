@@ -49,19 +49,51 @@ class NewsWorker:
         return headlines
 
     def _resolve_symbol(self, asset: str) -> str:
-        """Helper to resolve high conviction asset to a Fyers Symbol prefix."""
-        # E.g., GOLD -> MCX:GOLD, USDINR -> CDS:USDINR
+        """Helper to resolve high conviction asset to a Fyers Symbol prefix.
+        Whatever this returns is VALIDATED against a live quote before injection (see update_summary),
+        so a wrong guess is skipped, never pushed onto the WS feed."""
+        # Commodities -> MCX prefix (resolved to the current FUT contract downstream, then validated).
         mapping = {
             "CRUDEOIL": "MCX:CRUDEOIL",
             "GOLD": "MCX:GOLD",
             "SILVER": "MCX:SILVER",
-            "USDINR": "CDS:USDINR"
+            # USDINR (currency) intentionally omitted: currency trading is DEFERRED and its Fyers
+            # symbol is NSE:USDINR{YYMDD}{STRIKE}{CE|PE} (weekly), NOT CDS:...FUT — the old mapping
+            # produced dead symbols. Re-add with correct weekly-FUT resolution when currency is onboarded.
         }
         if asset in mapping:
             return mapping[asset]
         if asset and asset != "NONE":
             return f"NSE:{asset}-EQ"
         return ""
+
+    def _get_validation_client(self):
+        """Return one authenticated Fyers client for symbol validation (symbol validity is global,
+        so any authenticated user's client works). None if nobody is authenticated (e.g. token
+        expired) — in which case injection is skipped rather than pushing an unvalidated symbol."""
+        try:
+            from state import USER_STATES
+            from fyers_client import FyersClient
+            for u_id in list(USER_STATES.keys()):
+                try:
+                    c = FyersClient(user_id=u_id)
+                    if c.is_authenticated():
+                        return c
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def _is_quotable(self, client, symbol: str) -> bool:
+        """True only if the symbol returns a live last-price > 0 — the same gate nightly_learning uses."""
+        if client is None or not symbol:
+            return False
+        try:
+            q = client.get_quote(symbol)
+            return bool(q and q.get("lp", 0) > 0)
+        except Exception:
+            return False
 
     async def update_summary(self):
         try:
@@ -84,22 +116,31 @@ class NewsWorker:
             }
             logger.info(f"📰 AI Global Macro Summary Updated: EQ={self.last_summary['equities_trend']}, COM={self.last_summary['commodities_trend']}, FX={self.last_summary['currency_trend']}")
             
-            # Auto-Symbol Injection
+            # Auto-Symbol Injection (news-driven). Every candidate is VALIDATED with a live quote
+            # before it touches any user's watch / the WS feed — this closes the disconnect-storm
+            # vector where AI-hallucinated or wrong-expiry symbols hit Fyers and churned the feed (-300).
             high_conviction = result.get("high_conviction_asset", "NONE")
             if high_conviction and high_conviction != "NONE":
                 symbol_prefix = self._resolve_symbol(high_conviction)
                 if symbol_prefix:
                     if symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:"):
                         from engine.strikes import resolve_current_commodity_expiry
-                        # We need to resolve it to the exact futures symbol, e.g., MCX:CRUDEOIL24NOVFUT
+                        # Resolve to the exact current futures symbol, e.g. MCX:CRUDEOIL26JULFUT.
+                        # The guessed contract month may not exist (esp. gold/silver) — validation below
+                        # skips it cleanly rather than pushing a dead symbol to the feed.
                         exact_symbol = await resolve_current_commodity_expiry(symbol_prefix)
                     else:
                         exact_symbol = symbol_prefix
                     if exact_symbol:
-                        logger.info(f"🔥 AI selected {high_conviction} based on news trends. Injecting {exact_symbol} into user market watch!")
-                        for u_id, state in USER_STATES.items():
-                            if exact_symbol not in state.active_symbols:
-                                state.add_symbol(exact_symbol)
+                        val_client = self._get_validation_client()
+                        if not self._is_quotable(val_client, exact_symbol):
+                            logger.warning(f"⏭️ Skipped unquotable news-injection symbol: {exact_symbol} "
+                                           f"(from '{high_conviction}') — not added to watch")
+                        else:
+                            logger.info(f"🔥 AI selected {high_conviction} based on news trends. Injecting VALID {exact_symbol} into user market watch!")
+                            for u_id, state in USER_STATES.items():
+                                if exact_symbol not in state.active_symbols:
+                                    state.add_symbol(exact_symbol)
                                 
         except Exception as e:
             logger.error(f"Error updating global news summary: {e}")
