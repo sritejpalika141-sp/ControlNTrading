@@ -13,6 +13,8 @@ venv/
 
 # OS files
 .DS_Store
+._*
+**/._*
 
 # Secrets & local databases (Phase 1 Item G3 — never commit these going forward)
 .env
