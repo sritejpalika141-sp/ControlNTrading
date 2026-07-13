@@ -391,10 +391,21 @@ class TradingState:
             self.skipped_signals.append(sig_id)
             self.save()
 
-    def add_symbol(self, symbol):
+    def add_symbol(self, symbol, enable=False):
+        """Add a symbol to the watchlist. If enable=True, also mark it auto-trade-enabled
+        (ticks its checkbox) so the automation loop trades it — used by the news auto-injector
+        for stocks. Backward-compatible: enable defaults to False (watchlist-only)."""
         if not hasattr(self, 'active_symbols'): self.active_symbols = ["NSE:NIFTY50-INDEX"]
+        changed = False
         if symbol not in self.active_symbols:
             self.active_symbols.append(symbol)
+            changed = True
+        if enable:
+            if not hasattr(self, 'enabled_symbols'): self.enabled_symbols = ["NSE:NIFTY50-INDEX"]
+            if symbol not in self.enabled_symbols:
+                self.enabled_symbols.append(symbol)
+                changed = True
+        if changed:
             self.save()
 
     def remove_symbol(self, symbol):

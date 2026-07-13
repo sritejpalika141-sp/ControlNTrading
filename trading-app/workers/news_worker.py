@@ -123,7 +123,8 @@ class NewsWorker:
             if high_conviction and high_conviction != "NONE":
                 symbol_prefix = self._resolve_symbol(high_conviction)
                 if symbol_prefix:
-                    if symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:"):
+                    is_commodity = symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:")
+                    if is_commodity:
                         from engine.strikes import resolve_current_commodity_expiry
                         # Resolve to the exact current futures symbol, e.g. MCX:CRUDEOIL26JULFUT.
                         # The guessed contract month may not exist (esp. gold/silver) — validation below
@@ -137,10 +138,18 @@ class NewsWorker:
                             logger.warning(f"⏭️ Skipped unquotable news-injection symbol: {exact_symbol} "
                                            f"(from '{high_conviction}') — not added to watch")
                         else:
-                            logger.info(f"🔥 AI selected {high_conviction} based on news trends. Injecting VALID {exact_symbol} into user market watch!")
+                            # Auto-ENABLE stocks (equity options are the app's proven live path) so the
+                            # injected scrip is auto-trade-ready with no manual tick. Commodities are
+                            # added to the WATCHLIST ONLY (enable=False): the MCX order/strike/lot path
+                            # is not yet validated (Phase 2 crude is paper-first), so we never auto-trade
+                            # a commodity live through the NIFTY-tuned path.
+                            enable = not is_commodity
+                            mode = "auto-trade ENABLED" if enable else "watchlist only (commodity — not auto-traded yet)"
+                            logger.info(f"🔥 AI selected {high_conviction} based on news trends. "
+                                        f"Injecting VALID {exact_symbol} — {mode}!")
                             for u_id, state in USER_STATES.items():
-                                if exact_symbol not in state.active_symbols:
-                                    state.add_symbol(exact_symbol)
+                                if exact_symbol not in state.active_symbols or (enable and exact_symbol not in getattr(state, 'enabled_symbols', [])):
+                                    state.add_symbol(exact_symbol, enable=enable)
                                 
         except Exception as e:
             logger.error(f"Error updating global news summary: {e}")
