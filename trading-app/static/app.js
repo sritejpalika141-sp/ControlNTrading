@@ -3352,7 +3352,7 @@ function renderStrategies(agents) {
 
 async function approveStrategy(name) {
   try {
-    const res = await fetch(\`/api/learning/approve/\${name}\`, { method: 'POST' });
+    const res = await fetch(`/api/learning/approve/${name}`, { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       showToast('Strategy Approved!', 'success');
@@ -3367,7 +3367,7 @@ async function approveStrategy(name) {
 
 async function rejectStrategy(name) {
   try {
-    const res = await fetch(\`/api/learning/reject/\${name}\`, { method: 'POST' });
+    const res = await fetch(`/api/learning/reject/${name}`, { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       showToast('Strategy Rejected', 'info');
