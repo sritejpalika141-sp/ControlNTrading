@@ -12,6 +12,22 @@ metadata:
 
 **Severity: HIGH** — affects live trading (strategies read the contaminated LTP).
 
+## ✅ RESOLVED 13-07-26 (commit 0e2e127)
+
+**Root cause found:** a torn read of the Fyers SDK's shared message dict. `ws_feed._on_message`
+read `symbol` from `message`, THEN acquired `self._lock` (a GIL yield point), THEN read `ltp` from
+the SAME dict. The SDK invokes the callback from a background thread and reuses/mutates one message
+object, so a second tick mutated the dict between the two reads — crossing a symbol with another
+tick's price. Confirmed live: NIFTY's ~24232 landed on SBIN AND INDIAVIX simultaneously.
+
+**Fix:** snapshot the tick atomically at the top of `_on_message` (`msg = dict(message)`) before the
+lock / any GIL-yield, and read every field from `msg`. **Verified live (market hours): 0
+contaminations over ~3 min post-deploy vs 225 in ~1 min before.** Interim value-guard retained as a
+belt-and-suspenders backstop; a RAW[] diagnostic was added on its rejection path for future
+monitoring. The prior investigation notes below are kept for history.
+
+---
+
 ## Confirmed symptom (2026-07-06, market hours)
 Stock watchlist LTPs intermittently show ANOTHER symbol's price while their OHLC stays correct:
 - `NSE:RELIANCE-EQ` showed `lp=58416` (BANKNIFTY's price) while its O/H/L were ~1304/1319/1299.
