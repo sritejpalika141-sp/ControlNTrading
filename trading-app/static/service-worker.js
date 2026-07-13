@@ -1,4 +1,4 @@
-const CACHE_NAME = 'controln-trading-v6.2';
+const CACHE_NAME = 'controln-trading-v6.3';
 
 // Static assets to precache
 const PRECACHE_ASSETS = [
@@ -47,40 +47,16 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   const isApi = url.pathname.startsWith('/api/');
 
-  // D3: sensitive financial/account API paths must NEVER be written to or served from Cache
-  // Storage — cached responses persist on-disk on the client and could be read by anything with
-  // local device/devtools access, and stale data must never be served offline for these. These
-  // paths are network-only (no cache read, no cache write).
-  const SENSITIVE_API_PREFIXES = [
-    '/api/funds', '/api/positions', '/api/orders',
-    '/api/admin/', '/api/user/settings'
-  ];
-  const isSensitiveApi = isApi && SENSITIVE_API_PREFIXES.some(p => url.pathname.startsWith(p));
-
-  if (isSensitiveApi) {
-    // Network-only: bypass the cache entirely for sensitive paths.
+  if (isApi) {
+    // NETWORK-ONLY for ALL /api calls. A live trading app must never serve stale funds/positions/
+    // orders/signals — and, critically, caching /api/auth-status made the admin session appear
+    // logged-out after a real login (the browser served a cached "not-admin" response). No cache
+    // read and no cache write for any /api path, ever.
     event.respondWith(fetch(event.request));
     return;
   }
 
-  if (isApi) {
-    // Network First Strategy for (non-sensitive) API calls
-    event.respondWith(
-      fetch(event.request)
-        .then(networkResponse => {
-          if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => {
-          return caches.match(event.request);
-        })
-    );
-  } else {
+  {
     // Stale-While-Revalidate Strategy for static assets (instant load)
     event.respondWith(
       caches.match(event.request).then(cachedResponse => {
