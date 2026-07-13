@@ -939,6 +939,20 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             side = sig.get("side", "BUY")
             strategy_name = sig.get("strategy", "Strategy 2: 9:26 - 180 Buy")
 
+            # ── OPTIONS-BUY-ONLY ENFORCEMENT (user directive) ──
+            # Every auto-trade must BUY an OPTION (CE/PE) via Cover Order — never sell/write, and
+            # never a future/equity/index. Applies to ALL asset classes (index/stock/commodity/
+            # currency options all end CE/PE; FUT/-EQ/-INDEX are rejected). Reject off-policy orders
+            # rather than place them live.
+            _sym_u = (strike_symbol or "").upper()
+            if not (_sym_u.endswith("CE") or _sym_u.endswith("PE")):
+                logger.error(f"⛔ Options-buy-only guard: {strike_symbol} is not a CE/PE option — trade REJECTED.")
+                await broadcast_log(f"⛔ Rejected non-option order ({strike_symbol}) — options-buy-only policy.", "error")
+                return
+            if side != "BUY":
+                logger.warning(f"⚠️ Options-buy-only guard: forced side to BUY (signal said {side}) for {strike_symbol}.")
+                side = "BUY"
+
             logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Product: {product_type}")
             await broadcast_log(
                 f"🚀 {strategy_name}: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | Product: {product_type}",

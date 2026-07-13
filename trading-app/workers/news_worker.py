@@ -119,8 +119,14 @@ class NewsWorker:
             # Auto-Symbol Injection (news-driven). Every candidate is VALIDATED with a live quote
             # before it touches any user's watch / the WS feed — this closes the disconnect-storm
             # vector where AI-hallucinated or wrong-expiry symbols hit Fyers and churned the feed (-300).
+            # Do NOT auto-inject in the last part of the session (>= 15:00 IST). Injected scrips are
+            # purged at the 15:14 hard-exit; injecting after that would re-populate the watchlist
+            # right before/after close. Fresh picks resume next morning.
+            import datetime as _dt, pytz as _pytz
+            _now_ist = _dt.datetime.now(_pytz.timezone("Asia/Kolkata"))
+            _inject_ok = _now_ist.hour < 15
             high_conviction = result.get("high_conviction_asset", "NONE")
-            if high_conviction and high_conviction != "NONE":
+            if _inject_ok and high_conviction and high_conviction != "NONE":
                 symbol_prefix = self._resolve_symbol(high_conviction)
                 if symbol_prefix:
                     is_commodity = symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:")
@@ -149,7 +155,7 @@ class NewsWorker:
                                         f"Injecting VALID {exact_symbol} — {mode}!")
                             for u_id, state in USER_STATES.items():
                                 if exact_symbol not in state.active_symbols or (enable and exact_symbol not in getattr(state, 'enabled_symbols', [])):
-                                    state.add_symbol(exact_symbol, enable=enable)
+                                    state.add_symbol(exact_symbol, enable=enable, by_agent=True)
                                 
         except Exception as e:
             logger.error(f"Error updating global news summary: {e}")

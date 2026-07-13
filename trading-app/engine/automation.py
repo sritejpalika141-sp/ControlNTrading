@@ -77,6 +77,10 @@ class TradingState:
         self.trade_lots = 1
         self.stock_lots = 1
         self.enabled_symbols = ["NSE:NIFTY50-INDEX"]
+        # Symbols the news auto-injector added during the day (stocks / commodities / currency).
+        # These are purged automatically at end-of-day so the watchlist resets to the user's base
+        # symbols each night; the agent re-adds fresh picks the next session.
+        self.agent_added_symbols = []
         self.paper_trading = True
         self.paper_positions = []
         self.paper_orders = []
@@ -147,6 +151,7 @@ class TradingState:
                         self.skipped_signals = data.get("skipped_signals", [])
                         self.active_symbols = data.get("active_symbols", ["NSE:NIFTY50-INDEX"])
                         self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
+                        self.agent_added_symbols = data.get("agent_added_symbols", [])
                         self.hard_exit_triggered = data.get("hard_exit_triggered", False)
                         self.last_reset_date = saved_date
                         self.eod_report_sent_date = data.get("eod_report_sent_date", "")
@@ -234,6 +239,7 @@ class TradingState:
             "skipped_signals": self.skipped_signals,
             "active_symbols": self.active_symbols,
             "enabled_symbols": getattr(self, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
+            "agent_added_symbols": getattr(self, "agent_added_symbols", []),
             "hard_exit_triggered": self.hard_exit_triggered,
             "active_strategies": self.active_strategies,
             "strat_orb_triggered": self.strat_orb_triggered,
@@ -391,10 +397,11 @@ class TradingState:
             self.skipped_signals.append(sig_id)
             self.save()
 
-    def add_symbol(self, symbol, enable=False):
+    def add_symbol(self, symbol, enable=False, by_agent=False):
         """Add a symbol to the watchlist. If enable=True, also mark it auto-trade-enabled
         (ticks its checkbox) so the automation loop trades it — used by the news auto-injector
-        for stocks. Backward-compatible: enable defaults to False (watchlist-only)."""
+        for stocks. If by_agent=True, tag it for automatic end-of-day purge. Backward-compatible:
+        enable/by_agent default to False (watchlist-only, permanent)."""
         if not hasattr(self, 'active_symbols'): self.active_symbols = ["NSE:NIFTY50-INDEX"]
         changed = False
         if symbol not in self.active_symbols:
@@ -405,8 +412,30 @@ class TradingState:
             if symbol not in self.enabled_symbols:
                 self.enabled_symbols.append(symbol)
                 changed = True
+        if by_agent:
+            if not hasattr(self, 'agent_added_symbols'): self.agent_added_symbols = []
+            if symbol not in self.agent_added_symbols:
+                self.agent_added_symbols.append(symbol)
+                changed = True
         if changed:
             self.save()
+
+    def purge_agent_symbols(self):
+        """End-of-day cleanup: remove every symbol the news agent auto-added today from the
+        watchlist AND the auto-trade-enabled list, and clear the tag list. User-added symbols and
+        the base NIFTY symbol are untouched. Called once after the session closes; the agent
+        re-adds fresh picks the next session. Returns the list purged (for logging)."""
+        agent_syms = list(getattr(self, "agent_added_symbols", []) or [])
+        if not agent_syms:
+            return []
+        for sym in agent_syms:
+            if sym in getattr(self, "active_symbols", []):
+                self.active_symbols.remove(sym)
+            if sym in getattr(self, "enabled_symbols", []):
+                self.enabled_symbols.remove(sym)
+        self.agent_added_symbols = []
+        self.save()
+        return agent_syms
 
     def remove_symbol(self, symbol):
         if not hasattr(self, 'active_symbols'): self.active_symbols = ["NSE:NIFTY50-INDEX"]

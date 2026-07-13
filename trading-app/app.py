@@ -1530,6 +1530,23 @@ async def daily_hard_exit_scheduler():
             await broadcast_log("🛑 3:14 PM Hard Exit complete. Automation disabled for all users.", "error")
             print("✅ 3:14 PM hard exit completed for all users", flush=True)
 
+            # EOD watchlist cleanup for ALL users (pure local op — no Fyers auth needed, so it runs
+            # even for users whose token expired). Removes the scrips the news agent auto-added today
+            # (stocks/commodities/currency) from both the watchlist and the enabled list, so the
+            # watchlist resets to each user's base symbols overnight. The agent re-adds fresh picks
+            # the next session.
+            try:
+                for _uid, _st in list(USER_STATES.items()):
+                    try:
+                        purged = _st.purge_agent_symbols()
+                        if purged:
+                            print(f"🧹 EOD: purged {len(purged)} agent-added scrip(s) for user {_uid}: {purged}", flush=True)
+                            await broadcast_log(f"🧹 Cleared {len(purged)} auto-added scrip(s) at end of day.", "info", user_id=_uid)
+                    except Exception as _pe:
+                        print(f"⚠️ EOD purge error for user {_uid}: {_pe}", flush=True)
+            except Exception as _e:
+                print(f"⚠️ EOD purge loop error: {_e}", flush=True)
+
         except asyncio.CancelledError:
             raise
         except Exception as e:
