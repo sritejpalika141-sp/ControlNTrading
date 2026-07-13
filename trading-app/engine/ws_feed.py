@@ -339,23 +339,31 @@ class FyersWSFeed:
     def _on_message(self, message):
         """Called for every tick update. This is the HOT PATH — keep it fast."""
         try:
-            # DEBUG LOG
-            if getattr(self, '_msg_count', 0) < 5:
-                print(f"📡 WS MESSAGE RECEIVED: {message}", flush=True)
-                self._msg_count = getattr(self, '_msg_count', 0) + 1
-
             if not isinstance(message, dict):
                 return
-            
-            symbol = message.get("symbol", "")
+
+            # ROOT-CAUSE FIX for live tick cross-contamination: snapshot the tick into a private dict
+            # ATOMICALLY, before anything that can yield the GIL (e.g. acquiring self._lock). The Fyers
+            # SDK invokes this callback from a background thread and can reuse/mutate one message dict;
+            # previously `symbol` was read, then the lock acquired (a GIL yield point), then `ltp` read
+            # from the SAME dict — so another tick could mutate it in between, landing e.g. NIFTY's
+            # ~24135 on NSE:SBIN-EQ. A one-shot copy captures a consistent per-tick view.
+            msg = dict(message)
+
+            # DEBUG LOG
+            if getattr(self, '_msg_count', 0) < 5:
+                print(f"📡 WS MESSAGE RECEIVED: {msg}", flush=True)
+                self._msg_count = getattr(self, '_msg_count', 0) + 1
+
+            symbol = msg.get("symbol", "")
             if not symbol:
                 return
-            
+
             # Extract tick data
             with self._lock:
                 current = self._ticks.get(symbol, {})
-                
-                ltp = message.get("ltp")
+
+                ltp = msg.get("ltp")
                 if not ltp:
                     ltp = current.get("ltp", 0)
 
@@ -372,19 +380,25 @@ class FyersWSFeed:
                 if _hi > 0 and _lo > 0:
                     _ref_hi, _ref_lo = _hi, _lo
                 else:
-                    _anchor = current.get("ltp", 0) or message.get("prev_close_price", 0)
+                    _anchor = current.get("ltp", 0) or msg.get("prev_close_price", 0)
                     _ref_hi = _ref_lo = _anchor
                 if ltp and _ref_hi > 0 and _ref_lo > 0 and (ltp > _ref_hi * 3 or ltp < _ref_lo / 3):
+                    # DIAGNOSTIC: dump the raw tick fields so we can tell whether the WHOLE tick is
+                    # another symbol's data mislabeled (prev_close/high/low also off) or just the ltp
+                    # is crossed. Only fires on the already-rare rejection — no hot-path cost.
                     print(f"⚠️ TICK-CONTAMINATION guard: rejected ltp={ltp} for {symbol} "
-                          f"(expected band {_ref_lo}-{_ref_hi}); keeping last good ltp.", flush=True)
+                          f"(expected band {_ref_lo}-{_ref_hi}); keeping last good ltp. "
+                          f"RAW[pc={msg.get('prev_close_price')} h={msg.get('high_price')} "
+                          f"l={msg.get('low_price')} o={msg.get('open_price')} "
+                          f"v={msg.get('vol_traded_today')}]", flush=True)
                     ltp = current.get("ltp", 0)
 
-                prev_close = message.get("prev_close_price", current.get("prev_close_price", 0))
-                
+                prev_close = msg.get("prev_close_price", current.get("prev_close_price", 0))
+
                 # In LiteMode, we only get ltp. Recalculate ch and chp if we have prev_close.
-                ch = message.get("ch", current.get("ch", 0))
-                chp = message.get("chp", current.get("chp", 0))
-                if prev_close > 0 and "ch" not in message:
+                ch = msg.get("ch", current.get("ch", 0))
+                chp = msg.get("chp", current.get("chp", 0))
+                if prev_close > 0 and "ch" not in msg:
                     ch = round(ltp - prev_close, 2)
                     chp = round((ch / prev_close) * 100, 2)
 
@@ -392,15 +406,15 @@ class FyersWSFeed:
                     "ltp": ltp,
                     "ch": ch,
                     "chp": chp,
-                    "open_price": message.get("open_price", current.get("open_price", 0)),
-                    "high_price": message.get("high_price", current.get("high_price", 0)),
-                    "low_price": message.get("low_price", current.get("low_price", 0)),
+                    "open_price": msg.get("open_price", current.get("open_price", 0)),
+                    "high_price": msg.get("high_price", current.get("high_price", 0)),
+                    "low_price": msg.get("low_price", current.get("low_price", 0)),
                     "prev_close_price": prev_close,
-                    "vol_traded_today": message.get("vol_traded_today", current.get("vol_traded_today", 0)),
-                    "bid": message.get("bid", current.get("bid", 0)),
-                    "ask": message.get("ask", current.get("ask", 0)),
-                    "last_traded_qty": message.get("last_traded_qty", current.get("last_traded_qty", 0)),
-                    "last_traded_time": message.get("last_traded_time", current.get("last_traded_time", 0)),
+                    "vol_traded_today": msg.get("vol_traded_today", current.get("vol_traded_today", 0)),
+                    "bid": msg.get("bid", current.get("bid", 0)),
+                    "ask": msg.get("ask", current.get("ask", 0)),
+                    "last_traded_qty": msg.get("last_traded_qty", current.get("last_traded_qty", 0)),
+                    "last_traded_time": msg.get("last_traded_time", current.get("last_traded_time", 0)),
                     "_update_time": time.time(),
                     "_symbol": symbol
                 }
