@@ -19,6 +19,11 @@ from dotenv import load_dotenv
 from pathlib import Path
 from .encryption import get_secret
 
+# Throttle for the "AI fully unavailable" alert (full-chain failure). Module-level so it is shared
+# across the many AIEngine() instances created around the app. Routine single-provider 429s are NOT
+# alerted (they auto-recover via fall-through); only a full-chain failure is, at most once / 15 min.
+_LAST_CHAIN_FAIL_ALERT = 0.0
+
 
 
 
@@ -75,15 +80,10 @@ class AIProvider:
             
         self.fail_count += 1
         self.cooldown_until = time.time() + cooldown_seconds
-        
-        try:
-            import os
-            from engine.notifier import trigger_webhook_background
-            wh_url = os.environ.get("TELEGRAM_WEBHOOK")
-            if wh_url:
-                trigger_webhook_background(wh_url, f"⚠️ <b>AI Rate Limit</b>\nProvider <b>{self.name}</b> hit a rate limit (429).\nRotating to next key/cooldown: {cooldown_seconds}s.", title="AI Alert")
-        except Exception:
-            pass
+        # NOTE: no Telegram alert on a routine 429. A single-provider rate limit is auto-recovered
+        # by the fall-through to the next provider (~1s), so alerting here was pure noise (one msg
+        # every ~30 min). Real problems are still alerted: on_quota_exhausted (permanent disable) and
+        # a full-chain failure in _call_chain (every provider failed).
     
     def on_quota_exhausted(self):
         """Permanent disable for this session (e.g., insufficient_quota)."""
@@ -517,7 +517,26 @@ class AIEngine:
                 result = await caller(prompt)
                 if result:
                     return result
-        
+
+        # Full-chain failure: every provider failed for this request. THIS is alert-worthy (AI is
+        # effectively down) — but only for the real chain, and throttled to once / 15 min so a
+        # sustained outage doesn't spam.
+        if not force_provider:
+            global _LAST_CHAIN_FAIL_ALERT
+            if time.time() - _LAST_CHAIN_FAIL_ALERT > 900:
+                _LAST_CHAIN_FAIL_ALERT = time.time()
+                try:
+                    from engine.notifier import trigger_webhook_background
+                    wh = os.environ.get("TELEGRAM_WEBHOOK")
+                    if wh:
+                        trigger_webhook_background(
+                            wh,
+                            "❌ <b>AI Unavailable</b>\nEvery AI provider failed for the last request "
+                            "(all rate-limited or down). Signals may be delayed until one recovers.",
+                            title="AI Alert",
+                        )
+                except Exception:
+                    pass
         return None
 
     # ==================== PUBLIC API ====================
