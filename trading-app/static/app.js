@@ -261,6 +261,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { applyTheme(); } catch(e) { console.error('Error applying theme:', e); }
   try { loadVisibilityPrefs(); } catch(e) { console.error('Error loading visibility preferences:', e); }
   try { fetchScripts(); } catch(e) { console.error('Error fetching scripts:', e); }
+  // Auto-refresh the watchlist so server-side auto-injected scrips (news_worker adds symbols to the
+  // watchlist on its own) show up without a manual page reload. The WebSocket updates prices but
+  // never re-fetches the LIST of symbols, so without this poll a newly injected scrip is invisible.
+  setInterval(() => { try { fetchScripts(); } catch(e) {} }, 45000);
   try { fetchSignalHistory(); } catch(e) { console.error('Error fetching signal history:', e); }
   try { fetchStrategies(); } catch(e) { console.error('Error fetching strategies:', e); }
   try { initCharts(); } catch(e) { console.error('Error initializing charts:', e); }
