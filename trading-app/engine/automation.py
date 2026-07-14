@@ -87,6 +87,10 @@ class TradingState:
         self.paper_orders = []
         self.paper_funds = {"availableBalance": 1000000.0, "realizedPnl": 0.0}
         self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper"]
+        # SEPARATE commodity strategy family (MCX only) — AI-tuned for commodity behaviour (higher
+        # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
+        # independent of the equity strategies above, so tuning one never affects the other.
+        self.commodity_strategies = ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"]
         # Strategy 2 Specific State (9:26 - 9:35 - 180 Buy)
         self.strat_926_expired = False
         self.strat_926_strikes = None
@@ -176,6 +180,7 @@ class TradingState:
                         self.paper_orders = data.get("paper_orders", [])
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
                         self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper"])
+                        self.commodity_strategies = data.get("commodity_strategies", ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"])
                         self.strat_orb_triggered = data.get("strat_orb_triggered", False)
                         self.strat_orb_expired = data.get("strat_orb_expired", False)
                         self.strat_926_triggered = data.get("strat_926_triggered", False)
@@ -243,6 +248,7 @@ class TradingState:
             "agent_added_symbols": getattr(self, "agent_added_symbols", []),
             "hard_exit_triggered": self.hard_exit_triggered,
             "active_strategies": self.active_strategies,
+            "commodity_strategies": getattr(self, "commodity_strategies", []),
             "strat_orb_triggered": self.strat_orb_triggered,
             "strat_orb_expired": self.strat_orb_expired,
             "strat_926_triggered": self.strat_926_triggered,
@@ -420,6 +426,12 @@ class TradingState:
                 changed = True
         if changed:
             self.save()
+            try:
+                from engine.notifier import trigger_webhook_background
+                if hasattr(self, 'webhook_url') and self.webhook_url:
+                    trigger_webhook_background(self.webhook_url, f"✅ New Scrip Added to Market Watch: {symbol}", title="Sritej Trading Alert")
+            except Exception as e:
+                pass
 
     def purge_agent_symbols(self, only=None):
         """End-of-day cleanup: remove agent-auto-added scrips from the watchlist AND the enabled
@@ -685,7 +697,12 @@ class TradingState:
         # "which regime/trend combos actually win". market_regime is a module-level global in state.py.
         try:
             import state as _state_mod
-            entry_regime = getattr(_state_mod, "market_regime", "NEUTRAL")
+            if symbol.upper().startswith("MCX:"):
+                entry_regime = getattr(_state_mod, "mcx_regime", "NEUTRAL")
+            elif "USDINR" in symbol.upper() or symbol.upper().startswith("CDS:"):
+                entry_regime = getattr(_state_mod, "currency_regime", "NEUTRAL")
+            else:
+                entry_regime = getattr(_state_mod, "market_regime", "NEUTRAL")
         except Exception:
             entry_regime = "NEUTRAL"
         self.active_auto_trades.append({
@@ -775,6 +792,7 @@ class TradingState:
             "enabled_symbols": getattr(self, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
             "paper_trading": self.paper_trading,
             "active_strategies": self.active_strategies,
+            "commodity_strategies": getattr(self, "commodity_strategies", []),
             "use_ai_oracle": getattr(self, "use_ai_oracle", False),
             "ai_daily_bias": getattr(self, "ai_daily_bias", "")
         }
@@ -809,6 +827,8 @@ class TradingState:
             self.paper_trading = bool(config["paper_trading"])
         if "active_strategies" in config:
             self.active_strategies = list(config["active_strategies"])
+        if "commodity_strategies" in config:
+            self.commodity_strategies = list(config["commodity_strategies"])
         if "use_ai_oracle" in config:
             self.use_ai_oracle = bool(config["use_ai_oracle"])
         if "ai_daily_bias" in config:
