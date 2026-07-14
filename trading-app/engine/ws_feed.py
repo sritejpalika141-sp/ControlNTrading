@@ -47,6 +47,11 @@ class FyersWSFeed:
         self._client = None  # Broker reference
         self._started = False
         self._lock = threading.Lock()
+        # Permanent cross-contamination guard: per-symbol trusted reference price (EMA of accepted
+        # ticks) + consecutive-reject streak (to re-anchor on a genuine large move vs intermittent
+        # contamination). See _on_message for the guard logic.
+        self._ref_price: Dict[str, float] = {}
+        self._reject_streak: Dict[str, int] = {}
         self._ws_thread = None
         self._redundancy_thread = None
         self._redundancy_running = False
@@ -367,31 +372,44 @@ class FyersWSFeed:
                 if not ltp:
                     ltp = current.get("ltp", 0)
 
-                # Data-sanity guard for the live tick cross-contamination bug where a tick's price
-                # lands on the wrong symbol's key — e.g. BANKNIFTY's ~58000 showing up on RELIANCE
-                # trading ~1300. Reject an ltp grossly outside this symbol's expected band. The band
-                # prefers the established day range, but falls back to the last good ltp / prev-close
-                # so the guard is ALSO active from the 2nd tick of a fresh subscription (the exact
-                # window — right after enabling a symbol — where contamination slipped through before
-                # a day range had formed). The 3x / 0.33x bounds are far beyond any real intraday or
-                # circuit move, so legitimate moves always pass.
-                _hi = current.get("high_price", 0)
-                _lo = current.get("low_price", 0)
-                if _hi > 0 and _lo > 0:
-                    _ref_hi, _ref_lo = _hi, _lo
-                else:
-                    _anchor = current.get("ltp", 0) or msg.get("prev_close_price", 0)
-                    _ref_hi = _ref_lo = _anchor
-                if ltp and _ref_hi > 0 and _ref_lo > 0 and (ltp > _ref_hi * 3 or ltp < _ref_lo / 3):
-                    # DIAGNOSTIC: dump the raw tick fields so we can tell whether the WHOLE tick is
-                    # another symbol's data mislabeled (prev_close/high/low also off) or just the ltp
-                    # is crossed. Only fires on the already-rare rejection — no hot-path cost.
-                    print(f"⚠️ TICK-CONTAMINATION guard: rejected ltp={ltp} for {symbol} "
-                          f"(expected band {_ref_lo}-{_ref_hi}); keeping last good ltp. "
-                          f"RAW[pc={msg.get('prev_close_price')} h={msg.get('high_price')} "
-                          f"l={msg.get('low_price')} o={msg.get('open_price')} "
-                          f"v={msg.get('vol_traded_today')}]", flush=True)
-                    ltp = current.get("ltp", 0)
+                # ── PERMANENT tick cross-contamination guard ──
+                # LiteMode ticks (ltp+symbol only) intermittently arrive with ANOTHER symbol's price
+                # (Fyers-side mislabeling — e.g. NIFTY's ~24000 on SBIN ~1042, BANKNIFTY's ~58000 on
+                # HDFCBANK ~810). We keep a per-symbol reference (EMA of ACCEPTED ticks) and reject a
+                # tick that is (a) grossly off its own reference, OR (b) a near-exact match for a
+                # DIFFERENT subscribed symbol's reference — the tell-tale signature of a crossed price.
+                # Rejected -> keep last good. A sustained streak of rejects = a GENUINE large move, so
+                # we re-anchor to it (contamination is intermittent, so real ticks reset the streak).
+                if ltp and ltp > 0:
+                    ref = self._ref_price.get(symbol, 0.0)
+                    if ref > 0:
+                        dev = abs(ltp - ref) / ref
+                        contaminated = dev > 0.40  # 40% band: far beyond any real intraday/circuit move
+                        if not contaminated and dev > 0.12:
+                            # borderline — is this ltp actually another symbol's price? (stock-on-stock)
+                            for _osym, _oref in self._ref_price.items():
+                                if _osym != symbol and _oref > 0 and abs(ltp - _oref) / _oref < 0.03:
+                                    contaminated = True
+                                    break
+                        if contaminated:
+                            self._reject_streak[symbol] = self._reject_streak.get(symbol, 0) + 1
+                            if self._reject_streak[symbol] >= 30:
+                                # 30 straight rejects with no accepted tick in between => genuine move.
+                                self._ref_price[symbol] = ltp
+                                self._reject_streak[symbol] = 0
+                                print(f"🔄 TICK-GUARD: re-anchored {symbol} to {ltp} after sustained move.", flush=True)
+                            else:
+                                print(f"⚠️ TICK-CONTAMINATION: rejected ltp={ltp} for {symbol} "
+                                      f"(ref={ref:.2f}, dev={dev*100:.0f}%); keeping last good.", flush=True)
+                                ltp = current.get("ltp", 0) or ref
+                        else:
+                            # accepted — track the reference (EMA) and clear the reject streak
+                            self._ref_price[symbol] = ref * 0.9 + ltp * 0.1
+                            self._reject_streak[symbol] = 0
+                    else:
+                        # first good tick for this symbol -> bootstrap the reference (self-heals within
+                        # 30 ticks via the re-anchor path if this first value was itself contaminated)
+                        self._ref_price[symbol] = ltp
 
                 prev_close = msg.get("prev_close_price", current.get("prev_close_price", 0))
 
