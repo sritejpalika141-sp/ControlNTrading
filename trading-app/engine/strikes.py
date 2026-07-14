@@ -156,7 +156,7 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
         
     return results
 
-async def resolve_current_commodity_expiry(prefix: str) -> str:
+def resolve_current_commodity_expiry(prefix: str) -> str:
     """
     Resolve a high-level prefix (MCX:CRUDEOIL) into a tradable Fyers Future symbol 
     for the current month (e.g. MCX:CRUDEOIL24NOVFUT).

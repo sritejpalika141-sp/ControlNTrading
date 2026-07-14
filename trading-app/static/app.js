@@ -406,20 +406,25 @@ async function fetchAutomationStatus() {
       statusText.textContent = data.enabled ? 'AUTO ACTIVE' : 'AUTO OFF';
     }
 
-    // Update Regime Badge
-    const regimeBadge = document.getElementById('aiRegimeBadge');
-    if (regimeBadge && data.market_regime) {
-      regimeBadge.style.display = 'inline-block';
-      regimeBadge.textContent = '🧠 Regime: ' + data.market_regime;
-      regimeBadge.title = data.regime_reason || '';
-      if (data.market_regime.includes('TREND')) {
-        regimeBadge.style.color = 'var(--success)';
-      } else if (data.market_regime.includes('CHOPPY')) {
-        regimeBadge.style.color = 'var(--warning)';
-      } else {
-        regimeBadge.style.color = 'var(--text-primary)';
-      }
-    }
+    // Update the 3 Regime Badges (NSE / MCX / Currency) — same regime logic per market.
+    const _regimeColor = (r) => (r || '').includes('TREND') ? 'var(--success)'
+                             : (r || '').includes('CHOPPY') ? 'var(--warning)'
+                             : (r || '').includes('CLOSED') ? 'var(--text-muted)'
+                             : 'var(--text-primary)';
+    const _setRegime = (id, emoji, label, r, reason) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const val = r || '--';
+      el.style.display = 'inline-block';
+      el.textContent = `${emoji} ${label}: ${val}`;
+      el.title = reason || '';
+      el.style.color = _regimeColor(val);
+    };
+    const _rg = data.regimes || {};
+    // Backward-compatible: fall back to flat market_regime for NSE if regimes{} absent.
+    _setRegime('aiRegimeBadge', '🧠', 'NSE', (_rg.nse && _rg.nse.regime) || data.market_regime, (_rg.nse && _rg.nse.reason) || data.regime_reason);
+    if (_rg.mcx) _setRegime('mcxRegimeBadge', '🛢️', 'MCX', _rg.mcx.regime, _rg.mcx.reason);
+    if (_rg.currency) _setRegime('fxRegimeBadge', '💱', 'FX', _rg.currency.regime, _rg.currency.reason);
   } catch (e) {}
 }
 
@@ -516,6 +521,7 @@ async function fetchTradingConfig() {
       cfgProfitTarget: data.daily_profit_target,
       cfgLots: data.trade_lots,
       cfgStockLots: data.stock_lots,
+      cfgMcxLots: data.mcx_lots,
       cfgWebhookUrl: data.webhook_url
     };
     for (const [id, val] of Object.entries(fields)) {
@@ -578,6 +584,7 @@ async function saveTradingConfig() {
     daily_profit_target: parseFloat(document.getElementById('cfgProfitTarget').value) || 2500,
     trade_lots: parseInt(document.getElementById('cfgLots').value, 10) || 1,
     stock_lots: parseInt(document.getElementById('cfgStockLots').value, 10) || 1,
+    mcx_lots: parseInt(document.getElementById('cfgMcxLots').value, 10) || 1,
     webhook_url: document.getElementById('cfgWebhookUrl') ? document.getElementById('cfgWebhookUrl').value.trim() : "",
     paper_trading: document.getElementById('cfgPaperTrading').checked,
     use_ai_oracle: document.getElementById('cfgUseAIOracle') ? document.getElementById('cfgUseAIOracle').checked : false,

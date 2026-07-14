@@ -135,7 +135,7 @@ class NewsWorker:
                         # Resolve to the exact current futures symbol, e.g. MCX:CRUDEOIL26JULFUT.
                         # The guessed contract month may not exist (esp. gold/silver) — validation below
                         # skips it cleanly rather than pushing a dead symbol to the feed.
-                        exact_symbol = await resolve_current_commodity_expiry(symbol_prefix)
+                        exact_symbol = resolve_current_commodity_expiry(symbol_prefix)
                     else:
                         exact_symbol = symbol_prefix
                     if exact_symbol:

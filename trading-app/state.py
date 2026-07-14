@@ -43,9 +43,16 @@ ai_trend_cache: dict = {}  # Cache for AI predictions to prevent rate-limits
 _analysis_store: dict = {}
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 
-# Global Market Regime state evaluated by the Regime Worker
+# Global Market Regime state evaluated by the Regime Worker.
+# market_regime/regime_reason = NSE/Indian equity regime (kept for backward compat). The Regime
+# Worker also fills per-market regimes below using the SAME 5m-candle logic (currency uses the
+# news-derived trend since its FUT feed is deferred).
 market_regime: str = "NEUTRAL"
 regime_reason: str = "Awaiting first 5-minute candle."
+mcx_regime: str = "NEUTRAL"
+mcx_regime_reason: str = "Awaiting MCX session."
+currency_regime: str = "NEUTRAL"
+currency_regime_reason: str = "Awaiting currency session."
 
 # Token readiness gate: blocks market-dependent operations until the first
 # Fyers token refresh completes on startup.  Set by fyers_token_refresh_scheduler

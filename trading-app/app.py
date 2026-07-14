@@ -332,6 +332,11 @@ async def get_state(request: Request):
         "market_phase": "OPEN" if state.is_market_open() else "CLOSED",
         "market_regime": state.market_regime,
         "regime_reason": state.regime_reason,
+        "regimes": {
+            "nse": {"regime": state.market_regime, "reason": state.regime_reason},
+            "mcx": {"regime": getattr(state, "mcx_regime", "NEUTRAL"), "reason": getattr(state, "mcx_regime_reason", "")},
+            "currency": {"regime": getattr(state, "currency_regime", "NEUTRAL"), "reason": getattr(state, "currency_regime_reason", "")},
+        },
         "config": user_state.get_trading_config(),
         "market": {},
         "signals": [],
@@ -2605,7 +2610,12 @@ async def get_automation(request: Request):
         "max_trades": user_state.max_trades_per_day,
         "max_loss": user_state.max_loss_per_day,
         "market_regime": state.market_regime,
-        "regime_reason": state.regime_reason
+        "regime_reason": state.regime_reason,
+        "regimes": {
+            "nse": {"regime": state.market_regime, "reason": state.regime_reason},
+            "mcx": {"regime": getattr(state, "mcx_regime", "NEUTRAL"), "reason": getattr(state, "mcx_regime_reason", "")},
+            "currency": {"regime": getattr(state, "currency_regime", "NEUTRAL"), "reason": getattr(state, "currency_regime_reason", "")},
+        }
     }
 
 @app.post("/api/automation/toggle")

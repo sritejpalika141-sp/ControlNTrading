@@ -87,7 +87,9 @@
           <span class="auto-status ms-2" id="autoStatusText">AUTO</span>
         </div>
         <div class="trade-stats me-2">
-          <span id="aiRegimeBadge" class="badge" style="background: rgba(184, 41, 255, 0.15); color: var(--purple); border: 1px solid rgba(184, 41, 255, 0.3); margin-right: 8px; font-weight: 600; font-size: 11px; padding: 4px 8px; display: inline-block; border-radius: 6px; box-shadow: 0 0 10px rgba(184, 41, 255, 0.1);">🧠 Regime: --</span>
+          <span id="aiRegimeBadge" class="badge" style="background: rgba(184, 41, 255, 0.15); color: var(--purple); border: 1px solid rgba(184, 41, 255, 0.3); margin-right: 6px; font-weight: 600; font-size: 11px; padding: 4px 8px; display: inline-block; border-radius: 6px; box-shadow: 0 0 10px rgba(184, 41, 255, 0.1);" title="Indian equity (NIFTY) regime">🧠 NSE: --</span>
+          <span id="mcxRegimeBadge" class="badge" style="background: rgba(255, 165, 0, 0.15); color: var(--orange, #ffa500); border: 1px solid rgba(255, 165, 0, 0.3); margin-right: 6px; font-weight: 600; font-size: 11px; padding: 4px 8px; display: inline-block; border-radius: 6px;" title="MCX commodities (crude) regime">🛢️ MCX: --</span>
+          <span id="fxRegimeBadge" class="badge" style="background: rgba(0, 210, 255, 0.12); color: var(--cyan); border: 1px solid rgba(0, 210, 255, 0.25); margin-right: 8px; font-weight: 600; font-size: 11px; padding: 4px 8px; display: inline-block; border-radius: 6px;" title="Currency (USD/INR) regime">💱 FX: --</span>
           <span id="aiDailyBiasBadge" class="badge" style="background: rgba(0, 210, 255, 0.15); color: var(--cyan); border: 1px solid rgba(0, 210, 255, 0.3); margin-right: 8px; font-weight: 600; font-size: 11px; padding: 4px 8px; display: none; border-radius: 6px; box-shadow: 0 0 10px rgba(0, 210, 255, 0.1);">🔮 Bias: --</span>
           <span id="autoTrades">0/2</span>
           <span class="divider px-1">·</span>
@@ -474,6 +476,10 @@
         <div class="settings-field">
           <label for="cfgStockLots">Stock Option Lots</label>
           <input type="number" id="cfgStockLots" min="1" max="100" step="1" value="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMcxLots">MCX Commodity Lots</label>
+          <input type="number" id="cfgMcxLots" min="1" max="100" step="1" value="1">
         </div>
         <div class="settings-field">
           <label for="cfgPaperTrading">Paper Trading (Simulated)</label>
@@ -864,7 +870,7 @@
 
   <!-- Bootstrap 5 JS Bundle -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/app.js?v=v8-watchlist-poll"></script>
+  <script src="/static/app.js?v=v9-3regime"></script>
   
   <!-- Service Worker DISABLED: a prior cached worker served stale HTML/JS/API responses, leaving
        clients unable to see fresh login/admin/Fyers state. We no longer register a SW, and we
