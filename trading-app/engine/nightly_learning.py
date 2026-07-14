@@ -253,8 +253,49 @@ async def run_nightly_learning(state, user_id: int):
             except Exception as e:
                 logger.error(f"❌ AI Critique failed for {strat}: {e}")
                 
+        # ── Commodity strategy family AI-tuning (the "advised by AI" evolution) ──
+        # Review today's COMMODITY paper trades and let the AI refine state.commodity_params
+        # (sl / target / breakout-buffer multipliers), separate from the equity tuning above. Only
+        # runs when commodity trades exist — until the paper signal-watch produces crude trades there
+        # is nothing to tune, so it cleanly no-ops.
+        try:
+            closed = getattr(state, "closed_trades_today", []) or []
+            com_trades = [t for t in closed if str(t.get("symbol", "")).startswith(("MCX:", "CDS:"))]
+            if com_trades:
+                cur_params = getattr(state, "commodity_params", {})
+                wins = sum(1 for t in com_trades if t.get("result") == "profit" or (t.get("pnl", 0) or 0) > 0)
+                wr = round(wins / len(com_trades) * 100, 1)
+                ai = AIEngine()
+                com_prompt = f"""
+                You are a Quantitative Commodity (MCX) options-trading AI.
+                Today the commodity strategy family took {len(com_trades)} paper trades with a {wr}% win rate.
+                Current commodity parameters: {json.dumps(cur_params)}.
+                Crude/commodity options move ~2-4% intraday (vs index <1%). Suggest refined multipliers to
+                improve tomorrow's win rate. Return ONLY JSON like
+                {{"sl_multiplier": 1.8, "target_multiplier": 2.0, "breakout_buffer_mult": 1.6}}.
+                Keep each value between 1.0 and 3.0.
+                """
+                resp = await ai._call_chain(com_prompt)
+                if resp:
+                    si, ei = resp.find('{'), resp.rfind('}')
+                    if si != -1 and ei != -1:
+                        new_p = json.loads(resp[si:ei + 1])
+                        clean = {}
+                        for k in ("sl_multiplier", "target_multiplier", "breakout_buffer_mult"):
+                            v = new_p.get(k)
+                            if isinstance(v, (int, float)) and 1.0 <= v <= 3.0:
+                                clean[k] = round(float(v), 2)
+                        if clean:
+                            state.commodity_params = {**cur_params, **clean}
+                            state.save()
+                            logger.info(f"🛢️ Commodity params AI-tuned ({wr}% WR over {len(com_trades)} trades): {state.commodity_params}")
+            else:
+                logger.info("🛢️ No commodity paper trades today — commodity params unchanged.")
+        except Exception as e:
+            logger.error(f"❌ Commodity params tuning failed: {e}")
+
         logger.info("✅ Nightly Learning Complete. Agents are ready for tomorrow.")
-        
+
     except Exception as e:
         logger.error(f"❌ Nightly Learning Error: {e}")
 

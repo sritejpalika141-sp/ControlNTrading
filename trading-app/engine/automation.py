@@ -91,6 +91,10 @@ class TradingState:
         # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
         # independent of the equity strategies above, so tuning one never affects the other.
         self.commodity_strategies = ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"]
+        # AI-tunable commodity risk/entry knobs (start from crude defaults; nightly learning refines
+        # these from commodity paper-trade performance — the "advised by AI" evolution). Applied to
+        # commodity trades only, so equity risk sizing is never affected.
+        self.commodity_params = {"sl_multiplier": 1.75, "target_multiplier": 1.75, "breakout_buffer_mult": 1.5}
         # Strategy 2 Specific State (9:26 - 9:35 - 180 Buy)
         self.strat_926_expired = False
         self.strat_926_strikes = None
@@ -181,6 +185,7 @@ class TradingState:
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
                         self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper"])
                         self.commodity_strategies = data.get("commodity_strategies", ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"])
+                        self.commodity_params = data.get("commodity_params", {"sl_multiplier": 1.75, "target_multiplier": 1.75, "breakout_buffer_mult": 1.5})
                         self.strat_orb_triggered = data.get("strat_orb_triggered", False)
                         self.strat_orb_expired = data.get("strat_orb_expired", False)
                         self.strat_926_triggered = data.get("strat_926_triggered", False)
@@ -249,6 +254,7 @@ class TradingState:
             "hard_exit_triggered": self.hard_exit_triggered,
             "active_strategies": self.active_strategies,
             "commodity_strategies": getattr(self, "commodity_strategies", []),
+            "commodity_params": getattr(self, "commodity_params", {}),
             "strat_orb_triggered": self.strat_orb_triggered,
             "strat_orb_expired": self.strat_orb_expired,
             "strat_926_triggered": self.strat_926_triggered,
@@ -793,6 +799,7 @@ class TradingState:
             "paper_trading": self.paper_trading,
             "active_strategies": self.active_strategies,
             "commodity_strategies": getattr(self, "commodity_strategies", []),
+            "commodity_params": getattr(self, "commodity_params", {}),
             "use_ai_oracle": getattr(self, "use_ai_oracle", False),
             "ai_daily_bias": getattr(self, "ai_daily_bias", "")
         }
@@ -829,6 +836,8 @@ class TradingState:
             self.active_strategies = list(config["active_strategies"])
         if "commodity_strategies" in config:
             self.commodity_strategies = list(config["commodity_strategies"])
+        if "commodity_params" in config and isinstance(config["commodity_params"], dict):
+            self.commodity_params = {**getattr(self, "commodity_params", {}), **config["commodity_params"]}
         if "use_ai_oracle" in config:
             self.use_ai_oracle = bool(config["use_ai_oracle"])
         if "ai_daily_bias" in config:
