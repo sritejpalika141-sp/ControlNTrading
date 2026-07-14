@@ -556,10 +556,21 @@ async function fetchTradingConfig() {
       if (selector && Array.isArray(allStrategies)) {
         selector.innerHTML = '';
         const activeStrats = data.active_strategies || [];
-        
+
+        // ── Equity / Index family (NIFTY / BankNifty / Sensex / stocks) ──
+        selector.innerHTML += `<div style="font-weight:700;color:var(--purple);margin:2px 0 4px;font-size:12px;">📈 Equity / Index Strategies</div>`;
         allStrategies.forEach(strat => {
           const isChecked = activeStrats.includes(strat) ? 'checked' : '';
           selector.innerHTML += `<label class="vis-label"><input type="checkbox" name="active_strategies" value="${strat}" ${isChecked}> ${strat}</label>`;
+        });
+
+        // ── Commodity family (MCX only, separate & AI-tuned, paper-first) ──
+        const commodityStrats = ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"];
+        const activeCom = data.commodity_strategies || [];
+        selector.innerHTML += `<div style="font-weight:700;color:var(--orange,#ffa500);margin:12px 0 4px;font-size:12px;">🛢️ Commodity Strategies <span style="font-weight:400;opacity:0.7;">(MCX — paper-first)</span></div>`;
+        commodityStrats.forEach(strat => {
+          const isChecked = activeCom.includes(strat) ? 'checked' : '';
+          selector.innerHTML += `<label class="vis-label"><input type="checkbox" name="commodity_strategies" value="${strat}" ${isChecked}> ${strat}</label>`;
         });
       }
     } catch (e) {
@@ -588,7 +599,8 @@ async function saveTradingConfig() {
     webhook_url: document.getElementById('cfgWebhookUrl') ? document.getElementById('cfgWebhookUrl').value.trim() : "",
     paper_trading: document.getElementById('cfgPaperTrading').checked,
     use_ai_oracle: document.getElementById('cfgUseAIOracle') ? document.getElementById('cfgUseAIOracle').checked : false,
-    active_strategies: Array.from(document.querySelectorAll('input[name="active_strategies"]:checked')).map(cb => cb.value)
+    active_strategies: Array.from(document.querySelectorAll('input[name="active_strategies"]:checked')).map(cb => cb.value),
+    commodity_strategies: Array.from(document.querySelectorAll('input[name="commodity_strategies"]:checked')).map(cb => cb.value)
   };
 
   btn.disabled = true;

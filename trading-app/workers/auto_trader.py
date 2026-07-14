@@ -46,6 +46,29 @@ from datetime import timedelta
 # snapshot, short enough that stale entries do not linger indefinitely.
 POSITION_ABSENCE_GRACE_SECONDS = 30
 
+# Maps an equity strategy name -> its commodity-family equivalent. A strategy with NO mapping here
+# does NOT run on commodity (MCX/CDS) symbols at all. This is how the equity and commodity strategy
+# families are kept separate: equity symbols gate on state.active_strategies, MCX symbols gate on
+# state.commodity_strategies via this map.
+_COMMODITY_STRAT_MAP = {
+    "Strategy 3: 5-Minute ORB": "Commodity: 5-Minute ORB",
+    "Strategy 9: 9-EMA Momentum Scalper": "Commodity: 9-EMA Momentum",
+    "Strategy 7: Swing-Pivot Breakout": "Commodity: Swing-Pivot Breakout",
+}
+
+
+def _strat_enabled_for(state, equity_strat_name: str, symbol: str) -> bool:
+    """Asset-class-aware strategy gate. For an equity/index/stock symbol, the (equity) strategy is
+    enabled iff it's in state.active_strategies. For an MCX/CDS commodity symbol, the strategy runs
+    iff it has a commodity-family equivalent that's enabled in state.commodity_strategies — so the
+    two families are fully independent and never affect each other."""
+    is_commodity = symbol.startswith("MCX:") or symbol.startswith("CDS:")
+    if is_commodity:
+        com_name = _COMMODITY_STRAT_MAP.get(equity_strat_name)
+        return bool(com_name) and com_name in getattr(state, "commodity_strategies", [])
+    return equity_strat_name in getattr(state, "active_strategies", [])
+
+
 def is_symbol_expiry_today(sym: str) -> bool:
     """Checks if the given Fyers option symbol expires today."""
     now = datetime.now(IST)
@@ -930,7 +953,14 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
 
             sl_points = sig.get("sl_points", 20.0)
             # Calculate qty explicitly if not provided
-            default_qty = getattr(state, "trade_lots", 1) * get_lot_size(strike_symbol)
+            if strike_symbol and strike_symbol.startswith("MCX:"):
+                lots = getattr(state, "mcx_lots", 1)
+            elif strike_symbol and ("-EQ" in strike_symbol):
+                lots = getattr(state, "stock_lots", 1)
+            else:
+                lots = getattr(state, "trade_lots", 1)
+            
+            default_qty = lots * get_lot_size(strike_symbol)
             qty = sig.get("qty", default_qty)
 
             # Determine product and targets based on strategy
@@ -1361,12 +1391,16 @@ async def automation_loop():
 
     async def eval_strat_3(client, state, u_id):
         try:
-            if "Strategy 3: 5-Minute ORB" in state.active_strategies and not getattr(state, "strat_orb_triggered", False):
+            if not getattr(state, "strat_orb_triggered", False):
                 from datetime import datetime
                 from state import IST
                 now = datetime.now(IST).strftime("%H:%M:%S")
                 if "09:20:00" <= now <= "09:30:00":
                     for symbol in state.active_symbols:
+                        # Asset-aware gate: equity ORB (active_strategies) vs commodity ORB
+                        # (commodity_strategies). Skips symbols whose family/strategy is disabled.
+                        if not _strat_enabled_for(state, "Strategy 3: 5-Minute ORB", symbol):
+                            continue
                         analysis = await get_analysis(symbol, client=client)
                         if analysis and "candles_5m" in analysis:
                             candles_5m = analysis["candles_5m"]
@@ -1401,7 +1435,7 @@ async def automation_loop():
             candles_1m = analysis.get("candles_1m", [])
             
             async def run_strat_4():
-                if "Strategy 4: Wisdom-Aligned Pullback" in state.active_strategies:
+                if _strat_enabled_for(state, "Strategy 4: Wisdom-Aligned Pullback", symbol):
                     c1h = analysis.get("candles_1h", [])
                     cd = analysis.get("candles_daily", [])
                     if candles_5m and c1h and cd:
@@ -1410,14 +1444,14 @@ async def automation_loop():
                             await risk_orchestrator.propose_trade("Strategy 4", symbol, sig, {"trend": sig.get("metadata", {}).get("trend", "NEUTRAL")}, client, state)
                             
             async def run_strat_6():
-                if "Strategy 6: Gap Fill Reversal" in state.active_strategies and spot and candles_5m:
+                if _strat_enabled_for(state, "Strategy 6: Gap Fill Reversal", symbol) and spot and candles_5m:
                     from engine.strategy_gap import evaluate_gap_fill_strategy
                     has_sig, sig = await evaluate_gap_fill_strategy(spot, candles_5m, analysis, state.active_symbols, client, state)
                     if has_sig and state.can_trade("Strategy 6", signal_type=sig['type'])[0]:
                         await risk_orchestrator.propose_trade("Strategy 6", symbol, sig, {"trend": "NEUTRAL"}, client, state)
 
             async def run_strat_7():
-                if "Strategy 7: Swing-Pivot Breakout" in state.active_strategies and spot and candles_5m:
+                if _strat_enabled_for(state, "Strategy 7: Swing-Pivot Breakout", symbol) and spot and candles_5m:
                     # Pending logic
                     pending = getattr(state, "strat_7_pending_order", None)
                     if pending:
@@ -1445,14 +1479,14 @@ async def automation_loop():
                             state.save()
 
             async def run_strat_8():
-                if "Strategy 8: Smart Money Concepts" in state.active_strategies and spot and candles_1m:
+                if _strat_enabled_for(state, "Strategy 8: Smart Money Concepts", symbol) and spot and candles_1m:
                     from engine.strategy_8 import evaluate_strategy_8
                     has_sig, sig = await evaluate_strategy_8(symbol, spot, candles_1m, candles_5m, analysis, client, state)
                     if has_sig and state.can_trade("Strategy 8", signal_type=sig.get("type", "CALL"))[0]:
                         await risk_orchestrator.propose_trade("Strategy 8", symbol, sig, {"trend": "NEUTRAL"}, client, state)
                         
             async def run_strat_9():
-                if "Strategy 9: 9-EMA Momentum Scalper" in state.active_strategies and spot and candles_5m:
+                if _strat_enabled_for(state, "Strategy 9: 9-EMA Momentum Scalper", symbol) and spot and candles_5m:
                     from engine.strategy_9 import evaluate_strategy_9
                     has_sig, sig = await evaluate_strategy_9(symbol, spot, candles_5m, analysis, client, state)
                     if has_sig and state.can_trade("Strategy 9", signal_type=sig.get("type", "CALL"))[0]:
