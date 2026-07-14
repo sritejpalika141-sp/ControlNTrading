@@ -1226,7 +1226,13 @@ class FyersClient:
         try:
             import app
             state = app.get_user_state(self.user_id)
-            if state.paper_trading:
+            # COMMODITY-PAPER SAFETY GATE: MCX commodities and CDS currency are FORCED to paper
+            # regardless of the user's live/paper setting, until the commodity strategy family is
+            # validated. This prevents any accidental LIVE commodity order while we tune paper-first.
+            _force_paper_commodity = symbol.startswith("MCX:") or symbol.startswith("CDS:")
+            if _force_paper_commodity and not state.paper_trading:
+                print(f"🧪 [COMMODITY PAPER GATE] {symbol} forced to PAPER (commodity live-trade not yet enabled).", flush=True)
+            if state.paper_trading or _force_paper_commodity:
                 # 1. Fetch live price
                 quote = self.get_quote(symbol)
                 ltp = quote.get("lp", 0) if quote else limit_price
