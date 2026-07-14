@@ -337,6 +337,8 @@ async def trailing_monitor():
                     if traded_qty <= 0:
                         if "NIFTY" in sym or "BANKNIFTY" in sym:
                             traded_qty = state.trade_lots * get_lot_size(sym)
+                        elif sym.startswith("MCX:") or sym.startswith("CDS:"):
+                            traded_qty = getattr(state, "mcx_lots", 1) * get_lot_size(sym)
                         else:
                             traded_qty = getattr(state, "stock_lots", 1) * get_lot_size(sym)
                     # Prefer the real open position qty from broker if available
@@ -526,6 +528,8 @@ async def trailing_monitor():
                                 if qty <= 0:
                                     if "NIFTY" in sym or "BANKNIFTY" in sym:
                                         qty = state.trade_lots * get_lot_size(sym)
+                                    elif sym.startswith("MCX:") or sym.startswith("CDS:"):
+                                        qty = getattr(state, "mcx_lots", 1) * get_lot_size(sym)
                                     else:
                                         qty = getattr(state, "stock_lots", 1) * get_lot_size(sym)
                                 if pos:
@@ -1226,6 +1230,8 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         lot_size = get_lot_size(strike_symbol)
         if "NIFTY" in strike_symbol or "BANKNIFTY" in strike_symbol:
             lots = state.trade_lots
+        elif strike_symbol.startswith("MCX:") or strike_symbol.startswith("CDS:"):
+            lots = getattr(state, "mcx_lots", 1)
         else:
             lots = getattr(state, "stock_lots", 1)
         qty = lots * lot_size
@@ -1489,7 +1495,19 @@ async def automation_loop():
 
     while True:
         try:
-            if not is_market_open():
+            any_market_open = is_market_open()
+            if not any_market_open:
+                # Check if any user has active MCX/CDS symbols that are still open
+                for u_id in list(USER_CONTEXTS.keys()):
+                    state = get_user_state(u_id)
+                    for symbol in state.active_symbols:
+                        if symbol.startswith("MCX:") or symbol.startswith("CDS:"):
+                            if is_market_open("COMMODITY_OPTIONS"):
+                                any_market_open = True
+                                break
+                    if any_market_open: break
+
+            if not any_market_open:
                 from datetime import datetime
                 from state import IST
                 now = datetime.now(IST)

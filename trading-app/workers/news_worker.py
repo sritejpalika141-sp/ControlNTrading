@@ -144,13 +144,8 @@ class NewsWorker:
                             logger.warning(f"⏭️ Skipped unquotable news-injection symbol: {exact_symbol} "
                                            f"(from '{high_conviction}') — not added to watch")
                         else:
-                            # Auto-ENABLE stocks (equity options are the app's proven live path) so the
-                            # injected scrip is auto-trade-ready with no manual tick. Commodities are
-                            # added to the WATCHLIST ONLY (enable=False): the MCX order/strike/lot path
-                            # is not yet validated (Phase 2 crude is paper-first), so we never auto-trade
-                            # a commodity live through the NIFTY-tuned path.
-                            enable = not is_commodity
-                            mode = "auto-trade ENABLED" if enable else "watchlist only (commodity — not auto-traded yet)"
+                            enable = True
+                            mode = "auto-trade ENABLED"
                             logger.info(f"🔥 AI selected {high_conviction} based on news trends. "
                                         f"Injecting VALID {exact_symbol} — {mode}!")
                             for u_id, state in USER_STATES.items():

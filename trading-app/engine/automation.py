@@ -76,6 +76,7 @@ class TradingState:
         self.trail_sl_step = 5.0
         self.trade_lots = 1
         self.stock_lots = 1
+        self.mcx_lots = 1
         self.enabled_symbols = ["NSE:NIFTY50-INDEX"]
         # Symbols the news auto-injector added during the day (stocks / commodities / currency).
         # These are purged automatically at end-of-day so the watchlist resets to the user's base
@@ -420,22 +421,35 @@ class TradingState:
         if changed:
             self.save()
 
-    def purge_agent_symbols(self):
-        """End-of-day cleanup: remove every symbol the news agent auto-added today from the
-        watchlist AND the auto-trade-enabled list, and clear the tag list. User-added symbols and
-        the base NIFTY symbol are untouched. Called once after the session closes; the agent
-        re-adds fresh picks the next session. Returns the list purged (for logging)."""
+    def purge_agent_symbols(self, only=None):
+        """End-of-day cleanup: remove agent-auto-added scrips from the watchlist AND the enabled
+        list, and un-tag them. User-added symbols and the base NIFTY symbol are untouched.
+
+        only=None purges all agent scrips; only='equity' purges only NSE (non-MCX/CDS) scrips;
+        only='mcx' purges only MCX/CDS scrips. This lets the equity session (cleaned at ~15:30) and
+        the MCX session (cleaned at ~23:45, since crude trades till 23:30) each clear their own
+        agent scrips without touching the other market's still-open scrips. Returns the list purged."""
         agent_syms = list(getattr(self, "agent_added_symbols", []) or [])
         if not agent_syms:
             return []
+        purged = []
         for sym in agent_syms:
+            is_mcx = sym.startswith("MCX:") or sym.startswith("CDS:")
+            if only == "equity" and is_mcx:
+                continue
+            if only == "mcx" and not is_mcx:
+                continue
+            purged.append(sym)
+        for sym in purged:
             if sym in getattr(self, "active_symbols", []):
                 self.active_symbols.remove(sym)
             if sym in getattr(self, "enabled_symbols", []):
                 self.enabled_symbols.remove(sym)
-        self.agent_added_symbols = []
-        self.save()
-        return agent_syms
+            if sym in self.agent_added_symbols:
+                self.agent_added_symbols.remove(sym)
+        if purged:
+            self.save()
+        return purged
 
     def remove_symbol(self, symbol):
         if not hasattr(self, 'active_symbols'): self.active_symbols = ["NSE:NIFTY50-INDEX"]
@@ -757,6 +771,7 @@ class TradingState:
             "trail_sl_step": self.trail_sl_step,
             "trade_lots": self.trade_lots,
             "stock_lots": getattr(self, "stock_lots", 1),
+            "mcx_lots": getattr(self, "mcx_lots", 1),
             "enabled_symbols": getattr(self, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
             "paper_trading": self.paper_trading,
             "active_strategies": self.active_strategies,
@@ -786,6 +801,8 @@ class TradingState:
             self.trade_lots = max(1, int(config["trade_lots"]))
         if "stock_lots" in config:
             self.stock_lots = max(1, int(config["stock_lots"]))
+        if "mcx_lots" in config:
+            self.mcx_lots = max(1, int(config["mcx_lots"]))
         if "enabled_symbols" in config:
             self.enabled_symbols = config["enabled_symbols"]
         if "paper_trading" in config:

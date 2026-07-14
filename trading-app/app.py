@@ -144,6 +144,7 @@ async def lifespan(app):
     asyncio.create_task(fyers_token_refresh_scheduler())
     # daily_restart_scheduler REMOVED — it relied on broken Vagator V2 TOTP auto-login
     asyncio.create_task(daily_hard_exit_scheduler())
+    asyncio.create_task(daily_watchlist_cleanup_scheduler())
     asyncio.create_task(hourly_status_scheduler())
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
@@ -1530,27 +1531,55 @@ async def daily_hard_exit_scheduler():
             await broadcast_log("🛑 3:14 PM Hard Exit complete. Automation disabled for all users.", "error")
             print("✅ 3:14 PM hard exit completed for all users", flush=True)
 
-            # EOD watchlist cleanup for ALL users (pure local op — no Fyers auth needed, so it runs
-            # even for users whose token expired). Removes the scrips the news agent auto-added today
-            # (stocks/commodities/currency) from both the watchlist and the enabled list, so the
-            # watchlist resets to each user's base symbols overnight. The agent re-adds fresh picks
-            # the next session.
-            try:
-                for _uid, _st in list(USER_STATES.items()):
-                    try:
-                        purged = _st.purge_agent_symbols()
-                        if purged:
-                            print(f"🧹 EOD: purged {len(purged)} agent-added scrip(s) for user {_uid}: {purged}", flush=True)
-                            await broadcast_log(f"🧹 Cleared {len(purged)} auto-added scrip(s) at end of day.", "info", user_id=_uid)
-                    except Exception as _pe:
-                        print(f"⚠️ EOD purge error for user {_uid}: {_pe}", flush=True)
-            except Exception as _e:
-                print(f"⚠️ EOD purge loop error: {_e}", flush=True)
+            # NOTE: agent-added watchlist cleanup is handled SESSION-AWARELY by
+            # daily_watchlist_cleanup_scheduler (equity scrips at 15:30, MCX scrips at 23:45) so we
+            # don't remove MCX scrips here at 15:14 while crude still trades till 23:30.
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             print(f"❌ daily_hard_exit_scheduler error: {e}. Retrying in 5 min.", flush=True)
+            await asyncio.sleep(300)
+
+
+async def daily_watchlist_cleanup_scheduler():
+    """Session-aware cleanup of AGENT-added scrips (the news auto-injector's picks):
+      - Equity/NSE agent scrips removed at 15:30 IST (after the equity session closes).
+      - MCX/CDS agent scrips removed at 23:45 IST (after commodities close ~23:30) — so we don't
+        wipe crude/commodity scrips at 15:14 while they're still trading.
+    User-added symbols and the base NIFTY symbol are NEVER touched (purge is agent-only). The agent
+    re-adds fresh picks the next session.
+    """
+    await asyncio.sleep(10)
+    while True:
+        try:
+            now = datetime.now(IST)
+            t_eq = now.replace(hour=15, minute=30, second=0, microsecond=0)
+            if now >= t_eq:
+                t_eq += timedelta(days=1)
+            t_mcx = now.replace(hour=23, minute=45, second=0, microsecond=0)
+            if now >= t_mcx:
+                t_mcx += timedelta(days=1)
+            next_target = min(t_eq, t_mcx)
+            is_eq = next_target == t_eq
+            wait_seconds = (next_target - now).total_seconds()
+            print(f"🧹 Watchlist cleanup scheduled at {next_target.isoformat()} ({'Equity' if is_eq else 'MCX'})", flush=True)
+            await asyncio.sleep(wait_seconds)
+
+            only = "equity" if is_eq else "mcx"
+            for u_id, user_state in list(USER_STATES.items()):
+                try:
+                    purged = user_state.purge_agent_symbols(only=only)
+                    if purged:
+                        print(f"🧹 {only} cleanup: purged agent scrips for user {u_id}: {purged}", flush=True)
+                        await broadcast_log(f"🧹 Cleared {len(purged)} auto-added {only} scrip(s) at session close.", "info", user_id=u_id)
+                except Exception as _pe:
+                    print(f"⚠️ Watchlist cleanup error for user {u_id}: {_pe}", flush=True)
+            print(f"✅ Watchlist cleanup completed for {'Equity' if is_eq else 'MCX'} session.", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"❌ daily_watchlist_cleanup_scheduler error: {e}. Retrying in 5 min.", flush=True)
             await asyncio.sleep(300)
 
 
