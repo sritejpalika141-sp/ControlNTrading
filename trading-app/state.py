@@ -166,14 +166,21 @@ def get_lot_size(symbol: str) -> int:
             if val:
                 return val
 
-    # 3. Try extracting base symbol from option format (e.g., NSE:RELIANCE2670731300CE → RELIANCE)
+    # 3. Try extracting base symbol from option format (e.g., NSE:RELIANCE2670731300CE → RELIANCE,
+    #    NSE:USDINR26717101CE → USDINR, MCX:CRUDEOIL26JUL7700CE → CRUDEOIL). Covers NSE equity/currency
+    #    AND MCX commodity options.
     import re
-    m = re.match(r"NSE:([A-Z]+)\d", s)
+    m = re.match(r"(?:NSE|MCX|CDS):([A-Z]+)\d", s)
     if m:
         base = m.group(1)
         val = _lot_sizes_dict.get(base)
         if val:
             return val
+        # MCX commodity + currency options: Fyers takes the order qty in LOTS (qty=1 == 1 lot), so
+        # the correct per-lot multiplier is 1 when the master has no explicit entry — NOT a noisy
+        # "unknown" default. (NSE equity options are handled by the -EQ branch below.)
+        if s.startswith("MCX:") or s.startswith("CDS:") or any(fx in s for fx in ("USDINR", "EURINR", "GBPINR", "JPYINR")):
+            return 1
 
     # 4. Equity stocks have lot size 1
     if "-EQ" in s:
