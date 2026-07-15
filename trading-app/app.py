@@ -755,20 +755,29 @@ async def add_script(request: Request, data: Dict):
     if not symbol: return {"success": False, "message": "Symbol required"}
     
     # Auto-format for common shorthand
-    # 1. If no prefix, add NSE:
+    # 1. If no prefix, check if it's a known commodity
     if ":" not in symbol:
-        symbol = f"NSE:{symbol}"
+        commodities = ["CRUDEOIL", "GOLD", "SILVER", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM", "LEAD", "MENTHAOIL"]
+        if any(c in symbol for c in commodities):
+            symbol = f"MCX:{symbol}"
+        else:
+            symbol = f"NSE:{symbol}"
     
+    # Auto-resolve commodity active futures
+    if symbol.startswith("MCX:") and not any(char.isdigit() for char in symbol):
+        from engine.strikes import resolve_current_commodity_expiry
+        symbol = resolve_current_commodity_expiry(symbol)
+            
     # 2. If no suffix, check if it's a known index or option
     if "-" not in symbol:
         indices = ["NIFTY50", "NIFTYBANK", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX", "NIFTYNXT50"]
         is_index = any(idx in symbol for idx in indices)
-        # Options usually have long numeric strings like NIFTY26505...
-        is_option = len(symbol) > 12 and any(char.isdigit() for char in symbol)
+        # Options/Futures usually have long numeric strings like NIFTY26505... or CRUDEOIL24NOVFUT
+        is_option_or_future = len(symbol) > 12 and any(char.isdigit() for char in symbol)
         
         if is_index:
             symbol = f"{symbol}-INDEX"
-        elif not is_option:
+        elif not is_option_or_future and not symbol.startswith("MCX:") and not symbol.startswith("CDS:"):
             symbol = f"{symbol}-EQ"
     
     # Special case: SBI -> SBIN
@@ -778,7 +787,7 @@ async def add_script(request: Request, data: Dict):
 
     client = await get_current_client(request)
     state = get_user_state(client.user_id)
-    state.add_symbol(symbol)
+    state.add_symbol(symbol, enable=True)
     return {"success": True, "scripts": state.active_symbols, "formatted": symbol}
 
 @app.get("/api/scripts")
@@ -1556,6 +1565,24 @@ async def daily_watchlist_cleanup_scheduler():
     re-adds fresh picks the next session.
     """
     await asyncio.sleep(10)
+
+    # STARTUP CATCH-UP: if we booted AFTER a session's cleanup time today, run that purge once now
+    # (idempotent — purge_agent_symbols no-ops when nothing is tagged). This closes the gap where a
+    # restart landing near 15:30 / 23:45 would otherwise re-arm for the NEXT day and skip today's.
+    try:
+        _now = datetime.now(IST)
+        for _sess, _only, _h, _m in (("Equity", "equity", 15, 30), ("MCX", "mcx", 23, 45)):
+            if _now >= _now.replace(hour=_h, minute=_m, second=0, microsecond=0):
+                for _uid, _st in list(USER_STATES.items()):
+                    try:
+                        _purged = _st.purge_agent_symbols(only=_only)
+                        if _purged:
+                            print(f"🧹 STARTUP catch-up ({_only}) purged agent scrips for user {_uid}: {_purged}", flush=True)
+                    except Exception as _pe:
+                        print(f"⚠️ Startup cleanup catch-up error for user {_uid}: {_pe}", flush=True)
+    except Exception as _e:
+        print(f"⚠️ Startup cleanup catch-up error: {_e}", flush=True)
+
     while True:
         try:
             now = datetime.now(IST)
@@ -2342,8 +2369,13 @@ async def place_order(request: Request, order: OrderRequest):
         #  wire the guard to state.market_regime — chosen over option (b) permanent block, because
         #  it both restores manual trading (currently broken via the dead cache) and hardens it.]
         import state as _state_mod
-        regime = (_state_mod.market_regime or "").upper()
         sym_u = order.symbol.upper()
+        if sym_u.startswith("MCX:"):
+            regime = getattr(_state_mod, "mcx_regime", "NEUTRAL").upper()
+        elif "USDINR" in sym_u or sym_u.startswith("CDS:"):
+            regime = getattr(_state_mod, "currency_regime", "NEUTRAL").upper()
+        else:
+            regime = (_state_mod.market_regime or "").upper()
 
         if regime not in ("TRENDING_UP", "TRENDING_DOWN"):
             return {"success": False, "message": f"⛔ Manual trade blocked: market regime is '{regime or 'UNKNOWN'}' — no confirmed tradeable trend (Zero-Trading lockout active)."}

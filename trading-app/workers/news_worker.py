@@ -52,17 +52,27 @@ class NewsWorker:
         """Helper to resolve high conviction asset to a Fyers Symbol prefix.
         Whatever this returns is VALIDATED against a live quote before injection (see update_summary),
         so a wrong guess is skipped, never pushed onto the WS feed."""
+        a = (asset or "").upper().replace(" ", "").replace("-", "")
         # Commodities -> MCX prefix (resolved to the current FUT contract downstream, then validated).
         mapping = {
-            "CRUDEOIL": "MCX:CRUDEOIL",
-            "GOLD": "MCX:GOLD",
-            "SILVER": "MCX:SILVER",
+            "CRUDEOIL": "MCX:CRUDEOIL", "CRUDE": "MCX:CRUDEOIL",
+            "GOLD": "MCX:GOLD", "SILVER": "MCX:SILVER",
+            "NATURALGAS": "MCX:NATURALGAS", "NATGAS": "MCX:NATURALGAS",
+            "COPPER": "MCX:COPPER", "ZINC": "MCX:ZINC", "ALUMINIUM": "MCX:ALUMINIUM",
+            "LEAD": "MCX:LEAD", "NICKEL": "MCX:NICKEL", "COTTON": "MCX:COTTON",
             # USDINR (currency) intentionally omitted: currency trading is DEFERRED and its Fyers
             # symbol is NSE:USDINR{YYMDD}{STRIKE}{CE|PE} (weekly), NOT CDS:...FUT — the old mapping
             # produced dead symbols. Re-add with correct weekly-FUT resolution when currency is onboarded.
         }
-        if asset in mapping:
-            return mapping[asset]
+        if a in mapping:
+            return mapping[a]
+        # Safety net: any residual commodity keyword MUST route to MCX, never NSE:<name>-EQ (that
+        # produced the bad NSE:CRUDEOIL-EQ). A commodity is never a valid NSE equity symbol.
+        for _kw, _mcx in (("CRUDE", "MCX:CRUDEOIL"), ("GOLD", "MCX:GOLD"), ("SILVER", "MCX:SILVER"),
+                          ("NATURALGAS", "MCX:NATURALGAS"), ("NATGAS", "MCX:NATURALGAS"),
+                          ("COPPER", "MCX:COPPER"), ("ZINC", "MCX:ZINC")):
+            if _kw in a:
+                return _mcx
         if asset and asset != "NONE":
             return f"NSE:{asset}-EQ"
         return ""
