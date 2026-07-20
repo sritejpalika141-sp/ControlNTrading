@@ -1087,6 +1087,11 @@ function connectWebSocket() {
         // Refresh the Market Watch table
         renderScriptsList(data.spots);
         break;
+      case 'scripts_update':
+        activeScripts = data.scripts || [];
+        if (data.enabled) enabledScripts = data.enabled || [];
+        renderScriptsList();
+        break;
     }
   };
 

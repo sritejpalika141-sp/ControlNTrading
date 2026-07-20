@@ -254,7 +254,12 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
         option_risk_pts = 50.0
 
     lot_size = get_dynamic_lot_size(strike_symbol)
-    lots = getattr(state, "trade_lots", 1) if is_index else getattr(state, "stock_lots", 1)
+    if is_index:
+        lots = getattr(state, "trade_lots", 1)
+    elif symbol.startswith("MCX:") or symbol.startswith("CDS:"):
+        lots = getattr(state, "mcx_lots", 1)
+    else:
+        lots = getattr(state, "stock_lots", 1)
     qty = lots * lot_size
 
     target_1 = option_ltp + option_risk_pts

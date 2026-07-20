@@ -11,6 +11,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(APP_DIR)
 
 from engine.notifier import trigger_webhook_background
+from engine.encryption import get_secret  # vault-first secret lookup (falls back to env)
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(APP_DIR, ".env"))
@@ -31,13 +32,7 @@ def get_webhook_url():
 GITHUB_SEARCH_API = "https://api.github.com/search/repositories"
 GITHUB_CONTENTS_API = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 
-QUERIES = [
-    "NSE algorithmic trading options buying strategy python",
-    "Nifty options buying strategy python",
-    "BankNifty options buying python",
-    "MCX commodities options buying strategy python",
-    "Currency options buying trading python"
-]
+# QUERIES list removed; dynamically generated via AI now.
 
 async def search_github(query: str):
     headers = {"Accept": "application/vnd.github.v3+json"}
@@ -199,10 +194,54 @@ async def optimize_strategy_code(repo_name, strategy_code, backtest_report):
         
     return None
 
+async def generate_search_queries():
+    print("🧠 [Strategy Researcher] Generating AI search queries for GitHub...")
+    prompt = """
+    You are an AI tasked with generating 5 search queries for GitHub. 
+    The goal is to find Python algorithmic trading strategies suited for Indian Markets (NSE, Nifty, BankNifty) and MCX Commodities (Crude Oil, Gold).
+    The repositories should ideally be options buying strategies or general algo trading bots in Python.
+    
+    IMPORTANT: Make the queries simple keyword combinations (e.g. "NSE options trading python", "MCX algo trading python") so that GitHub's search API actually returns results. Do not write full sentences.
+    
+    Return ONLY a JSON list of 5 strings. Example:
+    ["query 1", "query 2", "query 3", "query 4", "query 5"]
+    """
+    
+    openrouter_key = get_secret("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        print("⚠️ [Strategy Researcher] OPENROUTER_API_KEY not found. Using fallback queries.")
+        return ["NSE options trading python", "BankNifty algo trading python", "MCX crude oil algo python"]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openrouter_key}"},
+                json={
+                    "model": "meta-llama/llama-3.1-70b-instruct",
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+            if resp.status_code == 200:
+                text = resp.json()["choices"][0]["message"]["content"]
+                # Try to parse the JSON array
+                start_idx = text.find('[')
+                end_idx = text.rfind(']') + 1
+                if start_idx != -1 and end_idx != -1:
+                    json_str = text[start_idx:end_idx]
+                    queries = json.loads(json_str)
+                    if isinstance(queries, list) and len(queries) > 0:
+                        return queries
+    except Exception as e:
+        print(f"❌ [Strategy Researcher] Query Generation Error: {e}")
+        
+    return ["NSE options trading python", "BankNifty algo trading python", "MCX crude oil algo python"]
+
 async def run_learning_cycle():
     print("🎓 [Strategy Researcher] Starting daily learning cycle...")
     
-    for query in QUERIES:
+    queries = await generate_search_queries()
+    for query in queries:
         print(f"🔍 Searching GitHub for: '{query}'")
         repos = await search_github(query)
         
