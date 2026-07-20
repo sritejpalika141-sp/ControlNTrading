@@ -788,7 +788,37 @@ async def add_script(request: Request, data: Dict):
     client = await get_current_client(request)
     state = get_user_state(client.user_id)
     state.add_symbol(symbol, enable=True)
-    return {"success": True, "scripts": state.active_symbols, "formatted": symbol}
+
+    # Seed the price IMMEDIATELY so the newly-added symbol shows a quote right away.
+    # NOTE: get_quotes_with_fallback is defined in THIS module (app.py). Importing it from
+    # workers.market_worker raised ImportError and silently killed the seed every time.
+    quote = {}
+    try:
+        if ws_feed.is_connected():
+            ws_feed.subscribe([symbol])
+        # A cold, just-subscribed symbol has no WS tick yet, and REST may be in a rate-limit
+        # cooldown -- so a single fetch can be empty. Retry briefly (a liquid contract ticks
+        # within ~1s of subscribing); also accept a bare WS LTP as a floor.
+        q = None
+        for _attempt in range(3):
+            quotes = await get_quotes_with_fallback(client, [symbol])
+            q = quotes.get(symbol) if quotes else None
+            if q and q.get("lp", 0) > 0:
+                break
+            ltp = ws_feed.get_ltp(symbol) if ws_feed.is_connected() else 0
+            if ltp and ltp > 0:
+                q = {"lp": ltp, "ch": 0, "chp": 0}
+                break
+            await asyncio.sleep(0.7)
+        if q and q.get("lp", 0) > 0:
+            quote = q
+            cache = get_user_cache(client.user_id)
+            cache.setdefault("all_spots", {})[symbol] = q
+            cache["last_update"] = datetime.now(IST).timestamp()
+    except Exception as _seed_err:
+        logger.warning(f"add_script: could not seed initial quote for {symbol}: {_seed_err}")
+
+    return {"success": True, "scripts": state.active_symbols, "formatted": symbol, "quote": quote}
 
 @app.get("/api/scripts")
 async def get_scripts(request: Request):
