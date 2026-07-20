@@ -11,6 +11,19 @@ from engine.notifier import trigger_webhook_background
 
 IST = pytz.timezone('Asia/Kolkata')
 
+
+def session_key_for_symbol(symbol: str) -> str:
+    """Group a symbol into its trading-session bucket for per-session (asset-aware) hard-exit
+    tracking. MCX commodities and NSE_CD/CDS currency run their own, LATER sessions than NSE
+    equity/index — so 'NSE done at 15:14' and 'MCX trading till 23:20' must be tracked separately."""
+    s = (symbol or "").upper()
+    if s.startswith("MCX:"):
+        return "MCX"
+    if s.startswith("CDS:") or s.startswith("NSE_CD:"):
+        return "CDS"
+    return "NSE"
+
+
 class TradingState:
     @property
     def trades_today(self):
@@ -63,6 +76,9 @@ class TradingState:
         self.skipped_signals = [] # List of sig_id strings
         self.active_symbols = ["NSE:NIFTY50-INDEX"]
         self.hard_exit_triggered = False
+        # Per-session (asset-aware) EOD square-off tracking: session keys ("NSE"/"MCX"/"CDS")
+        # that have hit their hard-exit time today. Lets NSE stop at 15:14 while MCX trades to 23:20.
+        self.closed_sessions_today = []
         self.last_trade_time = 0.0 # Unix timestamp
         self.last_loss_time = 0.0  # Unix timestamp
         self.last_trade_close_time = 0.0  # When last trade closed (for dynamic cooldown)
@@ -162,6 +178,7 @@ class TradingState:
                         self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
                         self.agent_added_symbols = data.get("agent_added_symbols", [])
                         self.hard_exit_triggered = data.get("hard_exit_triggered", False)
+                        self.closed_sessions_today = data.get("closed_sessions_today", [])
                         self.last_reset_date = saved_date
                         self.eod_report_sent_date = data.get("eod_report_sent_date", "")
                         self.holiday_report_sent_date = data.get("holiday_report_sent_date", "")
@@ -252,6 +269,7 @@ class TradingState:
             "enabled_symbols": getattr(self, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
             "agent_added_symbols": getattr(self, "agent_added_symbols", []),
             "hard_exit_triggered": self.hard_exit_triggered,
+            "closed_sessions_today": getattr(self, "closed_sessions_today", []),
             "active_strategies": self.active_strategies,
             "commodity_strategies": getattr(self, "commodity_strategies", []),
             "commodity_params": getattr(self, "commodity_params", {}),
@@ -340,6 +358,7 @@ class TradingState:
         self.traded_strikes_today = []
         self.skipped_signals = []
         self.hard_exit_triggered = False
+        self.closed_sessions_today = []
         self.profit_target_met = False
         self.last_loss_time = 0.0
         self.last_trade_close_time = 0.0
@@ -490,14 +509,14 @@ class TradingState:
                 return True
         return False
 
-    def can_trade(self, strategy_name="", signal_type=""):
+    def can_trade(self, strategy_name="", signal_type="", symbol=""):
         # AI Bias Filtering
         if self.use_ai_oracle and self.ai_daily_bias and signal_type:
             if "BUY" in signal_type and self.ai_daily_bias == "BEARISH":
                 return False, "Blocked by AI Oracle (BEARISH bias)"
             if "SELL" in signal_type and self.ai_daily_bias == "BULLISH":
                 return False, "Blocked by AI Oracle (BULLISH bias)"
-                
+
         # Check for daily reset first
         self.check_daily_reset()
 
@@ -505,6 +524,11 @@ class TradingState:
             return False, "Automation disabled"
         if self.hard_exit_triggered:
             return False, "Max loss exit triggered — no more trades today"
+        # Per-session (asset-aware) EOD gate: once a symbol's session has hard-exited today
+        # (e.g. NSE at 15:14), block new entries for THAT session while others (e.g. MCX till
+        # 23:20) keep trading. Only active when a symbol is passed; loss-based stops above stay global.
+        if symbol and session_key_for_symbol(symbol) in getattr(self, "closed_sessions_today", []):
+            return False, f"{session_key_for_symbol(symbol)} session closed for the day (hard-exit)"
         if self.trades_today >= self.max_trades_per_day:
             return False, f"Daily trade limit reached ({self.max_trades_per_day})"
         if self.pnl_today <= -self.max_loss_per_day:

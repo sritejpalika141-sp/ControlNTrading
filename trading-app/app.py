@@ -124,6 +124,47 @@ print("📦 Imports complete.", flush=True)
 
 from contextlib import asynccontextmanager
 
+async def _preload_automation_contexts():
+    """Populate USER_CONTEXTS / USER_STATES / USER_CACHES for every automation-enabled, active
+    user at startup, so the market-data, automation, trailing-stop, and hard-exit loops run
+    UNATTENDED — without waiting for someone to open the dashboard.
+
+    Why (#5 unattended evening): those loops iterate USER_CONTEXTS, which was previously filled
+    ONLY on an authed request (get_current_client). After a restart with no browser open,
+    USER_CONTEXTS was empty, so nothing polled or traded — and evening MCX (which runs long after
+    anyone is watching) never even started. Scope is intentionally tight: ONLY users who opted into
+    auto-trading (automation_enabled=1) and are active. Preloading a context never itself places a
+    trade — per-user automation/paper-live gates and the MCX force-paper gate all still apply; an
+    unauthenticated user's client simply won't trade until its token refreshes.
+    """
+    try:
+        import aiosqlite
+        from fyers_client import FyersClient
+        # Enumerate ACTIVE users from the DB, then preload contexts for those whose PERSISTED
+        # TradingState has automation ON. NOTE: use state.automation_enabled (the flag the
+        # auto-trader actually checks) — the users.automation_enabled DB column is NOT kept in sync
+        # (it reads 0 even when a user is actively auto-trading) and must not be used here.
+        user_ids = []
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            async with conn.execute("SELECT id FROM users WHERE is_active=1") as c:
+                user_ids = [int(r[0]) for r in await c.fetchall()]
+        loaded = 0
+        for u_id in user_ids:
+            try:
+                st = get_user_state(u_id)          # loads persisted TradingState (symbols + flags)
+                if not getattr(st, "automation_enabled", False):
+                    continue
+                if u_id not in USER_CONTEXTS:
+                    USER_CONTEXTS[u_id] = FyersClient(user_id=u_id)
+                get_user_cache(u_id)
+                loaded += 1
+            except Exception as _e:
+                print(f"⚠️ preload context error for user {u_id}: {_e}", flush=True)
+        print(f"✅ Preloaded {loaded} automation user context(s) for unattended operation", flush=True)
+    except Exception as e:
+        print(f"⚠️ _preload_automation_contexts error: {e}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
     """Application lifespan: start background tasks on startup."""
@@ -131,6 +172,10 @@ async def lifespan(app):
     running_loop = asyncio.get_running_loop()
     main_loop = running_loop
     state.set_main_loop(running_loop)
+
+    # #5 unattended evening: preload automation-user contexts BEFORE the loops start, so the
+    # market-data / automation / hard-exit workers operate without a dashboard session open.
+    await _preload_automation_contexts()
 
     # Start background tasks
     asyncio.create_task(api_queue.start())
@@ -1502,28 +1547,51 @@ async def ws_connection_monitor():
 
 async def daily_hard_exit_scheduler():
     """
-    At 15:14 (3:14 PM) IST every day, forcibly exit ALL open positions across all users.
-    This is a safety net to ensure no positions are carried overnight.
+    Asset-aware hard-exit safety net (#6). Each trading session is squared off at its OWN close
+    time (registry-driven): NSE equity/index at 15:14, MCX commodities at 23:20.
+
+    At a session's hard-exit: force-close ONLY that session's open positions and mark that session
+    'closed for the day' per user (state.closed_sessions_today), so no NEW same-session entries fire
+    (can_trade blocks them) — while OTHER still-open sessions (e.g. MCX after the 15:14 NSE exit)
+    keep trading normally.
+
+    BACKWARD-COMPATIBLE: a user with NO symbols in a still-open session gets the exact legacy
+    behavior — automation disabled + hard_exit_triggered for the day. So an NSE-only account behaves
+    byte-for-byte like the old 15:14 square-off; only accounts holding MCX symbols get the new split.
     """
     await asyncio.sleep(10)  # Let the app fully boot first
+    from engine.asset_classes import get_asset_class
+    from engine.automation import session_key_for_symbol
+
+    # (session_key, asset_class_name, exchange_prefixes). Currency (CDS/NSE_CD) is deferred — add it
+    # here when currency is onboarded so it squares off at its own 16:50 close.
+    SESSIONS = [
+        ("NSE", "INDEX_OPTIONS", ("NSE:",)),
+        ("MCX", "COMMODITY_OPTIONS", ("MCX:",)),
+    ]
+
     while True:
         try:
             now = datetime.now(IST)
-            # Registry-driven (multi-asset Phase 1). INDEX_OPTIONS.hard_exit_time == (15, 14), so this
-            # is byte-for-byte identical to the previous hard-coded 15:14 square-off.
-            from engine.asset_classes import get_asset_class
-            _heh, _hem = get_asset_class().hard_exit_time
-            target = now.replace(hour=_heh, minute=_hem, second=0, microsecond=0)
-            if now >= target:
-                target = target + timedelta(days=1)
-            wait_seconds = (target - now).total_seconds()
-            print(f"⏰ 3:14 PM hard exit scheduled at {target.isoformat()} (in {int(wait_seconds)}s)", flush=True)
+            # Pick the soonest upcoming session hard-exit.
+            next_fire, next_session = None, None
+            for skey, acname, prefixes in SESSIONS:
+                heh, hem = get_asset_class(acname).hard_exit_time
+                t = now.replace(hour=heh, minute=hem, second=0, microsecond=0)
+                if now >= t:
+                    t = t + timedelta(days=1)
+                if next_fire is None or t < next_fire:
+                    next_fire, next_session = t, (skey, acname, prefixes)
+
+            skey, acname, prefixes = next_session
+            wait_seconds = (next_fire - now).total_seconds()
+            print(f"⏰ {skey} hard exit scheduled at {next_fire.isoformat()} (in {int(wait_seconds)}s)", flush=True)
             await asyncio.sleep(wait_seconds)
 
-            print("🛑 3:14 PM HARD EXIT triggered — closing all positions for all users", flush=True)
-            await broadcast_log("🛑 3:14 PM Hard Exit — Closing ALL open positions!", "error")
+            print(f"🛑 {skey} HARD EXIT triggered — closing {skey} positions for all users", flush=True)
+            await broadcast_log(f"🛑 {skey} Hard Exit — Closing all open {skey} positions!", "error")
 
-            for u_id, client in USER_CONTEXTS.items():
+            for u_id, client in list(USER_CONTEXTS.items()):
                 try:
                     if not await api_queue.enqueue(2, client.is_authenticated):
                         continue
@@ -1539,10 +1607,15 @@ async def daily_hard_exit_scheduler():
                             if isinstance(positions, dict):
                                 positions = positions.get("netPositions", positions.get("overall", []))
                         except Exception as pos_err:
-                            print(f"⚠️ Hard exit: Failed to fetch positions for user {u_id}: {pos_err}", flush=True)
-                            continue
+                            print(f"⚠️ {skey} hard exit: Failed to fetch positions for user {u_id}: {pos_err}", flush=True)
+                            positions = []
 
-                    open_positions = [p for p in positions if abs(p.get("qty", p.get("netQty", 0))) > 0]
+                    # ONLY this session's open positions (match by exchange prefix).
+                    open_positions = [
+                        p for p in positions
+                        if abs(p.get("qty", p.get("netQty", 0))) > 0
+                        and str(p.get("symbol", "")).upper().startswith(prefixes)
+                    ]
 
                     for pos in open_positions:
                         try:
@@ -1551,8 +1624,8 @@ async def daily_hard_exit_scheduler():
                             side_val = pos.get("side", 1)
                             exit_side = "SELL" if side_val > 0 else "BUY"
 
-                            print(f"🔴 Hard exit: {exit_side} {qty} x {symbol} for user {u_id}", flush=True)
-                            await broadcast_log(f"🔴 Hard Exit: {exit_side} {qty} x {symbol}", "error", user_id=u_id)
+                            print(f"🔴 {skey} hard exit: {exit_side} {qty} x {symbol} for user {u_id}", flush=True)
+                            await broadcast_log(f"🔴 {skey} Hard Exit: {exit_side} {qty} x {symbol}", "error", user_id=u_id)
 
                             result = await api_queue.enqueue(
                                 1, client.place_order,
@@ -1562,25 +1635,43 @@ async def daily_hard_exit_scheduler():
                                 order_type="MARKET",
                                 product="INTRADAY"
                             )
-                            print(f"Hard exit result for {symbol}: {result}", flush=True)
+                            print(f"{skey} hard exit result for {symbol}: {result}", flush=True)
                         except Exception as exit_err:
-                            print(f"❌ Hard exit error for {pos.get('symbol', '?')}: {exit_err}", flush=True)
+                            print(f"❌ {skey} hard exit error for {pos.get('symbol', '?')}: {exit_err}", flush=True)
 
-                    # Disable automation and mark hard exit
-                    user_state.automation_enabled = False
-                    user_state.hard_exit_triggered = True
-                    user_state.active_auto_trades = []
+                    # Mark THIS session closed for the day (blocks new same-session entries via can_trade).
+                    csd = getattr(user_state, "closed_sessions_today", []) or []
+                    if skey not in csd:
+                        csd.append(skey)
+                    user_state.closed_sessions_today = csd
+
+                    # If NO active symbol remains in a still-open session, this is effectively EOD for
+                    # this user → preserve the exact legacy stop (disable automation + hard_exit flag).
+                    csd_set = set(csd)
+                    other_open = any(
+                        session_key_for_symbol(s) not in csd_set for s in user_state.active_symbols
+                    )
+                    if not other_open:
+                        user_state.automation_enabled = False
+                        user_state.hard_exit_triggered = True
+
+                    # Drop only THIS session's tracked auto-trades; keep other sessions' alive.
+                    user_state.active_auto_trades = [
+                        t for t in getattr(user_state, "active_auto_trades", [])
+                        if session_key_for_symbol(t.get("symbol", "")) != skey
+                    ]
                     user_state.save()
 
                 except Exception as user_err:
-                    print(f"❌ Hard exit error for user {u_id}: {user_err}", flush=True)
+                    print(f"❌ {skey} hard exit error for user {u_id}: {user_err}", flush=True)
 
-            await broadcast_log("🛑 3:14 PM Hard Exit complete. Automation disabled for all users.", "error")
-            print("✅ 3:14 PM hard exit completed for all users", flush=True)
+            await broadcast_log(f"🛑 {skey} Hard Exit complete.", "error")
+            print(f"✅ {skey} hard exit completed for all users", flush=True)
 
             # NOTE: agent-added watchlist cleanup is handled SESSION-AWARELY by
-            # daily_watchlist_cleanup_scheduler (equity scrips at 15:30, MCX scrips at 23:45) so we
-            # don't remove MCX scrips here at 15:14 while crude still trades till 23:30.
+            # daily_watchlist_cleanup_scheduler (equity scrips at 15:30, MCX scrips at 23:45).
+            # Sleep past the fire instant so we don't recompute the same time and double-run.
+            await asyncio.sleep(60)
 
         except asyncio.CancelledError:
             raise

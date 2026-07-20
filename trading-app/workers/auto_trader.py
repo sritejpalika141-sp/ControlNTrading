@@ -1383,7 +1383,7 @@ async def automation_loop():
                 current_trend_str = "NEUTRAL"
             sig_926 = await evaluate_926_strategy(client, state, current_trend=current_trend_str)
             if sig_926:
-                can_trade, reason = state.can_trade("Strategy 2", signal_type=sig_926['type'])
+                can_trade, reason = state.can_trade("Strategy 2", signal_type=sig_926['type'], symbol=sig_926.get('symbol', 'NSE:NIFTY50-INDEX'))
                 if can_trade:
                     await risk_orchestrator.propose_trade("Strategy 2", sig_926['symbol'], sig_926, {"trend": trend_dict}, client, state)
         except Exception as e:
@@ -1407,7 +1407,7 @@ async def automation_loop():
                             if candles_5m:
                                 sig_orb = await evaluate_orb_strategy(client, state, symbol, candles_5m, vix=15.0)
                                 if sig_orb:
-                                    can_trade, reason = state.can_trade("Strategy 3", signal_type=sig_orb['type'])
+                                    can_trade, reason = state.can_trade("Strategy 3", signal_type=sig_orb['type'], symbol=symbol)
                                     if can_trade:
                                         await risk_orchestrator.propose_trade("Strategy 3", symbol, sig_orb, {"trend": "NEUTRAL"}, client, state)
                                         break
@@ -1419,7 +1419,7 @@ async def automation_loop():
             if "Strategy 5: Optimized Aerospace Mean Reversion" in state.active_strategies:
                 sig_strat5 = await evaluate_strat5_strategy(client, state)
                 if sig_strat5:
-                    can_trade, reason = state.can_trade("Strategy 5", signal_type=sig_strat5['type'])
+                    can_trade, reason = state.can_trade("Strategy 5", signal_type=sig_strat5['type'], symbol=sig_strat5.get('symbol', 'NSE:NIFTY50-INDEX'))
                     if can_trade:
                         await risk_orchestrator.propose_trade("Strategy 5", sig_strat5.get('symbol', 'NSE:NIFTY50-INDEX'), sig_strat5, {"trend": "N/A"}, client, state)
         except Exception as e:
@@ -1440,14 +1440,14 @@ async def automation_loop():
                     cd = analysis.get("candles_daily", [])
                     if candles_5m and c1h and cd:
                         sig = await evaluate_wisdom_strategy(client, state, symbol, candles_5m, c1h, cd, vix=15.0)
-                        if sig and state.can_trade("Strategy 4", signal_type=sig['type'])[0]:
+                        if sig and state.can_trade("Strategy 4", signal_type=sig['type'], symbol=symbol)[0]:
                             await risk_orchestrator.propose_trade("Strategy 4", symbol, sig, {"trend": sig.get("metadata", {}).get("trend", "NEUTRAL")}, client, state)
                             
             async def run_strat_6():
                 if _strat_enabled_for(state, "Strategy 6: Gap Fill Reversal", symbol) and spot and candles_5m:
                     from engine.strategy_gap import evaluate_gap_fill_strategy
                     has_sig, sig = await evaluate_gap_fill_strategy(spot, candles_5m, analysis, state.active_symbols, client, state)
-                    if has_sig and state.can_trade("Strategy 6", signal_type=sig['type'])[0]:
+                    if has_sig and state.can_trade("Strategy 6", signal_type=sig['type'], symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 6", symbol, sig, {"trend": "NEUTRAL"}, client, state)
 
             async def run_strat_7():
@@ -1466,7 +1466,7 @@ async def automation_loop():
                             triggered = False
                             if pending["direction"] == "CE" and spot >= pending["trigger_price"]: triggered = True
                             elif pending["direction"] == "PE" and spot <= pending["trigger_price"]: triggered = True
-                            if triggered and state.can_trade("Strategy 7", signal_type=pending['type'])[0]:
+                            if triggered and state.can_trade("Strategy 7", signal_type=pending['type'], symbol=symbol)[0]:
                                 sig = {"strategy": "Strategy 7", "type": pending["type"].replace("PENDING_", ""), "confidence": 95, "entry_price": pending["trigger_price"], "sl_price": pending["sl_price"], "metadata": {"trend": "NEUTRAL"}}
                                 await risk_orchestrator.propose_trade("Strategy 7", symbol, sig, {"trend": "NEUTRAL"}, client, state)
                                 state.strat_7_pending_order = None
@@ -1482,14 +1482,14 @@ async def automation_loop():
                 if _strat_enabled_for(state, "Strategy 8: Smart Money Concepts", symbol) and spot and candles_1m:
                     from engine.strategy_8 import evaluate_strategy_8
                     has_sig, sig = await evaluate_strategy_8(symbol, spot, candles_1m, candles_5m, analysis, client, state)
-                    if has_sig and state.can_trade("Strategy 8", signal_type=sig.get("type", "CALL"))[0]:
+                    if has_sig and state.can_trade("Strategy 8", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 8", symbol, sig, {"trend": "NEUTRAL"}, client, state)
                         
             async def run_strat_9():
                 if _strat_enabled_for(state, "Strategy 9: 9-EMA Momentum Scalper", symbol) and spot and candles_5m:
                     from engine.strategy_9 import evaluate_strategy_9
                     has_sig, sig = await evaluate_strategy_9(symbol, spot, candles_5m, analysis, client, state)
-                    if has_sig and state.can_trade("Strategy 9", signal_type=sig.get("type", "CALL"))[0]:
+                    if has_sig and state.can_trade("Strategy 9", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 9", symbol, sig, {"trend": "NEUTRAL"}, client, state)
                         
             async def run_strat_1():
@@ -1513,7 +1513,7 @@ async def automation_loop():
                         if "NEUTRAL" in current_trend or "SIDEWAYS" in current_trend: continue
                         if state.profit_target_met and tech_conf < 85: continue
                         
-                        can_trade, reason = state.can_trade("Strategy 1", signal_type=sig['type'])
+                        can_trade, reason = state.can_trade("Strategy 1", signal_type=sig['type'], symbol=symbol)
                         if not can_trade: continue
                         
                         if tech_conf >= 70 or (tech_conf >= 50 and sig.get("ai_confidence", 0) >= 50):
