@@ -149,6 +149,9 @@ async def lifespan(app):
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
 
+    from engine.symbol_master import symbol_master
+    asyncio.create_task(symbol_master.initialize())
+
     # ── Self-Healer (AI code-repair) — turned ON, guarded ──
     # Starts the loop and feeds it ONLY real code exceptions (records carrying a traceback into
     # trading-app). Operational errors (rate limits, network) are left to the bounded health_agent.
@@ -1635,6 +1638,22 @@ async def daily_watchlist_cleanup_scheduler():
                     if purged:
                         print(f"🧹 {only} cleanup: purged agent scrips for user {u_id}: {purged}", flush=True)
                         await broadcast_log(f"🧹 Cleared {len(purged)} auto-added {only} scrip(s) at session close.", "info", user_id=u_id)
+
+                        # Push the pruned watchlist to that user's open dashboard(s) so the removed
+                        # agent scrips disappear instantly (front-end handles 'scripts_update'),
+                        # instead of lingering until the 45s fetchScripts poll. ws.user_id is set at
+                        # WS-link time; the getattr guard makes this a safe no-op for any stray socket.
+                        payload = {
+                            "type": "scripts_update",
+                            "scripts": user_state.active_symbols,
+                            "enabled": getattr(user_state, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
+                        }
+                        for ws in active_connections.copy():
+                            if getattr(ws, "user_id", None) == u_id:
+                                try:
+                                    await ws.send_text(orjson.dumps(payload).decode("utf-8"))
+                                except Exception:
+                                    pass
                 except Exception as _pe:
                     print(f"⚠️ Watchlist cleanup error for user {u_id}: {_pe}", flush=True)
             print(f"✅ Watchlist cleanup completed for {'Equity' if is_eq else 'MCX'} session.", flush=True)
@@ -3388,3 +3407,9 @@ async def log_ui_error(error: UIErrorLog):
     # This specifically prints in the exact format vm_orchestrator looks for
     print(f"🏥 [VM-ORCHESTRATOR-HOOK] UI Error caught: {error.message} at {error.source}:{error.lineno}:{error.colno} - {error.error} on URL {error.url}", flush=True)
     return {"success": True}
+
+@app.get("/api/search")
+async def search_symbols_api(q: str = "", limit: int = 20):
+    from engine.symbol_master import symbol_master
+    results = symbol_master.search(q, limit)
+    return {"status": "success", "data": results}
