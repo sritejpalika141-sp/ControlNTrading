@@ -225,9 +225,10 @@
           <div class="glass-card" id="marketWatchCard">
             <div class="card-head">
               <span>Market Watch</span>
-              <div class="add-script ms-auto">
-                <input type="text" id="newScript" placeholder="NSE:SBIN-EQ" class="form-control form-control-sm d-inline-block w-auto">
+              <div class="add-script ms-auto position-relative" style="display:flex; align-items:center;">
+                <input type="text" id="newScript" placeholder="Search Symbol..." class="form-control form-control-sm d-inline-block w-auto" autocomplete="off" style="min-width: 200px;">
                 <button class="btn btn-sm btn-primary ms-1" onclick="addScript()">+</button>
+                <div id="searchDropdown" class="search-dropdown hidden"></div>
               </div>
             </div>
             <div class="card-content">

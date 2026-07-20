@@ -499,25 +499,28 @@ body {
 /* ═══ RESPONSIVE ═══ */
 @media (max-width:991px) {
   .chart-section-wrapper { min-height: 400px; }
-  .topbar-center { display:none; }
+  .topbar { height: auto; min-height: 64px; }
+  .topbar > .container-fluid { flex-wrap: wrap; height: auto; padding-top: 8px; padding-bottom: 8px; gap: 8px; }
+  .topbar-center { display: flex; flex: 1 1 100%; order: 3; justify-content: center; margin-top: 4px; }
   .brand-name { font-size: 14px; }
   .price-value { font-size: 16px; }
   .navbar-brand { margin-right: 0; }
 }
 
 @media (max-width:576px) {
-  .chart-section-wrapper { min-height: 380px; padding: 4px; }
+  .chart-section-wrapper { min-height: 350px; padding: 4px; }
   .chart-header { flex-direction: column; align-items: flex-start; gap: 4px; padding: 4px; }
   .symbol-tabs { width: 100%; overflow-x: auto; padding-bottom: 4px; }
-  .trade-stats { padding: 2px 4px; font-size: 10px; }
-  .topbar { padding: 0 4px; justify-content: space-between; flex-wrap: nowrap; overflow: hidden; }
+  .trade-stats { padding: 2px 4px; font-size: 10px; gap: 4px; }
+  .topbar { padding: 0 4px; height: auto; }
+  .topbar > .container-fluid { padding-top: 6px; padding-bottom: 6px; gap: 6px; }
   .topbar-left { flex-shrink: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .topbar-right { gap: 2px; flex-shrink: 0; }
+  .topbar-right { gap: 4px; flex-shrink: 0; }
   .auto-panel { margin: 0!important; flex-shrink: 0; }
   .auto-status { display: none !important; }
-  .trade-stats { padding: 2px 4px; font-size: 9px; gap: 2px; }
-  .price-display { padding: 2px 4px; gap: 2px; }
-  .price-value { font-size: 13px; }
+  .trade-stats { padding: 2px 4px; font-size: 9px; gap: 4px; }
+  .price-display { padding: 2px 6px; gap: 4px; }
+  .price-value { font-size: 14px; }
   .brand { display: none; }
   .conn-badge { display: none; }
   .main-container { padding-top: 8px!important; }
@@ -1207,4 +1210,70 @@ body {
   justify-content: flex-end;
   margin-top: auto;
   gap: 10px;
+}
+
+/* ═══ SEARCH DROPDOWN ═══ */
+.search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 4px;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.search-dropdown.hidden {
+  display: none;
+}
+.search-dropdown-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  flex-direction: column;
+}
+.search-dropdown-item:hover {
+  background: rgba(6,182,212,0.1);
+}
+.search-dropdown-item .sd-symbol {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.search-dropdown-item .sd-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Fix Topbar UI for Mobile */
+@media (max-width: 991px) {
+  .topbar-right .trade-stats .badge {
+    display: none !important; /* Hide regime badges on mobile topbar to save space */
+  }
+  .topbar-right .trade-stats {
+    gap: 4px;
+    font-size: 11px;
+  }
+  .topbar-left .brand-name {
+    font-size: 16px;
+  }
+  .price-display {
+    font-size: 12px;
+    gap: 4px;
+  }
+  .vix-pill, .trend-pill {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+}
+@media (max-width: 576px) {
+  .topbar-center {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
 }

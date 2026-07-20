@@ -1101,28 +1101,41 @@ function connectWebSocket() {
         renderStrikes(analysisData.strike_recommendations);
         break;
       case 'market_update':
-        // Update header with the activeSymbol
+        // The header displays the currently active symbol (usually NIFTY50)
         let displayData = data.spots[activeSymbol];
-        
-        if (!displayData && activeSymbol === "NSE:NIFTY50-INDEX") {
-            // Fallback if Nifty is missing but active
-            const firstSym = Object.keys(data.spots)[0];
-            if (firstSym) displayData = data.spots[firstSym];
-        }
 
+        // Update the main header spot price if the active symbol is in this update tick
         if (displayData) {
             updateSpotLive({
                 symbol: activeSymbol,
                 spot: displayData.lp,
                 change: displayData.change,
-                change_pct: displayData.change_pct,
-                vix: data.vix.lp,
-                vix_change: data.vix.change
+                change_pct: displayData.change_pct
             });
+        }
+        
+        // VIX is always broadcast in data.vix if available, update it independently
+        if (data.vix && data.vix.lp) {
+            const vixEl = document.getElementById('vixValue');
+            if (vixEl) vixEl.textContent = Number(data.vix.lp).toFixed(2);
+            const vixChEl = document.getElementById('vixChange');
+            if (vixChEl) {
+                const vixSign = data.vix.change >= 0 ? '+' : '';
+                vixChEl.textContent = `${vixSign}${data.vix.change.toFixed(2)}`;
+                vixChEl.className = data.vix.change >= 0 ? 'text-success ms-1' : 'text-danger ms-1';
+            }
         }
         
         // Refresh the Market Watch table
         renderScriptsList(data.spots);
+        break;
+
+      case 'scripts_update':
+        // Server pushed an updated watchlist (e.g. after EOD agent-scrip cleanup) —
+        // reflect it instantly instead of waiting for the 45s fetchScripts poll.
+        activeScripts = data.scripts || activeScripts;
+        if (data.enabled) enabledScripts = data.enabled;
+        renderScriptsList();
         break;
     }
   };
@@ -1144,8 +1157,6 @@ function updateSpotLive(data) {
   const spot = data.spot || data.lp || 0;
   const change = data.change || 0;
   const change_pct = data.change_pct || data.chp || 0;
-  const vix = data.vix || 0;
-  const vix_change = data.vix_change || 0;
   const symbol = data.symbol?.replace('NSE:', '').replace('-INDEX', '').replace('-EQ', '') || 'NIFTY';
 
   const spotLabel = document.getElementById('spotLabel');
@@ -1159,14 +1170,6 @@ function updateSpotLive(data) {
   const sign = change >= 0 ? '+' : '';
   changeEl.textContent = `${sign}${change.toFixed(2)} (${sign}${change_pct.toFixed(2)}%)`;
   changeEl.className = 'spot-change ' + (change >= 0 ? 'positive' : 'negative');
-
-  document.getElementById('vixValue').textContent = Number(vix).toFixed(2);
-  const vixChEl = document.getElementById('vixChange');
-  if (vixChEl) {
-    const vSign = vix_change >= 0 ? '+' : '';
-    vixChEl.textContent = `${vSign}${Number(vix_change).toFixed(2)}%`;
-    vixChEl.className = 'spot-change ' + (vix_change >= 0 ? 'negative' : 'positive');
-  }
 
   // Update live spot lines on chart
   const spotPrice = Number(spot);
@@ -3404,3 +3407,63 @@ async function rejectStrategy(name) {
 }
 
 
+
+// ═══ SEARCH AUTOCOMPLETE ═══
+let searchTimeout = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('newScript');
+  const searchDropdown = document.getElementById('searchDropdown');
+  
+  if (!searchInput || !searchDropdown) return;
+
+  searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+      searchDropdown.classList.add('hidden');
+      return;
+    }
+    
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+        .then(res => res.json())
+        .then(resp => {
+          // Backend returns {status, data:[{symbol, desc}]} — read resp.data, field is `desc`.
+          const items = (resp && resp.data) || [];
+          if (items.length > 0) {
+            searchDropdown.innerHTML = '';
+            items.forEach(item => {
+              const div = document.createElement('div');
+              div.className = 'search-dropdown-item';
+              // XSS-safe: build spans with textContent (symbol master data is external-sourced).
+              const symSpan = document.createElement('span');
+              symSpan.className = 'sd-symbol';
+              symSpan.textContent = item.symbol || '';
+              const descSpan = document.createElement('span');
+              descSpan.className = 'sd-desc';
+              descSpan.textContent = item.desc || '';
+              div.appendChild(symSpan);
+              div.appendChild(descSpan);
+              div.onclick = () => {
+                searchInput.value = item.symbol;
+                searchDropdown.classList.add('hidden');
+                addScript();
+              };
+              searchDropdown.appendChild(div);
+            });
+            searchDropdown.classList.remove('hidden');
+          } else {
+            searchDropdown.classList.add('hidden');
+          }
+        })
+        .catch(err => console.error("Search failed:", err));
+    }, 300);
+  });
+  
+  // Close dropdown if clicked outside
+  document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !searchDropdown.contains(e.target)) {
+      searchDropdown.classList.add('hidden');
+    }
+  });
+});
