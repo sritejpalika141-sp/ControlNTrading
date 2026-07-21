@@ -1322,6 +1322,62 @@ async def get_swarm_status(request: Request):
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
 
+@app.post("/api/admin/strategies/{strategy_name}/enable")
+async def enable_strategy(request: Request, strategy_name: str):
+    """Admin-only endpoint to re-enable a disabled strategy.
+    
+    Strategies are auto-disabled after 3 consecutive losses. This endpoint
+    allows admins to manually re-enable them from the dashboard.
+    """
+    try:
+        # Verify admin permissions
+        user_id = resolve_authenticated_user_id(request)
+        if not user_id:
+            return JSONResponse({"success": False, "message": "Authentication required"}, status_code=401)
+        
+        # Check if user is admin
+        from models import Database
+        user = await Database.get_user_by_id(user_id)
+        if not user or not user.get("is_admin"):
+            return JSONResponse({"success": False, "message": "Admin permissions required"}, status_code=403)
+        
+        # Get current strategy config
+        cfg = await Database.get_agent_config(strategy_name)
+        if not cfg:
+            return JSONResponse({"success": False, "message": f"Strategy '{strategy_name}' not found"})
+        
+        # Check if strategy is disabled
+        if cfg.get("status") != "DISABLED":
+            return JSONResponse({
+                "success": False, 
+                "message": f"Strategy '{strategy_name}' is not disabled (current status: {cfg.get('status')})"
+            })
+        
+        # Re-enable the strategy by resetting status and continuous_losses
+        await Database.update_agent_config(
+            strategy_name=strategy_name,
+            config_dict=cfg.get("config_json", {}),
+            win_rate=cfg.get("win_rate", 0),
+            total_trades=cfg.get("total_trades", 0),
+            winning_trades=cfg.get("winning_trades", 0),
+            status="APPROVED",
+            continuous_losses=0,  # Reset the consecutive loss counter
+            is_paper_trading=cfg.get("is_paper_trading", 1),
+            asset_class=cfg.get("asset_class", "EQUITY")
+        )
+        
+        logger.info(f"✅ Strategy '{strategy_name}' re-enabled by admin user {user_id}")
+        
+        return JSONResponse({
+            "success": True, 
+            "message": f"Strategy '{strategy_name}' re-enabled successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error re-enabling strategy: {e}")
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+
 @app.post("/api/admin/restart-server")
 async def admin_restart_server(request: Request):
     """
@@ -3058,7 +3114,7 @@ async def health_agent_status():
 
 @app.get("/api/health")
 async def health_check():
-    """Production health check — returns uptime, active users, memory, task status."""
+    """Production health check — returns uptime, active users, memory, task status, and trading health."""
     import resource
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
@@ -3079,8 +3135,59 @@ async def health_check():
         cache = get_user_cache(u_id)
         user_auth[str(u_id)] = cache.get("is_auth", False)
     
+    # Trading-specific health checks
+    token_valid = any(
+        c.is_authenticated() 
+        for c in USER_CONTEXTS.values() 
+        if c.user_id > 0
+    )
+    
+    automation_active = any(
+        s.automation_enabled 
+        for s in USER_STATES.values()
+    )
+    
+    kill_switch_active = Database.is_kill_switch_active()
+    
+    # Strategy health
+    try:
+        all_configs = await Database.get_all_agent_configs()
+        active_strategies = len([s for s in all_configs if s.get('status') == 'APPROVED'])
+        disabled_strategies = len([s for s in all_configs if s.get('status') == 'DISABLED'])
+        pending_strategies = len([s for s in all_configs if s.get('status') == 'PENDING'])
+    except Exception:
+        active_strategies = 0
+        disabled_strategies = 0
+        pending_strategies = 0
+    
+    # Recent error count (last 10 logs)
+    try:
+        recent_logs = await Database.get_user_logs(user_id=1, limit=10)
+        error_count = len([l for l in recent_logs if l.get('level') == 'error'])
+    except Exception:
+        error_count = 0
+    
+    # Paper trading status per user
+    paper_trading_users = []
+    live_trading_users = []
+    for u_id, state in USER_STATES.items():
+        if state.paper_trading:
+            paper_trading_users.append(u_id)
+        else:
+            live_trading_users.append(u_id)
+    
+    # Overall status determination
+    if kill_switch_active:
+        status = "halted"
+    elif not token_valid and active_users > 0:
+        status = "degraded"
+    elif error_count > 3:
+        status = "degraded"
+    else:
+        status = "healthy"
+    
     return {
-        "status": "healthy",
+        "status": status,
         "version": VERSION,
         "uptime": f"{hours}h {minutes}m {seconds}s",
         "started_at": SERVER_START_TIME.strftime("%Y-%m-%d %H:%M:%S IST"),
@@ -3089,6 +3196,16 @@ async def health_check():
         "ws_connections": ws_connections,
         "user_auth": user_auth,
         "market_open": _is_market_open(),
+        # Trading health
+        "token_valid": token_valid,
+        "automation_active": automation_active,
+        "kill_switch_active": kill_switch_active,
+        "active_strategies": active_strategies,
+        "disabled_strategies": disabled_strategies,
+        "pending_strategies": pending_strategies,
+        "recent_errors": error_count,
+        "paper_trading_users": paper_trading_users,
+        "live_trading_users": live_trading_users,
         "timestamp": now.isoformat()
     }
 

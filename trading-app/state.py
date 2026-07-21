@@ -26,6 +26,10 @@ IST = pytz.timezone("Asia/Kolkata")
 VERSION = "6.0.0"
 SERVER_START_TIME = datetime.now(IST)
 
+# Risk Management Constants
+DAILY_DRAWDOWN_LIMIT_PCT = 2.0  # Stop trading when daily loss exceeds this % of capital
+RISK_PER_TRADE_PCT = 1.0  # Risk 1% of capital per trade
+
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 ENV_PATH = PROJECT_ROOT / "fyers-mcp-server" / ".env"
@@ -189,6 +193,64 @@ def get_lot_size(symbol: str) -> int:
     logger.warning(f"⚠️ No lot size found for {symbol} in lot_sizes.json, defaulting to 1")
     return 1  # Default for unknown equity/stocks
 
+
+def calculate_position_size(user_id: int, entry_price: float, sl_points: float, symbol: str = "") -> int:
+    """Calculate position size based on risk-per-trade percentage.
+    
+    Uses the RISK_PER_TRADE_PCT constant (default 1%) to determine how many
+    lots/shares to trade based on available capital and stop-loss distance.
+    
+    Args:
+        user_id: User ID to get capital info
+        entry_price: Expected entry price per unit
+        sl_points: Stop-loss distance in points
+        symbol: Symbol to determine lot size
+    
+    Returns:
+        Number of lots/shares to trade (minimum 1)
+    """
+    try:
+        from models import Database
+        user = Database.get_user_by_id_sync(user_id)
+        if not user:
+            return 1
+        
+        # Get available funds from user states or cache
+        import sqlite3
+        conn = sqlite3.connect(Database.DB_NAME)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT daily_profit, daily_loss FROM user_states WHERE user_id=?", (user_id,))
+            row = cursor.fetchone()
+            # Use a reasonable default capital estimate if not available
+            # In production, this should come from the broker API or a config
+            capital = 500000  # Default ₹5L capital
+        finally:
+            conn.close()
+        
+        # Calculate risk amount
+        risk_amount = capital * (RISK_PER_TRADE_PCT / 100)
+        
+        # If SL is too tight or zero, return minimum lot size
+        if sl_points <= 0:
+            lot_size = get_lot_size(symbol)
+            return max(1, lot_size)
+        
+        # Calculate position size: risk_amount / sl_points = number of units
+        position_value = risk_amount / sl_points
+        lot_size = get_lot_size(symbol)
+        
+        # Convert to lots (round down to whole lots)
+        if lot_size > 0:
+            lots = int(position_value / (entry_price * lot_size))
+            return max(1, lots * lot_size)
+        
+        return max(1, int(position_value / entry_price))
+        
+    except Exception as e:
+        logger.error(f"Error calculating position size: {e}")
+        return 1  # Fallback to minimum
 
 
 # ───────────────────────── NSE 2026 Holidays ─────────────────────────

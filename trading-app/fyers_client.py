@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from engine.encryption import get_secret, save_to_vault
+from state import calculate_position_size
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -677,6 +678,56 @@ class FyersClient:
             print(f"❌ refresh_via_refresh_token exception: {e}", flush=True)
             return False
 
+    async def refresh_via_refresh_token_with_retry(self, max_retries: int = 3) -> bool:
+        """Refresh token with retry and exponential backoff.
+        
+        Handles transient failures (network issues, 429 rate limits) by retrying
+        with increasing delays. Falls back to manual re-auth after all retries fail.
+        
+        Args:
+            max_retries: Maximum number of retry attempts (default 3)
+        
+        Returns:
+            True if refresh succeeded, False if all retries failed
+        """
+        import asyncio
+        
+        for attempt in range(max_retries):
+            try:
+                success = self.refresh_via_refresh_token()
+                if success:
+                    return True
+                
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"⚠️ Token refresh attempt {attempt + 1}/{max_retries} failed. "
+                          f"Retrying in {wait_time}s...", flush=True)
+                    await asyncio.sleep(wait_time)
+                    
+            except Exception as e:
+                print(f"❌ Token refresh attempt {attempt + 1}/{max_retries} exception: {e}", flush=True)
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    await asyncio.sleep(wait_time)
+        
+        # All retries exhausted
+        print(f"❌ Token refresh failed after {max_retries} attempts for User {self.user_id}. "
+              f"Manual re-authentication required.", flush=True)
+        
+        # Alert via Telegram if available
+        try:
+            await broadcast_log(
+                f"❌ Token refresh failed for User {self.user_id} after {max_retries} attempts. "
+                f"Manual re-auth required.",
+                level="error",
+                user_id=self.user_id,
+                telegram_alert=True
+            )
+        except Exception:
+            pass
+        
+        return False
+
     def get_quote(self, symbol: str) -> Optional[Dict]:
         """Get live quote for a single symbol. Checks WebSocket cache first."""
         try:
@@ -1218,6 +1269,11 @@ class FyersClient:
         if Database.is_kill_switch_active():
             print(f"🛑 [KILL SWITCH ACTIVE] Order rejected: {symbol} {side} {qty}")
             return {"success": False, "message": "SYSTEM LOCKED: Global Kill-Switch is active."}
+
+        # POSITION SIZING: If qty is 0 or not provided, calculate based on risk
+        if qty <= 0 and limit_price > 0:
+            qty = calculate_position_size(self.user_id, limit_price, sl_points, symbol)
+            print(f"📊 POSITION SIZING: Calculated qty={qty} for {symbol} (risk={sl_points}pts)")
 
         side_int = 1 if side.upper() == "BUY" else -1
         sl_order_type = 0

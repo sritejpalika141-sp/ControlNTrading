@@ -26,6 +26,7 @@ from state import (
     get_user_state,
     is_market_open,
     logger,
+    DAILY_DRAWDOWN_LIMIT_PCT,
 )
 from engine.notifier import trigger_webhook_background
 from engine.logger import log_signal, log_trade
@@ -1656,6 +1657,37 @@ async def automation_loop():
                 
                 if not state.automation_enabled:
                     continue
+                
+                # ═══════════════════════════════════════════
+                # DAILY DRAWDOWN CIRCUIT BREAKER
+                # Stop trading if daily realized loss exceeds the configured limit.
+                # This protects capital by halting all new trades for the day.
+                # ═══════════════════════════════════════════
+                try:
+                    daily_realized_pnl = getattr(state, 'daily_realized_pnl', 0.0)
+                    # Get available funds (use cached value if available, otherwise estimate)
+                    cache = get_user_cache(u_id)
+                    available_funds = cache.get("funds", {}).get("availableBalance", 100000)  # Default 1L
+                    if available_funds <= 0:
+                        available_funds = 100000  # Fallback to prevent division by zero
+                    
+                    drawdown_limit = available_funds * (DAILY_DRAWDOWN_LIMIT_PCT / 100)
+                    if daily_realized_pnl < 0 and abs(daily_realized_pnl) >= drawdown_limit:
+                        logger.warning(
+                            f"🛑 DAILY DRAWDOWN LIMIT HIT for user {u_id}: "
+                            f"Realized PnL ₹{daily_realized_pnl:.2f} exceeds "
+                            f"{DAILY_DRAWDOWN_LIMIT_PCT}% limit (₹{drawdown_limit:.2f}). "
+                            f"Trading halted for today."
+                        )
+                        await broadcast_log(
+                            f"🛑 DAILY DRAWDOWN LIMIT HIT: ₹{daily_realized_pnl:.2f} — trading halted for today",
+                            level="error",
+                            user_id=u_id,
+                            telegram_alert=True
+                        )
+                        continue  # Skip all strategy evaluation for this user
+                except Exception as e:
+                    logger.error(f"Error checking daily drawdown for user {u_id}: {e}")
                     
                 # 1. Gather all tasks for this tick simultaneously
                 tasks = [
