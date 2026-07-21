@@ -182,6 +182,19 @@ class TradingState:
                         self.skipped_signals = data.get("skipped_signals", [])
                         self.active_symbols = data.get("active_symbols", ["NSE:NIFTY50-INDEX"])
                         self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
+                        # SELF-HEAL orphaned auto-trade enables. enabled_symbols was only pruned by
+                        # remove_symbol(), so any OTHER removal path (the EOD agent-scrip purge,
+                        # manual watchlist edits) left the symbol enabled forever. Observed live:
+                        # 'MCX:CRUDEOIL24NOVFUT' — an EXPIRED Nov-2024 crude contract — was still
+                        # flagged for auto-trade months later, alongside a stale NSE:SBIN-EQ. Dead
+                        # contracts are exactly what produces -300 "Invalid symbol" storms (16,445 in
+                        # one day), which burn the API quota and stall the trading loop. A symbol that
+                        # is not in the watchlist must never be auto-traded, so prune on every load.
+                        _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
+                        if _orphans:
+                            self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
+                            print(f"🧹 Pruned {len(_orphans)} orphaned auto-trade enable(s) "
+                                  f"(not in watchlist): {_orphans}", flush=True)
                         self.agent_added_symbols = data.get("agent_added_symbols", [])
                         self.hard_exit_triggered = data.get("hard_exit_triggered", False)
                         self.closed_sessions_today = data.get("closed_sessions_today", [])

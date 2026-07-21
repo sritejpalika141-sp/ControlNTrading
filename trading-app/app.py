@@ -243,6 +243,30 @@ async def lifespan(app):
 
     yield  # Application is running
 
+    # ── GRACEFUL SHUTDOWN ────────────────────────────────────────────────────────────
+    # There was previously NOTHING here: the Fyers WebSocket feed was never stopped and no
+    # state was flushed, so `systemctl stop` hung until systemd force-killed the process —
+    # observed live: "Main process exited, code=killed, status=9/KILL ... Failed with result
+    # 'timeout'". A SIGKILL can interrupt a state write mid-flight and corrupt
+    # logs/trading_state_*.json (which holds open trades, daily P&L and per-strategy counters),
+    # and it also leaves the port held long enough to strand the next start — the orphan
+    # scenario that crash-looped this service earlier today. Shutting down cleanly avoids both.
+    print("🛑 Shutdown: stopping WS feed and flushing state...", flush=True)
+    try:
+        from engine.ws_feed import ws_feed as _wsf
+        _wsf.stop()
+    except Exception as _e:
+        print(f"⚠️ Shutdown: ws_feed stop failed: {_e}", flush=True)
+    try:
+        for _uid, _st in list(USER_STATES.items()):
+            try:
+                _st.save()
+            except Exception as _se:
+                print(f"⚠️ Shutdown: state save failed for user {_uid}: {_se}", flush=True)
+    except Exception:
+        pass
+    print("✅ Shutdown cleanup complete.", flush=True)
+
 app = FastAPI(title="ControlN Trading Dashboard", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 VERSION = "6.0.1"
