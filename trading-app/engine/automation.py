@@ -646,9 +646,9 @@ class TradingState:
     def _record_trade_outcome_async(self, pos=None, exit_price=0.0, pnl=0.0):
         """Fire-and-forget scheduler for ADDITIVE win-rate recording at trade close.
 
-        Looks up the still-present active-trade dict by symbol (removal happens AFTER
-        record_trade_close) to recover strategy + entry context, then schedules the async
-        DB write on the running event loop. Wrapped so a DB failure never breaks the close.
+        Recovers strategy + entry context from pos dict (preferred) or the active-trade
+        list (fallback), then schedules the async DB write on the running event loop.
+        Wrapped so a DB failure never breaks the close. Includes one retry on failure.
         """
         symbol = None
         if isinstance(pos, dict):
@@ -656,11 +656,18 @@ class TradingState:
         if not symbol:
             return
 
-        active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
-        strategy = (active.get("strategy") if active else None) or (pos.get("strategy") if isinstance(pos, dict) else None)
+        # Strategy: prefer from pos dict (explicit), fall back to active trade lookup
+        strategy = (pos.get("strategy") if isinstance(pos, dict) else None)
+        active = None
         if not strategy:
-            # No strategy name -> nothing meaningful to attribute the outcome to.
+            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
+            strategy = active.get("strategy") if active else None
+        if not strategy:
+            print(f"⚠️ _record_trade_outcome_async: no strategy for {symbol} — trade NOT recorded to swarm.", flush=True)
             return
+
+        if active is None:
+            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
 
         entry_price = float(active.get("entry_price", 0.0)) if active else 0.0
         entry_regime = (active.get("entry_regime") if active else None) or "NEUTRAL"
@@ -681,7 +688,7 @@ class TradingState:
 
         from models import Database
 
-        async def _persist():
+        async def _persist(retry=False):
             try:
                 await Database.record_trade_outcome(
                     strategy_name=strategy, symbol=symbol,
@@ -689,14 +696,18 @@ class TradingState:
                     entry_price=entry_price, exit_price=float(exit_price or 0.0),
                     pnl=float(pnl or 0.0), vix=0.0, market_trend=market_trend,
                 )
+                print(f"✅ Trade recorded: {strategy} | {symbol} | Entry ₹{entry_price:.1f} | Exit ₹{exit_price:.1f} | PnL ₹{pnl:.2f}", flush=True)
             except Exception as e:
-                print(f"⚠️ record_trade_outcome DB write failed (non-fatal): {e}", flush=True)
+                if not retry:
+                    print(f"⚠️ record_trade_outcome DB write failed, retrying: {e}", flush=True)
+                    await _persist(retry=True)
+                else:
+                    print(f"❌ record_trade_outcome DB write FAILED (final): {strategy} | {symbol} | PnL ₹{pnl:.2f} | Error: {e}", flush=True)
 
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(_persist())
         except RuntimeError:
-            # No running loop (e.g. called from a sync/test context) — run to completion.
             try:
                 asyncio.run(_persist())
             except Exception as e:

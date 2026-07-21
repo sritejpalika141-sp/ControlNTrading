@@ -313,10 +313,11 @@ async def trailing_monitor():
                             # as breakeven — which would starve the win-rate / self-improvement.
                             trade_pnl, exit_price, _src = await _recover_closed_pnl(client, sym)
                             logger.info(f"🔎 Recovered closed P&L for {sym}: ₹{trade_pnl:.2f} (source={_src}).")
-                        pos_info = {"side": "BUY", "symbol": sym}
+                        _active_trade = next((t for t in state.active_auto_trades if t.get("symbol") == sym), None)
+                        pos_info = {"side": "BUY", "symbol": sym, "strategy": _active_trade.get("strategy", "") if _active_trade else ""}
                         # Outcome-integrity guard: a broker position dict without sellAvg/buyAvg makes
                         # exit_price 0, and that 0 was being PERSISTED as a real outcome (see the
-                        # 08-Jul swarm_trade_records rows: exit_price=0, pnl=0, on a +Rs2,287 day).
+                        # 08-Jul swarm_trade_records rows: exit_price=0, pnl=0, on a +Rs2,2287 day).
                         # Recover from the last traded price and, either way, make the gap VISIBLE
                         # instead of silently writing a zero that corrupts win-rate analysis.
                         if not exit_price or exit_price <= 0:
@@ -333,6 +334,17 @@ async def trailing_monitor():
                             else:
                                 logger.warning(f"⚠️ exit_price UNAVAILABLE for {sym} — outcome will be recorded "
                                                f"WITHOUT a valid exit price; treat this row as unreliable.")
+                        # PnL RECOVERY: If broker returns pl=0 but we have valid entry/exit prices,
+                        # compute PnL manually. This prevents the "₹0 PnL on a winning day" corruption.
+                        if trade_pnl == 0 and exit_price > 0:
+                            _active_trade = next((t for t in state.active_auto_trades if t.get("symbol") == sym), None)
+                            _entry = float(_active_trade.get("entry_price", 0)) if _active_trade else 0
+                            if _entry > 0 and exit_price > _entry:
+                                trade_pnl = round(exit_price - _entry, 2)
+                                logger.warning(f"⚠️ {sym} broker pl=0 but entry={_entry}, exit={exit_price} → recovered PnL=₹{trade_pnl:.2f}")
+                            elif _entry > 0 and exit_price < _entry:
+                                trade_pnl = round(exit_price - _entry, 2)
+                                logger.warning(f"⚠️ {sym} broker pl=0 but entry={_entry}, exit={exit_price} → recovered PnL=₹{trade_pnl:.2f}")
                         if trade_pnl == 0:
                             logger.warning(f"⚠️ {sym} closed with pnl=0 — verify this is a genuine breakeven "
                                            f"and not a P&L-recovery failure (this corrupts win-rate stats).")
