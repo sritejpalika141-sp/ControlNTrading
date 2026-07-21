@@ -785,7 +785,8 @@ Respond ONLY with this JSON format:
                 "commodities_trend": "NEUTRAL",
                 "currency_trend": "NEUTRAL",
                 "summary": "AI disabled.",
-                "high_conviction_asset": "NONE"
+                "high_conviction_asset": "NONE",
+                "commodity_pick": "NONE"
             }
         
         prompt = (
@@ -794,6 +795,10 @@ Respond ONLY with this JSON format:
             "across three asset classes: Indian Equities (NIFTY), Commodities (Crude Oil, Gold), and Currencies (USDINR).\n"
             "If the news indicates a clear Bullish or Bearish trend for a specific asset (Commodity, Currency, or Indian Stock), "
             "identify the most promising one in 'high_conviction_asset' (otherwise output 'NONE'). For Indian stocks, output the NSE ticker (e.g. RELIANCE, HDFCBANK, INFY). You do not need a massive catalyst, just a clear directional bias.\n\n"
+            "SEPARATELY, always pick the single most active/newsworthy MCX COMMODITY in 'commodity_pick' "
+            "(CRUDEOIL, GOLD, SILVER, NATURALGAS, COPPER or ZINC). This is a DEDICATED slot: commodities "
+            "compete only with each other here, never with equities. Only output 'NONE' if the headlines "
+            "contain nothing at all about commodities — prefer CRUDEOIL as the default liquid choice.\n\n"
             "Headlines:\n" + "\n".join(f"- {h}" for h in headlines) + "\n\n"
             "Respond ONLY with this JSON format:\n"
             '{\n'
@@ -801,7 +806,8 @@ Respond ONLY with this JSON format:
             '  "commodities_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "currency_trend": "BULLISH" | "BEARISH" | "NEUTRAL",\n'
             '  "summary": "<2-3 sentences max summarizing the drivers>",\n'
-            '  "high_conviction_asset": "CRUDEOIL" | "GOLD" | "SILVER" | "USDINR" | "<NSE_TICKER>" | "NONE"\n'
+            '  "high_conviction_asset": "CRUDEOIL" | "GOLD" | "SILVER" | "USDINR" | "<NSE_TICKER>" | "NONE",\n'
+            '  "commodity_pick": "CRUDEOIL" | "GOLD" | "SILVER" | "NATURALGAS" | "COPPER" | "ZINC" | "NONE"\n'
             '}'
         )
 
@@ -834,7 +840,8 @@ Respond ONLY with this JSON format:
                         "commodities_trend": result.get("commodities_trend", "NEUTRAL").upper(),
                         "currency_trend": result.get("currency_trend", "NEUTRAL").upper(),
                         "summary": result.get("summary", "No clear sentiment."),
-                        "high_conviction_asset": result.get("high_conviction_asset", "NONE").upper()
+                        "high_conviction_asset": result.get("high_conviction_asset", "NONE").upper(),
+                        "commodity_pick": str(result.get("commodity_pick", "NONE") or "NONE").upper()
                     }
             except Exception as e:
                 logger.warning(f"⚠️ {prov.name} news summary failed: {e}")
@@ -844,7 +851,8 @@ Respond ONLY with this JSON format:
             "commodities_trend": "NEUTRAL",
             "currency_trend": "NEUTRAL",
             "summary": "Failed to parse news sentiment.",
-            "high_conviction_asset": "NONE"
+            "high_conviction_asset": "NONE",
+                "commodity_pick": "NONE"
         }
 
     def _build_trend_prompt(self, symbol: str, context: Dict) -> str:

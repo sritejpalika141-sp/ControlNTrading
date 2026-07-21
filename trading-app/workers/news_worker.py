@@ -105,6 +105,46 @@ class NewsWorker:
         except Exception:
             return False
 
+    def _inject_asset(self, asset: str, window_ok: bool, kind: str):
+        """Resolve -> validate -> inject one AI-picked asset into every user's watchlist.
+
+        Shared by the equity and commodity slots so both go through the SAME live-quote
+        validation (an unquotable/expired symbol is never pushed to the WS feed — that is what
+        produced the -300 'Invalid symbol' storms). `window_ok` is the caller's session gate:
+        equities stop at 15:00, commodities run to 22:00 for the MCX session.
+        """
+        if not asset or asset == "NONE" or not window_ok:
+            return
+        try:
+            symbol_prefix = self._resolve_symbol(asset)
+            if not symbol_prefix:
+                return
+            if symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:"):
+                from engine.strikes import resolve_current_commodity_expiry
+                # Resolve to the exact CURRENT futures contract, e.g. MCX:CRUDEOIL26JULFUT.
+                # A guessed month may not exist (esp. gold/silver); validation below drops it
+                # cleanly rather than arming a dead contract for auto-trade.
+                exact_symbol = resolve_current_commodity_expiry(symbol_prefix)
+            else:
+                exact_symbol = symbol_prefix
+            if not exact_symbol:
+                return
+
+            val_client = self._get_validation_client()
+            if not self._is_quotable(val_client, exact_symbol):
+                logger.warning(f"⏭️ Skipped unquotable {kind} injection: {exact_symbol} "
+                               f"(from '{asset}') — not added to watch")
+                return
+
+            logger.info(f"🔥 AI {kind} pick: {asset} → injecting VALID {exact_symbol} "
+                        f"— auto-trade ENABLED!")
+            for u_id, state in USER_STATES.items():
+                if exact_symbol not in state.active_symbols or \
+                   exact_symbol not in getattr(state, "enabled_symbols", []):
+                    state.add_symbol(exact_symbol, enable=True, by_agent=True)
+        except Exception as e:
+            logger.error(f"{kind} injection error for '{asset}': {e}")
+
     async def update_summary(self):
         try:
             logger.info("📰 Fetching global market news...")
@@ -134,33 +174,21 @@ class NewsWorker:
             # right before/after close. Fresh picks resume next morning.
             import datetime as _dt, pytz as _pytz
             _now_ist = _dt.datetime.now(_pytz.timezone("Asia/Kolkata"))
-            _inject_ok = _now_ist.hour < 15
-            high_conviction = result.get("high_conviction_asset", "NONE")
-            if _inject_ok and high_conviction and high_conviction != "NONE":
-                symbol_prefix = self._resolve_symbol(high_conviction)
-                if symbol_prefix:
-                    is_commodity = symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:")
-                    if is_commodity:
-                        from engine.strikes import resolve_current_commodity_expiry
-                        # Resolve to the exact current futures symbol, e.g. MCX:CRUDEOIL26JULFUT.
-                        # The guessed contract month may not exist (esp. gold/silver) — validation below
-                        # skips it cleanly rather than pushing a dead symbol to the feed.
-                        exact_symbol = resolve_current_commodity_expiry(symbol_prefix)
-                    else:
-                        exact_symbol = symbol_prefix
-                    if exact_symbol:
-                        val_client = self._get_validation_client()
-                        if not self._is_quotable(val_client, exact_symbol):
-                            logger.warning(f"⏭️ Skipped unquotable news-injection symbol: {exact_symbol} "
-                                           f"(from '{high_conviction}') — not added to watch")
-                        else:
-                            enable = True
-                            mode = "auto-trade ENABLED"
-                            logger.info(f"🔥 AI selected {high_conviction} based on news trends. "
-                                        f"Injecting VALID {exact_symbol} — {mode}!")
-                            for u_id, state in USER_STATES.items():
-                                if exact_symbol not in state.active_symbols or (enable and exact_symbol not in getattr(state, 'enabled_symbols', [])):
-                                    state.add_symbol(exact_symbol, enable=enable, by_agent=True)
+
+            # EQUITY window: nothing after 15:00 IST. Injected scrips are purged at the 15:14
+            # hard-exit, so a later injection would just re-populate the watchlist at close.
+            _equity_ok = _now_ist.hour < 15
+            # COMMODITY window: MCX trades until ~23:30, so commodities get their OWN window.
+            # The old single `hour < 15` gate meant the agent could NEVER add an MCX scrip during
+            # MCX's actual session — one of two reasons it had injected ZERO commodities ever.
+            # Stop at 22:00 so a fresh scrip still has runway before the 23:20 MCX hard-exit.
+            _commodity_ok = 9 <= _now_ist.hour < 22
+
+            self._inject_asset(result.get("high_conviction_asset", "NONE"), _equity_ok, "equity")
+            # DEDICATED commodity slot. Previously commodities had to beat every NSE stock for the
+            # single high_conviction_asset slot and never won (COM=NEUTRAL on every cycle, 0 MCX
+            # injections ever). They now compete only with each other.
+            self._inject_asset(result.get("commodity_pick", "NONE"), _commodity_ok, "commodity")
                                 
         except Exception as e:
             logger.error(f"Error updating global news summary: {e}")
