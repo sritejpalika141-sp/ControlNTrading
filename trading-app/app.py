@@ -193,6 +193,7 @@ async def lifespan(app):
     asyncio.create_task(daily_watchlist_cleanup_scheduler())
     asyncio.create_task(daily_strategy_report_scheduler())
     asyncio.create_task(engine_health_watchdog())
+    asyncio.create_task(orphan_instance_guard())
     asyncio.create_task(hourly_status_scheduler())
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
@@ -1736,6 +1737,78 @@ async def daily_hard_exit_scheduler():
             raise
         except Exception as e:
             print(f"❌ daily_hard_exit_scheduler error: {e}. Retrying in 5 min.", flush=True)
+            await asyncio.sleep(300)
+
+
+async def orphan_instance_guard():
+    """Detect when ANOTHER process is serving on our port — the failure that defeats every
+    other health check.
+
+    WHY: on 21-Jul an orphaned uvicorn (pid 2952295) from a previous restart kept holding port
+    8000. systemd's real service could not bind, so it crash-looped 9 times in 2 minutes — yet
+    `curl /api/version` returned HTTP 200 the whole time, because the ORPHAN answered. Uptime,
+    HTTP checks and even the engine watchdog all read green over a service that was dying every
+    8 seconds. Two full trading apps were also live simultaneously (a double-order risk).
+
+    Detection: ask our own port who is serving. If the PID that answers is not us, we are not
+    the live instance — alert loudly, because nothing else can see this.
+
+    Read-only. Never touches trading. Never kills anything: killing the wrong process on a
+    live-money box is far worse than reporting it, so this only reports.
+    """
+    await asyncio.sleep(45)
+    CHECK_EVERY = 300
+    ALERT_COOLDOWN = 3600
+    last_alert = 0.0
+    me = os.getpid()
+
+    while True:
+        try:
+            await asyncio.sleep(CHECK_EVERY)
+            port = int(os.getenv("PORT", "8000"))
+            served_pid = None
+            try:
+                import httpx  # local import: httpx is not imported at module level in app.py
+                async with httpx.AsyncClient(timeout=8.0) as _c:
+                    r = await _c.get(f"http://127.0.0.1:{port}/api/version")
+                    if r.status_code == 200:
+                        served_pid = (r.json() or {}).get("pid")
+            except Exception:
+                # Nothing answering is a different problem (service down); the engine watchdog
+                # and systemd cover that. This guard is specifically about a WRONG owner.
+                continue
+
+            if served_pid and int(served_pid) != me:
+                now = time.time()
+                if (now - last_alert) > ALERT_COOLDOWN:
+                    last_alert = now
+                    msg = (
+                        f"🚨 <b>Duplicate/orphan app instance detected</b>\n\n"
+                        f"Port {port} is being served by PID <b>{served_pid}</b>, "
+                        f"but this instance is PID <b>{me}</b>.\n\n"
+                        f"That means another copy of the trading app is running. Health checks "
+                        f"(HTTP 200/uptime) will look GREEN while the real service may be "
+                        f"crash-looping — and two instances can place duplicate orders.\n\n"
+                        f"Fix on the VM:\n"
+                        f"<code>sudo systemctl stop sritej-trading</code>\n"
+                        f"<code>sudo fuser -k {port}/tcp</code>\n"
+                        f"<code>sudo systemctl start sritej-trading</code>"
+                    )
+                    for _uid, _st in list(USER_STATES.items()):
+                        hook = getattr(_st, "webhook_url", "") or ""
+                        if not hook:
+                            continue
+                        try:
+                            from engine.notifier import trigger_webhook_background
+                            trigger_webhook_background(hook, msg, title="Orphan Instance Alert")
+                        except Exception:
+                            pass
+                    print(f"🚨 ORPHAN INSTANCE: port {port} served by pid {served_pid}, we are {me}.", flush=True)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"❌ orphan_instance_guard error: {e}. Retrying in 5 min.", flush=True)
             await asyncio.sleep(300)
 
 
@@ -3542,6 +3615,12 @@ async def get_version(request: Request):
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     return {
+        # Process identity — used by the orphan-instance guard. On 21-Jul an ORPHANED uvicorn
+        # squatted on port 8000, so systemd's real service could not bind and crash-looped 9x in
+        # 2 minutes while /api/version kept returning HTTP 200 *from the orphan*. Every health
+        # check looked green over an effectively dead service. Exposing the serving PID lets the
+        # running instance detect "the process answering on :8000 is not me".
+        "pid": os.getpid(),
         "version": VERSION,
         "name": "ControlN Trading Dashboard",
         "active_symbols": len(state.active_symbols),
