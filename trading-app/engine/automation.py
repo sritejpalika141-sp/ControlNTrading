@@ -60,7 +60,7 @@ class TradingState:
         self.max_trades_per_day = 10  # Total trades allowed per day (high limit since strategies run in parallel)
         self.max_loss_per_day = 2500.0
         self.daily_profit_target = 5000.0
-        self.max_loss_trades_per_day = 2  # Max LOSING trades per day (default 2) — stops all trading when reached
+        self.max_loss_trades_per_day = 4  # Max LOSING trades per day (default 4) — stops all trading when reached
         self.loss_trades_today = 0  # Counter for losing trades today
         self.webhook_url = ""
         self.live_trades_today = 0
@@ -193,7 +193,7 @@ class TradingState:
                         # Load configurable risk parameters
                         self.max_trades_per_day = data.get("max_trades_per_day", 10)
                         self.max_loss_per_day = data.get("max_loss_per_day", 2500.0)
-                        self.max_loss_trades_per_day = data.get("max_loss_trades_per_day", 2)
+                        self.max_loss_trades_per_day = data.get("max_loss_trades_per_day", 4)
                         self.loss_trades_today = data.get("loss_trades_today", 0)
                         self.max_sl_trending = data.get("max_sl_trending", 15.0)
                         self.max_sl_range = data.get("max_sl_range", 10.0)
@@ -519,18 +519,9 @@ class TradingState:
         return False
 
     def can_trade(self, strategy_name="", signal_type="", symbol=""):
-        # AI Bias Filtering
-        if self.use_ai_oracle and self.ai_daily_bias and signal_type:
-            if "BUY" in signal_type and self.ai_daily_bias == "BEARISH":
-                return False, "Blocked by AI Oracle (BEARISH bias)"
-            if "SELL" in signal_type and self.ai_daily_bias == "BULLISH":
-                return False, "Blocked by AI Oracle (BULLISH bias)"
-
         # Check for daily reset first
         self.check_daily_reset()
 
-        if not self.automation_enabled:
-            return False, "Automation disabled"
         if self.hard_exit_triggered:
             return False, "Max loss exit triggered — no more trades today"
         # Per-session (asset-aware) EOD gate: once a symbol's session has hard-exited today
@@ -570,12 +561,6 @@ class TradingState:
         # Double-fire protection (10s buffer between any trade action)
         if now - self.last_trade_time < 10:
             return False, "Rate limiting trades (10s buffer)"
-        
-        # ═══ PER-STRATEGY ACTIVE TRADE LOCK ═══
-        # Block only if THIS specific strategy already has an active trade
-        # Other strategies are free to trade simultaneously
-        if strategy_name and self.has_active_trade_for_strategy(strategy_name):
-            return False, f"Active trade in progress for {strategy_name.split(':')[0].strip()}"
             
         return True, "OK"
 
@@ -583,7 +568,7 @@ class TradingState:
         """Dynamic cooldown based on last trade result."""
         cooldown_map = {
             "profit": 3.0,   # 3 minutes after profit
-            "loss": 5.0,     # 5 minutes after loss  
+            "loss": 2.0,     # 2 minutes after loss (reduced from 5 — market moves fast)
             "manual": 2.0,   # 2 minutes after manual exit
             "breakeven": 3.0 # 3 minutes after breakeven
         }
@@ -829,7 +814,7 @@ class TradingState:
         return {
             "max_trades_per_day": self.max_trades_per_day,
             "max_daily_loss": self.max_loss_per_day,
-            "max_loss_trades_per_day": getattr(self, 'max_loss_trades_per_day', 2),
+                "max_loss_trades_per_day": getattr(self, 'max_loss_trades_per_day', 4),
             "daily_profit_target": self.daily_profit_target,
             "webhook_url": self.webhook_url,
             "max_sl_trending": self.max_sl_trending,

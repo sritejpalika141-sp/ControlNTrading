@@ -89,6 +89,9 @@ class RiskOrchestrator:
         """
         Called at the very end of the auto_trader loop.
         Instantly evaluates all collected signals from that single ~50ms loop iteration.
+        
+        NOTE: can_trade() is NOT re-checked here — it was already called before signals
+        entered the buffer. Re-checking was redundant and added latency.
         """
         signals = self.signal_buffer.pop(u_id, [])
         if not signals:
@@ -99,14 +102,7 @@ class RiskOrchestrator:
             state = sig['state']
             s_name = sig['strategy_name']
             
-            # 1. Ask State if this strategy is allowed to trade
-            can_trade, reason = state.can_trade(s_name, signal_type=sig.get('type', 'BUY'))
-            if not can_trade:
-                # Removed heavy logging in tight loop
-                # logger.info(f"⏭️ Orchestrator blocked {s_name}: {reason}")
-                continue
-                
-            # 2. Query AgentDB for strategy performance (Win Rate)
+            # Query AgentDB for strategy performance (Win Rate)
             agent_config = await self._get_agent_config(s_name)
             win_rate = agent_config.get('win_rate', 0.0) if agent_config else 0.0
             total_trades = agent_config.get('total_trades', 0) if agent_config else 0
