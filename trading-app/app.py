@@ -191,6 +191,7 @@ async def lifespan(app):
     # daily_restart_scheduler REMOVED — it relied on broken Vagator V2 TOTP auto-login
     asyncio.create_task(daily_hard_exit_scheduler())
     asyncio.create_task(daily_watchlist_cleanup_scheduler())
+    asyncio.create_task(daily_strategy_report_scheduler())
     asyncio.create_task(hourly_status_scheduler())
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
@@ -1734,6 +1735,67 @@ async def daily_hard_exit_scheduler():
             raise
         except Exception as e:
             print(f"❌ daily_hard_exit_scheduler error: {e}. Retrying in 5 min.", flush=True)
+            await asyncio.sleep(300)
+
+
+async def daily_strategy_report_scheduler():
+    """Send the per-strategy performance report to Telegram once a day after the session closes.
+
+    Fires at 15:45 IST — after the 15:14 hard-exit and the 15:30 equity square-off/cleanup, so the
+    day's P&L and trade outcomes are final. (MCX runs to 23:30 but is force-paper, and the equity
+    session is what the 9 strategies trade, so 15:45 is the meaningful "session close" here.)
+
+    Report body comes from check_strategy_perf.build_report() — the SAME code path as the CLI, so
+    the Telegram push and the manual command can never drift apart. Read-only: it places no orders
+    and mutates no state. A failure here must never affect trading, hence the broad guards.
+    """
+    await asyncio.sleep(20)  # let the app finish booting
+    REPORT_HOUR, REPORT_MIN = 15, 45
+
+    while True:
+        try:
+            now = datetime.now(IST)
+            target = now.replace(hour=REPORT_HOUR, minute=REPORT_MIN, second=0, microsecond=0)
+            if now >= target:
+                target = target + timedelta(days=1)
+            wait_s = (target - now).total_seconds()
+            print(f"📊 Daily strategy report scheduled at {target.isoformat()} (in {int(wait_s)}s)", flush=True)
+            await asyncio.sleep(wait_s)
+
+            # Skip weekends/holidays — nothing traded, so a report is just noise.
+            if datetime.now(IST).weekday() >= 5 or state.get_holiday_reason() is not None:
+                print("📊 Skipping strategy report (weekend/holiday).", flush=True)
+                await asyncio.sleep(60)
+                continue
+
+            try:
+                from check_strategy_perf import build_report
+                body = build_report(compact=True)
+            except Exception as _be:
+                body = f"⚠️ Could not build strategy report: {_be}"
+
+            # Telegram hard-caps a message around 4096 chars.
+            if len(body) > 3800:
+                body = body[:3800] + "\n… (truncated)"
+
+            sent = 0
+            for _uid, _st in list(USER_STATES.items()):
+                hook = getattr(_st, "webhook_url", "") or ""
+                if not hook:
+                    continue
+                try:
+                    from engine.notifier import trigger_webhook_background
+                    trigger_webhook_background(hook, body, title="Daily Strategy Report")
+                    sent += 1
+                except Exception as _se:
+                    print(f"⚠️ Strategy report send failed for user {_uid}: {_se}", flush=True)
+            print(f"📊 Daily strategy report sent to {sent} user(s).", flush=True)
+            await asyncio.sleep(60)  # don't re-fire within the same minute
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"❌ daily_strategy_report_scheduler error: {e}. Retrying in 5 min.", flush=True)
             await asyncio.sleep(300)
 
 
