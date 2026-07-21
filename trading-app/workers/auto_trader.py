@@ -313,6 +313,28 @@ async def trailing_monitor():
                             trade_pnl, exit_price, _src = await _recover_closed_pnl(client, sym)
                             logger.info(f"🔎 Recovered closed P&L for {sym}: ₹{trade_pnl:.2f} (source={_src}).")
                         pos_info = {"side": "BUY", "symbol": sym}
+                        # Outcome-integrity guard: a broker position dict without sellAvg/buyAvg makes
+                        # exit_price 0, and that 0 was being PERSISTED as a real outcome (see the
+                        # 08-Jul swarm_trade_records rows: exit_price=0, pnl=0, on a +Rs2,287 day).
+                        # Recover from the last traded price and, either way, make the gap VISIBLE
+                        # instead of silently writing a zero that corrupts win-rate analysis.
+                        if not exit_price or exit_price <= 0:
+                            _fallback = 0
+                            try:
+                                from engine.ws_feed import ws_feed as _wsf
+                                _fallback = _wsf.get_ltp(sym) or 0
+                            except Exception:
+                                _fallback = 0
+                            if _fallback > 0:
+                                logger.warning(f"⚠️ exit_price missing for {sym} (broker dict had no sellAvg/buyAvg) "
+                                               f"— using last traded price {_fallback}.")
+                                exit_price = _fallback
+                            else:
+                                logger.warning(f"⚠️ exit_price UNAVAILABLE for {sym} — outcome will be recorded "
+                                               f"WITHOUT a valid exit price; treat this row as unreliable.")
+                        if trade_pnl == 0:
+                            logger.warning(f"⚠️ {sym} closed with pnl=0 — verify this is a genuine breakeven "
+                                           f"and not a P&L-recovery failure (this corrupts win-rate stats).")
                         if trade_pnl > 0:
                             # Profitable trade
                             state.record_trade_close("profit", pos=pos_info, exit_price=exit_price, pnl=trade_pnl, reason="Trailing Stop/Target Hit")  # 3 min cooldown
@@ -366,6 +388,51 @@ async def trailing_monitor():
                             traded_qty = getattr(state, "stock_lots", 1) * get_lot_size(sym)
                     # Prefer the real open position qty from broker if available
                     active_qty = abs(pos.get("qty", traded_qty)) if pos else traded_qty
+
+                    # ── Strategy 1 (OB+FVG) — Variant L exit: breakeven at +1R, then trail by 1R ──
+                    # Backtest over 68 trading days (confluence-only signals, 2 trades/day cap):
+                    # win rate 14.7% -> 57.6% and max drawdown -348 -> -113 pts vs the old
+                    # hold-to-stop/EOD exit. Deliberately does NOT book a partial: the resting SL
+                    # order covers the FULL quantity, so a partial fill could desync it and leave the
+                    # account unintentionally SHORT. INTRADAY only — the daily hard-exit squares off
+                    # anything still open, and this only ever tightens the stop (never widens it).
+                    if str(t.get("strategy", "")).startswith("Strategy 1"):
+                        try:
+                            # Explicit local import: api_queue is otherwise bound by a
+                            # function-local import further up this coroutine, which is not
+                            # guaranteed to have executed on every path.
+                            from engine.api_queue import api_queue as _apiq
+                            r_pts = float(t.get("sl_points", 0) or 0)
+                            if r_pts > 0:
+                                fav = (ltp - entry) if side == "BUY" else (entry - ltp)
+                                peak = max(float(t.get("s1_peak_fav", 0) or 0), fav)
+                                t["s1_peak_fav"] = peak
+                                if peak >= r_pts:          # +1R reached -> breakeven, then trail by 1R
+                                    give_back = peak - r_pts
+                                    new_sl = (entry + give_back) if side == "BUY" else (entry - give_back)
+                                    new_sl = round(round(new_sl / 0.05) * 0.05, 2)
+                                    cur = float(t.get("trailing_sl_price", 0) or 0)
+                                    better = (new_sl > cur) if side == "BUY" else (cur == 0 or new_sl < cur)
+                                    sl_order_id = t.get("sl_order_id")
+                                    if better and sl_order_id:
+                                        o_type = t.get("sl_order_type", 4)
+                                        lim = (new_sl - 1.0) if side == "BUY" else (new_sl + 1.0)
+                                        lim = round(round(lim / 0.05) * 0.05, 2)
+                                        mod_res = await _apiq.enqueue(
+                                            2, client.modify_order, order_id=sl_order_id,
+                                            order_type=o_type, stop_price=new_sl,
+                                            limit_price=lim if o_type == 4 else 0, qty=active_qty)
+                                        if mod_res.get("success"):
+                                            t["trailing_sl_price"] = new_sl
+                                            t["last_sl_update"] = time.time()
+                                            state.update_trade_sl_price(sl_order_id, new_sl)
+                                            await broadcast_log(
+                                                f"🛡️ Strategy 1 SL → ₹{new_sl} (peak +{peak:.1f} pts, 1R={r_pts:.1f})",
+                                                "success", user_id=u_id)
+                                        else:
+                                            logger.warning(f"Strategy 1 trail failed for {sym}: {mod_res.get('message')}")
+                        except Exception as _s1e:
+                            logger.error(f"Strategy 1 breakeven/trail error for {sym}: {_s1e}")
 
                     # Strategy 5 (Aerospace) Milestone & Time Stop Monitoring
                     if t.get("strategy") == "Strategy 5: Optimized Aerospace Mean Reversion":

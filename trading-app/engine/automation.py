@@ -120,8 +120,14 @@ class TradingState:
         self.strat_orb_triggered = False
         self.strat_orb_expired = False
 
-        # Strategy 1 specific state — only 1 trade per day
+        # Strategy 1 specific state.
+        # NOTE: strat_1_triggered is legacy DEAD state — it was never set or checked anywhere, so the
+        # documented "1 trade per day" was never actually enforced. Variant L enforces a REAL cap of
+        # 2 Strategy-1 trades per day via strat_1_trades_today (backtest: 2/day + confluence-only +
+        # breakeven-trail = 57.6% win rate, max DD -113 vs -348 pts for the old behaviour).
         self.strat_1_triggered = False
+        self.strat_1_trades_today = 0
+        self.STRAT_1_MAX_TRADES_PER_DAY = 2
         
         # Strategy 6 Specific State (Gap Fill)
         self.strat_6_trades_today = 0
@@ -209,6 +215,7 @@ class TradingState:
                         self.strat_926_expired = data.get("strat_926_expired", False)
                         self.strat_926_strikes = data.get("strat_926_strikes", None)
                         self.strat_1_triggered = data.get("strat_1_triggered", False)
+                        self.strat_1_trades_today = data.get("strat_1_trades_today", 0)
                         
                         self.strat_6_trades_today = data.get("strat_6_trades_today", 0)
                         self.strat_6_confirmed = data.get("strat_6_confirmed", False)
@@ -279,6 +286,7 @@ class TradingState:
             "strat_926_expired": self.strat_926_expired,
             "strat_926_strikes": self.strat_926_strikes,
             "strat_1_triggered": getattr(self, "strat_1_triggered", False),
+            "strat_1_trades_today": getattr(self, "strat_1_trades_today", 0),
             "strat_6_trades_today": getattr(self, "strat_6_trades_today", 0),
             "strat_6_confirmed": getattr(self, "strat_6_confirmed", False),
             "strat_6_gap_data": getattr(self, "strat_6_gap_data", None),
@@ -376,6 +384,7 @@ class TradingState:
         self.strat_orb_triggered = False
         # Reset Strategy 1 State
         self.strat_1_triggered = False
+        self.strat_1_trades_today = 0
         # Reset Strategy 4 State
         self.strat_4_trades = 0
         # Reset Strategy 6 State
@@ -529,6 +538,13 @@ class TradingState:
         # 23:20) keep trading. Only active when a symbol is passed; loss-based stops above stay global.
         if symbol and session_key_for_symbol(symbol) in getattr(self, "closed_sessions_today", []):
             return False, f"{session_key_for_symbol(symbol)} session closed for the day (hard-exit)"
+        # Variant L: real per-day cap for Strategy 1 (the legacy strat_1_triggered flag was never
+        # enforced). Backtest showed 2/day + confluence-only + breakeven-trail was the best
+        # risk-adjusted configuration; more trades/day degraded drawdown sharply.
+        if strategy_name and str(strategy_name).startswith("Strategy 1"):
+            _s1_cap = getattr(self, "STRAT_1_MAX_TRADES_PER_DAY", 2)
+            if getattr(self, "strat_1_trades_today", 0) >= _s1_cap:
+                return False, f"Strategy 1 daily cap reached ({_s1_cap} trades)"
         if self.trades_today >= self.max_trades_per_day:
             return False, f"Daily trade limit reached ({self.max_trades_per_day})"
         if self.pnl_today <= -self.max_loss_per_day:
@@ -735,6 +751,9 @@ class TradingState:
                 entry_regime = getattr(_state_mod, "market_regime", "NEUTRAL")
         except Exception:
             entry_regime = "NEUTRAL"
+        # Variant L: count Strategy-1 entries so the per-day cap in can_trade() is enforceable.
+        if strategy and str(strategy).startswith("Strategy 1"):
+            self.strat_1_trades_today = getattr(self, "strat_1_trades_today", 0) + 1
         self.active_auto_trades.append({
             "symbol": symbol,
             "entry_price": entry_price,
