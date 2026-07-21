@@ -262,8 +262,48 @@ async def run_learning_cycle():
                     
                     with open(filepath, "w") as f:
                         f.write(strategy_code)
-                        
-                    print(f"✅ Learned new strategy! Saved to {filename}")
+
+                    print(f"✅ Generated candidate: {filename}")
+
+                    # ── EVIDENCE GATE ────────────────────────────────────────────────────
+                    # An LLM's confidence is not evidence. Every candidate is backtested against
+                    # real NIFTY history and must clear a hard bar before it is kept. This exists
+                    # because a strategy can run flawlessly and still lose money: Strategy 8 fired
+                    # 1,973 signals, looked perfectly healthy, and lost 643 points at a 44% win
+                    # rate. Failures are QUARANTINED (moved out of engine/) so a losing or unstable
+                    # candidate can never be imported by the trading engine.
+                    verdict_txt = ""
+                    try:
+                        from strategy_validator import validate_strategy, format_report
+                        res = validate_strategy(filepath)
+                        verdict_txt = format_report(res)
+                        print(verdict_txt)
+                        if res["verdict"] != "PASS":
+                            qdir = os.path.join(APP_DIR, "strategies_rejected")
+                            os.makedirs(qdir, exist_ok=True)
+                            os.replace(filepath, os.path.join(qdir, filename))
+                            print(f"🚫 REJECTED by evidence gate — quarantined to strategies_rejected/{filename}")
+                        else:
+                            print(f"🏅 PASSED the evidence gate — {filename} kept as a PAPER-ONLY candidate. "
+                                  f"It is NOT auto-enabled for live trading; promote it manually after review.")
+                    except Exception as _ve:
+                        # If the gate itself cannot run, fail CLOSED: never keep an unvalidated
+                        # candidate in engine/ where it could be picked up.
+                        print(f"⚠️ Evidence gate failed to run ({_ve}); quarantining candidate to be safe.")
+                        try:
+                            qdir = os.path.join(APP_DIR, "strategies_rejected")
+                            os.makedirs(qdir, exist_ok=True)
+                            os.replace(filepath, os.path.join(qdir, filename))
+                        except Exception:
+                            pass
+
+                    # Report the outcome so discoveries are visible instead of silent.
+                    try:
+                        hook = get_webhook_url()
+                        if hook and verdict_txt:
+                            trigger_webhook_background(hook, verdict_txt, title="Strategy Candidate")
+                    except Exception:
+                        pass
                     
                     # --- True Adaptive Self-Learning (Reinforcement Loop) ---
                     max_iterations = 3
