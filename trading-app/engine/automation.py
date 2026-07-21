@@ -180,22 +180,9 @@ class TradingState:
                         self.closed_trades_today = data.get("closed_trades_today", [])
                         self.traded_strikes_today = data.get("traded_strikes_today", [])
                         self.skipped_signals = data.get("skipped_signals", [])
-                        self.active_symbols = data.get("active_symbols", ["NSE:NIFTY50-INDEX"])
-                        self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
-                        # SELF-HEAL orphaned auto-trade enables. enabled_symbols was only pruned by
-                        # remove_symbol(), so any OTHER removal path (the EOD agent-scrip purge,
-                        # manual watchlist edits) left the symbol enabled forever. Observed live:
-                        # 'MCX:CRUDEOIL24NOVFUT' — an EXPIRED Nov-2024 crude contract — was still
-                        # flagged for auto-trade months later, alongside a stale NSE:SBIN-EQ. Dead
-                        # contracts are exactly what produces -300 "Invalid symbol" storms (16,445 in
-                        # one day), which burn the API quota and stall the trading loop. A symbol that
-                        # is not in the watchlist must never be auto-traded, so prune on every load.
-                        _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
-                        if _orphans:
-                            self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
-                            print(f"🧹 Pruned {len(_orphans)} orphaned auto-trade enable(s) "
-                                  f"(not in watchlist): {_orphans}", flush=True)
-                        self.agent_added_symbols = data.get("agent_added_symbols", [])
+                        # NOTE: active_symbols / enabled_symbols / agent_added_symbols are loaded
+                        # AFTER this if/else so they survive a date-change reset — see the
+                        # "PERSISTENT (non-daily) config" block below.
                         self.hard_exit_triggered = data.get("hard_exit_triggered", False)
                         self.closed_sessions_today = data.get("closed_sessions_today", [])
                         self.last_reset_date = saved_date
@@ -245,6 +232,25 @@ class TradingState:
                         self.last_trade_close_time = data.get("last_trade_close_time", 0.0)
                         self.last_trade_result = data.get("last_trade_result", "")
                         print(f"📂 Loaded state: trades={self.trades_today}, loss_trades={self.loss_trades_today}/{self.max_loss_trades_per_day}, lots={self.trade_lots}, active_trades={len(self.active_auto_trades)}, strategies={self.active_strategies}", flush=True)
+
+                    # ── PERSISTENT (non-daily) config — loaded on BOTH branches ──────────────
+                    # BUG FIX: the watchlist and its agent tags used to be read only inside the
+                    # same-day `else`. On the FIRST restart of a new day the date check ran
+                    # reset_day() and skipped that branch entirely, so active_symbols /
+                    # enabled_symbols / agent_added_symbols silently fell back to __init__
+                    # defaults. Effect seen live: agent-added scrips stayed in the watchlist but
+                    # LOST their by_agent tag, so purge_agent_symbols() had nothing to purge and
+                    # they became permanent — exactly the "agent scrips still in the dashboard"
+                    # symptom. These are configuration, not daily counters, so they must survive
+                    # the daily reset.
+                    self.active_symbols = data.get("active_symbols", ["NSE:NIFTY50-INDEX"])
+                    self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
+                    self.agent_added_symbols = data.get("agent_added_symbols", [])
+                    _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
+                    if _orphans:
+                        self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
+                        print(f"🧹 Pruned {len(_orphans)} orphaned auto-trade enable(s) "
+                              f"(not in watchlist): {_orphans}", flush=True)
             except Exception as e:
                 print(f"⚠️ State load error: {e}. Resetting.", flush=True)
                 self.reset_day()
