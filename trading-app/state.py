@@ -51,6 +51,13 @@ main_loop: Optional[asyncio.AbstractEventLoop] = None
 # market_regime/regime_reason = NSE/Indian equity regime (kept for backward compat). The Regime
 # Worker also fills per-market regimes below using the SAME 5m-candle logic (currency uses the
 # news-derived trend since its FUT feed is deferred).
+# Engine liveness heartbeat — updated by the automation loop after EVERY completed cycle.
+# engine_health_watchdog() alerts when this goes stale during market hours. This exists because
+# the engine silently stopped placing trades for 133 of 159 days and nothing ever surfaced it:
+# a hung API call stretched one cycle to 15-20 minutes, so the loop was "running" but never
+# reached the time-boxed strategy windows. A heartbeat catches exactly that (age > 10 min).
+last_automation_cycle_ts: float = 0.0
+
 market_regime: str = "NEUTRAL"
 regime_reason: str = "Awaiting first 5-minute candle."
 mcx_regime: str = "NEUTRAL"

@@ -192,6 +192,7 @@ async def lifespan(app):
     asyncio.create_task(daily_hard_exit_scheduler())
     asyncio.create_task(daily_watchlist_cleanup_scheduler())
     asyncio.create_task(daily_strategy_report_scheduler())
+    asyncio.create_task(engine_health_watchdog())
     asyncio.create_task(hourly_status_scheduler())
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
@@ -1735,6 +1736,89 @@ async def daily_hard_exit_scheduler():
             raise
         except Exception as e:
             print(f"❌ daily_hard_exit_scheduler error: {e}. Retrying in 5 min.", flush=True)
+            await asyncio.sleep(300)
+
+
+async def engine_health_watchdog():
+    """Alert to Telegram when the automation engine goes SILENT during market hours.
+
+    WHY THIS EXISTS: the engine placed no trades on 133 of 159 days and nothing ever surfaced it.
+    A hung API call stretched one automation cycle to 15-20 MINUTES, so the loop looked "running"
+    while never reaching the time-boxed strategy windows (ORB 09:20-09:30, the 09:26 entry). The
+    failure was completely silent for months. A completed cycle is the only trustworthy proof the
+    engine is actually evaluating strategies, so we alert when that heartbeat goes stale.
+
+    Read-only and heavily guarded: a monitoring failure must never disturb trading.
+    """
+    await asyncio.sleep(90)          # let the first cycles land after boot
+    STALE_AFTER = 600                # 10 min with no completed cycle => something is wrong
+    CHECK_EVERY = 300                # evaluate every 5 min
+    ALERT_COOLDOWN = 3600            # at most one alert per hour, so it never becomes noise
+    last_alert = 0.0
+    recovered_pending = False
+
+    while True:
+        try:
+            await asyncio.sleep(CHECK_EVERY)
+
+            # Only meaningful while a market the engine trades is actually open.
+            try:
+                market_live = state.is_market_open() or state.is_market_open("COMMODITY_OPTIONS")
+            except Exception:
+                market_live = state.is_market_open()
+            if not market_live:
+                continue
+
+            hb = getattr(state, "last_automation_cycle_ts", 0.0) or 0.0
+            now = time.time()
+            age = (now - hb) if hb else None
+            stale = (hb == 0.0) or (age is not None and age > STALE_AFTER)
+
+            if stale and (now - last_alert) > ALERT_COOLDOWN:
+                last_alert = now
+                recovered_pending = True
+                detail = ("has NOT completed a single cycle since startup"
+                          if not hb else f"last completed a cycle {int(age // 60)} min ago")
+                msg = (
+                    f"🚨 <b>Trading engine appears SILENT</b>\n\n"
+                    f"The automation loop {detail}, while the market is OPEN.\n"
+                    f"No strategies are being evaluated, so no trades can be placed.\n\n"
+                    f"Likely causes: a stalled API call, an expired Fyers token, or a crashed loop.\n"
+                    f"Check the service and the API-queue timeout counter."
+                )
+                sent = 0
+                for _uid, _st in list(USER_STATES.items()):
+                    hook = getattr(_st, "webhook_url", "") or ""
+                    if not hook:
+                        continue
+                    try:
+                        from engine.notifier import trigger_webhook_background
+                        trigger_webhook_background(hook, msg, title="Engine Health Alert")
+                        sent += 1
+                    except Exception:
+                        pass
+                print(f"🚨 ENGINE SILENT alert sent to {sent} user(s) — heartbeat {detail}.", flush=True)
+
+            elif (not stale) and recovered_pending:
+                # Tell the user it came back, so an alert is never left dangling.
+                recovered_pending = False
+                for _uid, _st in list(USER_STATES.items()):
+                    hook = getattr(_st, "webhook_url", "") or ""
+                    if not hook:
+                        continue
+                    try:
+                        from engine.notifier import trigger_webhook_background
+                        trigger_webhook_background(
+                            hook, "✅ <b>Trading engine is cycling again</b> — strategies are being evaluated.",
+                            title="Engine Health Recovered")
+                    except Exception:
+                        pass
+                print("✅ Engine heartbeat recovered.", flush=True)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"❌ engine_health_watchdog error: {e}. Retrying in 5 min.", flush=True)
             await asyncio.sleep(300)
 
 

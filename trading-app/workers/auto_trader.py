@@ -1722,6 +1722,14 @@ async def automation_loop():
                 # produced zero trades for months. The api_queue per-call timeout fixes the cause;
                 # this makes any regression LOUD instead of silent.
                 _cycle_secs = time.time() - _cycle_t0
+                # Engine liveness heartbeat (#2). A completed cycle is the ONLY reliable proof the
+                # engine is actually evaluating strategies; engine_health_watchdog() alerts if this
+                # goes stale during market hours.
+                try:
+                    import state as _state_hb
+                    _state_hb.last_automation_cycle_ts = time.time()
+                except Exception:
+                    pass
                 if _cycle_secs > 60:
                     logger.warning(
                         f"🐢 Automation cycle took {_cycle_secs:.0f}s for user {u_id} "
