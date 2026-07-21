@@ -13,7 +13,11 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from engine.encryption import get_secret, save_to_vault
-from state import calculate_position_size
+# NOTE: calculate_position_size is imported LAZILY at its call site, not here. state.py does
+# `from fyers_client import FyersClient` at module level, so a module-level import back into
+# state creates a CIRCULAR IMPORT that fails at startup with:
+#   ImportError: cannot import name 'FyersClient' from 'fyers_client'
+# Same lazy pattern used elsewhere in this file/codebase (e.g. engine.ws_feed).
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -1270,8 +1274,11 @@ class FyersClient:
             print(f"🛑 [KILL SWITCH ACTIVE] Order rejected: {symbol} {side} {qty}")
             return {"success": False, "message": "SYSTEM LOCKED: Global Kill-Switch is active."}
 
-        # POSITION SIZING: If qty is 0 or not provided, calculate based on risk
+        # POSITION SIZING: If qty is 0 or not provided, calculate based on risk.
+        # Lazy import — see the note at the top of this file: importing from `state` at module
+        # level creates a circular import (state.py imports FyersClient from here).
         if qty <= 0 and limit_price > 0:
+            from state import calculate_position_size
             qty = calculate_position_size(self.user_id, limit_price, sl_points, symbol)
             print(f"📊 POSITION SIZING: Calculated qty={qty} for {symbol} (risk={sl_points}pts)")
 
