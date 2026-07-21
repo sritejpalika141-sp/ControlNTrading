@@ -760,21 +760,23 @@ class AIEngine:
             chp_info = f"Day Change: {chp:+.2f}% ({direction} from previous close)"
 
         return f"""
-You are an expert intraday analyst for the Indian stock market.
-Based on the REAL-TIME market data below, determine the current intraday trend for {scrip_name}.
+You are a concise intraday trend judge for {scrip_name} (Indian stock market).
+Use ONLY the REAL-TIME data below. Do NOT use training data or assume direction.
 
-REAL-TIME MARKET DATA (use ONLY this data, do NOT rely on your training data):
+MARKET DATA:
 - {market_info}
 {f'- {vix_info}' if vix_info else ''}
 {f'- {chp_info}' if chp_info else ''}
 
-RULES:
-- A negative day change (price falling) = likely BEARISH
-- A positive day change (price rising) = likely BULLISH
-- Small change (<0.2%) or high VIX (>20) with no clear direction = NEUTRAL
-- NEVER guess or use old/training data. Use ONLY the data provided above.
+RULES (apply in this order):
+1. If day change > +0.15% → BULLISH (strength 55-70)
+2. If day change < -0.15% → BEARISH (strength 55-70)
+3. If day change is between -0.15% and +0.15% → NEUTRAL (strength 40-55)
+4. If VIX > 20 AND direction is unclear (<0.3% change) → NEUTRAL (strength 35-50)
+5. NEVER default to BEARISH without a negative day change as evidence.
+6. Respond with NEUTRAL if data is insufficient or ambiguous.
 
-Respond ONLY with this JSON format:
+Respond ONLY with this JSON:
 {{"trend": "BULLISH" | "BEARISH" | "NEUTRAL", "strength": <0-100>, "rationale": "<1 sentence citing the actual data>"}}"""
 
     async def get_global_macro_summary(self, headlines: List[str]) -> Dict:

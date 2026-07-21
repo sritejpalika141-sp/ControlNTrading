@@ -42,8 +42,9 @@ class FyersWSFeed:
         self._socket = None
         self._connected = False
         self._reconnect_count = 0
-        self._max_reconnects = 10
+        self._max_reconnects = 200  # Allow persistent reconnection during market hours
         self._last_tick_time: float = 0
+        self._last_reconnect_reset: float = 0  # Timestamp of last reconnect count reset
         self._client = None  # Broker reference
         self._started = False
         self._lock = threading.Lock()
@@ -144,8 +145,9 @@ class FyersWSFeed:
             if elapsed > 300:
                 return False
                 
-            # If during market hours, be strict (20 seconds)
-            if elapsed > 20:
+            # During market hours, be strict but not too aggressive (30 seconds)
+            # Fyers LiteMode can have brief pauses between ticks
+            if elapsed > 30:
                 now = datetime.now(IST).time()
                 # 09:15 to 15:30 IST
                 if (9, 15) <= (now.hour, now.minute) <= (15, 30):
@@ -329,7 +331,8 @@ class FyersWSFeed:
     def _on_connect(self):
         """Called when WebSocket connects successfully."""
         self._connected = True
-        self._reconnect_count = 0
+        self._reconnect_count = 0  # Reset on successful connect
+        self._last_reconnect_reset = time.time()
         logger.info("✅ Fyers WebSocket CONNECTED")
         
         # Subscribe to all tracked symbols
@@ -549,6 +552,16 @@ class FyersWSFeed:
             
             if not self._started or not self._subscribed:
                 continue
+            
+            # Periodic reconnect count reset: if we've been receiving ticks for 5 minutes,
+            # reset the reconnect counter so we tolerate future transient disconnects.
+            if self._connected and self._last_tick_time > 0:
+                tick_age = time.time() - self._last_tick_time
+                if tick_age < 30 and (time.time() - self._last_reconnect_reset) > 300:
+                    if self._reconnect_count > 0:
+                        logger.info(f"🔄 WS reconnect counter reset (was {self._reconnect_count})")
+                    self._reconnect_count = 0
+                    self._last_reconnect_reset = time.time()
                 
             # Only apply fail-over during active market hours
             now = datetime.now(IST).time()

@@ -1595,9 +1595,13 @@ async def automation_loop():
                             current_trend = (trend_info.get("trend", "") or "").upper()
                         else:
                             current_trend = "NEUTRAL"
+                        # Trend alignment: skip counter-trend signals
                         if sig["type"] == "CALL" and "BEAR" in current_trend: continue
                         if sig["type"] == "PUT" and "BULL" in current_trend: continue
-                        if "NEUTRAL" in current_trend or "SIDEWAYS" in current_trend: continue
+                        # NEUTRAL/SIDEWAYS: allow high-confidence signals (>= 75) instead of blocking all
+                        # Previously this blocked ALL signals in NEUTRAL, which was the #1 reason for
+                        # zero trades when AI always said BEARISH and conflicted with math.
+                        if ("NEUTRAL" in current_trend or "SIDEWAYS" in current_trend) and tech_conf < 75: continue
                         if state.profit_target_met and tech_conf < 85: continue
                         
                         can_trade, reason = state.can_trade("Strategy 1", signal_type=sig['type'], symbol=symbol)
@@ -1611,6 +1615,7 @@ async def automation_loop():
                         _ai_conf = sig.get("ai_confidence", 0) or 0
                         _ai_down = sig.get("ai_status") in ("unavailable", "skipped", "timeout", "error")
                         if tech_conf >= 70 or (tech_conf >= 50 and _ai_conf >= 50) or (_ai_down and tech_conf >= 60):
+                            print(f"📡 Strat1 SIGNAL: {sig['type']} {symbol} conf={tech_conf} trend={current_trend}", flush=True)
                             await risk_orchestrator.propose_trade("Strategy 1", symbol, sig, analysis, client, state)
                             break
                             
@@ -1736,6 +1741,15 @@ async def automation_loop():
                         f"({len(tasks)} evaluations). Time-boxed strategies (ORB 09:20-09:30, "
                         f"09:26 entry) risk being MISSED — check API-queue timeouts / provider latency."
                     )
+                
+                # Diagnostic: log strategy activity summary every 2 minutes
+                _now_min = int(time.time() / 120)
+                if not hasattr(run_strat_1, '_last_log_min') or run_strat_1._last_log_min != _now_min:
+                    run_strat_1._last_log_min = _now_min
+                    _active = getattr(state, 'active_strategies', [])
+                    _auto = getattr(state, 'automation_enabled', False)
+                    _trades = getattr(state, 'trades_today', 0)
+                    print(f"📊 Cycle #{_now_min}: user={u_id} active={len(_active)} auto={_auto} trades={_trades} cycle={_cycle_secs:.1f}s symbols={state.active_symbols}", flush=True)
                 
                 # 3. Ask Orchestrator to resolve any simultaneous trade signals
                 await risk_orchestrator.flush_signals(u_id)

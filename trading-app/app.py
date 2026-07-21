@@ -2503,29 +2503,33 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             # This prevents the critical bug where AI hallucinated BULLISH while market was BEARISH.
             math_trend = multi_tf["trend"]
             ai_trend = ai_simple.get("trend", "NEUTRAL")
+            ai_strength = ai_simple.get("strength", 50)
             
             if math_trend in ("BULLISH", "BEARISH"):
                 if ai_trend == math_trend:
                     # BEST CASE: Math and AI agree → Strong conviction
                     final_trend = math_trend
-                    final_strength = min(100, max(multi_tf["strength"], ai_simple.get("strength", 70)))
+                    final_strength = min(100, max(multi_tf["strength"], ai_strength))
                     final_rationale = f"[CONFIRMED] Math + AI agree: {math_trend}. {multi_tf['rationale']}"
-                elif ai_trend == "NEUTRAL":
-                    # AI is uncertain but math has a direction → Use math with reduced confidence
+                elif ai_trend == "NEUTRAL" or ai_strength < 40:
+                    # AI is uncertain OR has very low confidence → Trust math direction
+                    # FIX: Previously, low-confidence AI BEARISH (20%) conflicting with math BULLISH
+                    # caused CONFLICT → NEUTRAL → all signals blocked. Now treat low-confidence AI
+                    # as "uncertain" so math drives the decision.
                     final_trend = math_trend
-                    final_strength = max(50, multi_tf["strength"] - 15)
-                    final_rationale = f"[MATH] {multi_tf['rationale']} (AI uncertain)"
+                    final_strength = max(50, multi_tf["strength"] - (0 if ai_strength < 40 else 15))
+                    final_rationale = f"[MATH] {multi_tf['rationale']} (AI weak: {ai_trend} {ai_strength}%)"
                 else:
-                    # CONFLICT: Math says one thing, AI says opposite → DEFAULT TO NEUTRAL (Capital Protection)
-                    # This is the critical safety fix — NEVER trust AI over math blindly
+                    # GENUINE CONFLICT: Math says one thing, AI says opposite with HIGH confidence
+                    # Only block trades when AI is genuinely confident AND disagrees with math
                     final_trend = "NEUTRAL"
                     final_strength = 40
-                    final_rationale = f"[CONFLICT] Math={math_trend} vs AI={ai_trend}. Defaulting to NEUTRAL for capital protection."
-                    print(f"⚠️ SAFETY: Math({math_trend}) ≠ AI({ai_trend}). Blocking trades (Capital Protection).", flush=True)
+                    final_rationale = f"[CONFLICT] Math={math_trend} vs AI={ai_trend}({ai_strength}%). Defaulting to NEUTRAL for capital protection."
+                    print(f"⚠️ SAFETY: Math({math_trend}) ≠ AI({ai_trend} {ai_strength}%). Blocking trades (Capital Protection).", flush=True)
             elif ai_trend in ("BULLISH", "BEARISH") and math_trend == "NEUTRAL":
                 # Math is neutral but AI has opinion → Use AI with LOW confidence only
                 final_trend = ai_trend
-                final_strength = min(55, ai_simple.get("strength", 50))
+                final_strength = min(55, ai_strength)
                 final_rationale = f"[AI WEAK] Math neutral, AI leans {ai_trend} (low confidence). {ai_simple.get('rationale', '')}"
             else:
                 # Both neutral → Stay neutral

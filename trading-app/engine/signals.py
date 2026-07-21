@@ -193,7 +193,10 @@ def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
     # comparable (+218 vs +307 pts) and cut MAX DRAWDOWN from -348 to -68 points — i.e. ~3.2
     # pts of profit per pt of drawdown vs 0.88 before. Standalone OB/FVG setups were noise.
     # Flip to False to restore the previous all-setups behaviour.
-    STRAT1_CONFLUENCE_ONLY = True
+    # FIX: Changed to False to allow standalone OB/FVG signals. The confluence-only filter
+    # produced zero signals for a week. Standalone setups with strong trend alignment and
+    # higher confidence thresholds (>70) provide more trading opportunities.
+    STRAT1_CONFLUENCE_ONLY = False
 
     all_setups = []
     for conf in confluences: all_setups.append({"dir": conf["direction"], "top": conf["zone_top"], "bottom": conf["zone_bottom"], "type": "confluence", "source": conf})
