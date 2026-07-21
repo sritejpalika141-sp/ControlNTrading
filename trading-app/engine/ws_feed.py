@@ -381,35 +381,61 @@ class FyersWSFeed:
                 # Rejected -> keep last good. A sustained streak of rejects = a GENUINE large move, so
                 # we re-anchor to it (contamination is intermittent, so real ticks reset the streak).
                 if ltp and ltp > 0:
-                    ref = self._ref_price.get(symbol, 0.0)
-                    if ref > 0:
-                        dev = abs(ltp - ref) / ref
-                        contaminated = dev > 0.40  # 40% band: far beyond any real intraday/circuit move
-                        if not contaminated and dev > 0.12:
-                            # borderline — is this ltp actually another symbol's price? (stock-on-stock)
-                            for _osym, _oref in self._ref_price.items():
-                                if _osym != symbol and _oref > 0 and abs(ltp - _oref) / _oref < 0.03:
-                                    contaminated = True
-                                    break
-                        if contaminated:
-                            self._reject_streak[symbol] = self._reject_streak.get(symbol, 0) + 1
-                            if self._reject_streak[symbol] >= 30:
-                                # 30 straight rejects with no accepted tick in between => genuine move.
-                                self._ref_price[symbol] = ltp
-                                self._reject_streak[symbol] = 0
-                                print(f"🔄 TICK-GUARD: re-anchored {symbol} to {ltp} after sustained move.", flush=True)
-                            else:
-                                print(f"⚠️ TICK-CONTAMINATION: rejected ltp={ltp} for {symbol} "
-                                      f"(ref={ref:.2f}, dev={dev*100:.0f}%); keeping last good.", flush=True)
-                                ltp = current.get("ltp", 0) or ref
+                    # ── HARD SANITY BOUND for INDEX symbols (NIFTY / BANKNIFTY / SENSEX / INDIAVIX) ──
+                    # An index cannot plausibly move outside ~[-50%, +100%] of its previous close in one
+                    # session, so prev_close (REST-seeded, trustworthy) is an ABSOLUTE anchor that a
+                    # contaminated tick can never shift. This is precisely what the EMA/re-anchor path
+                    # below could NOT do: an index like INDIAVIX ticks slowly, so a sustained run of
+                    # crossed ticks (e.g. BANKNIFTY's ~58000 landing on INDIAVIX ~13) was never
+                    # interrupted by a real tick, eventually tripping the 30-reject "genuine move"
+                    # re-anchor — poisoning the reference and making the UI oscillate between the two
+                    # prices. Bounding by prev_close also SELF-HEALS an already-poisoned reference.
+                    _pc = msg.get("prev_close_price", current.get("prev_close_price", 0)) or 0
+                    if symbol.upper().endswith("-INDEX") and _pc > 0:
+                        _lo, _hi = _pc * 0.5, _pc * 2.0
+                        if not (_lo <= ltp <= _hi):
+                            print(f"⚠️ TICK-CONTAMINATION: rejected ltp={ltp} for {symbol} "
+                                  f"(prev_close={_pc}, plausible=[{_lo:.2f},{_hi:.2f}]); keeping last good.",
+                                  flush=True)
+                            ltp = current.get("ltp", 0) or _pc
                         else:
-                            # accepted — track the reference (EMA) and clear the reject streak
-                            self._ref_price[symbol] = ref * 0.9 + ltp * 0.1
+                            # plausible → accept, and reset any previously poisoned reference/streak
+                            self._ref_price[symbol] = ltp
                             self._reject_streak[symbol] = 0
                     else:
-                        # first good tick for this symbol -> bootstrap the reference (self-heals within
-                        # 30 ticks via the re-anchor path if this first value was itself contaminated)
-                        self._ref_price[symbol] = ltp
+                        ref = self._ref_price.get(symbol, 0.0)
+                        if ref > 0:
+                            dev = abs(ltp - ref) / ref
+                            contaminated = dev > 0.40  # 40% band: far beyond any real intraday/circuit move
+                            # Does this ltp look like ANOTHER subscribed symbol's price? That is the
+                            # tell-tale cross-contamination signature — checked at ANY deviation so it can
+                            # also veto the re-anchor below (a crossed price is never a "genuine move").
+                            looks_like_other = False
+                            for _osym, _oref in self._ref_price.items():
+                                if _osym != symbol and _oref > 0 and abs(ltp - _oref) / _oref < 0.03:
+                                    looks_like_other = True
+                                    break
+                            if not contaminated and dev > 0.12 and looks_like_other:
+                                contaminated = True
+                            if contaminated:
+                                self._reject_streak[symbol] = self._reject_streak.get(symbol, 0) + 1
+                                # Re-anchor ONLY for a sustained move that is NOT another symbol's price.
+                                if self._reject_streak[symbol] >= 30 and not looks_like_other:
+                                    self._ref_price[symbol] = ltp
+                                    self._reject_streak[symbol] = 0
+                                    print(f"🔄 TICK-GUARD: re-anchored {symbol} to {ltp} after sustained move.", flush=True)
+                                else:
+                                    print(f"⚠️ TICK-CONTAMINATION: rejected ltp={ltp} for {symbol} "
+                                          f"(ref={ref:.2f}, dev={dev*100:.0f}%); keeping last good.", flush=True)
+                                    ltp = current.get("ltp", 0) or ref
+                            else:
+                                # accepted — track the reference (EMA) and clear the reject streak
+                                self._ref_price[symbol] = ref * 0.9 + ltp * 0.1
+                                self._reject_streak[symbol] = 0
+                        else:
+                            # first good tick for this symbol -> bootstrap the reference (self-heals within
+                            # 30 ticks via the re-anchor path if this first value was itself contaminated)
+                            self._ref_price[symbol] = ltp
 
                 prev_close = msg.get("prev_close_price", current.get("prev_close_price", 0))
 
