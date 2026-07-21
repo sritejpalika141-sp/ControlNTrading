@@ -21,8 +21,7 @@ def _get_or_create_key() -> bytes:
     except Exception:
         pass
         
-    logger.warning("🚨 NEW MASTER ENCRYPTION KEY GENERATED. SAVE THIS SECURELY.")
-    print(f"🚨 MASTER KEY GENERATED: {key.decode()} 🚨")
+    logger.warning("NEW MASTER ENCRYPTION KEY GENERATED. SAVE THIS SECURELY.")
     return key
 
 def encrypt_data(data: str) -> str:

@@ -1306,6 +1306,13 @@ async def force_fyers_refresh(request: Request):
 async def get_swarm_status(request: Request):
     try:
         from models import Database
+        user_id = await resolve_authenticated_user_id(request)
+        if not user_id:
+            return JSONResponse({"error": "Unauthorized"}, 401)
+        admin_user = await Database.get_user_by_id(user_id)
+        if not admin_user or not admin_user["is_admin"]:
+            return JSONResponse({"error": "Unauthorized: Admins only"}, 403)
+
         agents = await Database.get_all_agent_configs()
         
         # Hydrate with latest learning logs
@@ -1335,7 +1342,7 @@ async def enable_strategy(request: Request, strategy_name: str):
     """
     try:
         # Verify admin permissions
-        user_id = resolve_authenticated_user_id(request)
+        user_id = await resolve_authenticated_user_id(request)
         if not user_id:
             return JSONResponse({"success": False, "message": "Authentication required"}, status_code=401)
         
@@ -2685,9 +2692,17 @@ async def get_candles_api(request: Request, symbol: str = "NSE:NIFTY50-INDEX", r
 
 
 @app.get("/api/test-signal")
-async def test_signal():
-    """Manually trigger a test signal to verify UI and History logic."""
+async def test_signal(request: Request):
+    """Manually trigger a test signal to verify UI and History logic. Admin only."""
     try:
+        user_id = await resolve_authenticated_user_id(request)
+        if not user_id:
+            return JSONResponse({"error": "Unauthorized"}, 401)
+        from models import Database
+        admin_user = await Database.get_user_by_id(user_id)
+        if not admin_user or not admin_user["is_admin"]:
+            return JSONResponse({"error": "Unauthorized: Admins only"}, 403)
+
         # Simulate a high-confidence signal
         test_sig = {
             "type": "CALL",
@@ -2764,8 +2779,11 @@ async def get_option_chain(request: Request):
     return chain
 
 @app.get("/api/signal-history")
-async def get_signal_history_api():
-    """Get signal history from logger."""
+async def get_signal_history_api(request: Request):
+    """Get signal history from logger. Auth required."""
+    user_id = await resolve_authenticated_user_id(request)
+    if not user_id:
+        return JSONResponse({"error": "Unauthorized"}, 401)
     history = get_signal_history()
     return {"success": True, "history": history}
 
