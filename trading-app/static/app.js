@@ -1121,10 +1121,12 @@ function connectWebSocket() {
             const vixChEl = document.getElementById('vixChange');
             if (vixChEl) {
                 // Backend sends vix.change as chp (change PERCENT), so render it with a % suffix.
+                // Use our own .vix-chg class (not Bootstrap utilities) so the pill's colour rules
+                // can never override it.
                 const vixChp = Number(data.vix.change) || 0;
                 const vixSign = vixChp >= 0 ? '+' : '';
                 vixChEl.textContent = `${vixSign}${vixChp.toFixed(2)}%`;
-                vixChEl.className = vixChp >= 0 ? 'text-success ms-1' : 'text-danger ms-1';
+                vixChEl.className = 'vix-chg ' + (vixChp >= 0 ? 'up' : 'down');
             }
         }
         

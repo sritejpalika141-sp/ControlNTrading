@@ -50,12 +50,18 @@ body { font-family:'Outfit',sans-serif; background:var(--bg); color:var(--text);
 .conn-dot { width:7px; height:7px; border-radius:50%; background:var(--red); flex-shrink:0; }
 .conn-dot.connected { background:var(--green); box-shadow:0 0 6px var(--green); }
 .conn-dot.disconnected { background:var(--red); }
-.price-display { display:flex; align-items:baseline; gap:8px; background:var(--card); padding:4px 14px; border-radius:var(--radius); border:1px solid var(--border); }
+.price-display { display:flex; align-items:baseline; gap:8px; background:var(--card); padding:5px 14px; border-radius:var(--radius); border:1px solid var(--border); line-height:1.25; }
 .price-label { font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; margin-right: 4px; }
 .price-value { font-size:18px; font-weight:800; color:var(--cyan); font-family:'JetBrains Mono',monospace; }
 .price-change { font-size:11px; font-weight:600; }
-.vix-pill { background:var(--card); padding:4px 10px; border-radius:20px; font-size:11px; font-weight:600; color:var(--text-muted); border:1px solid var(--border); }
-.vix-pill span { color:var(--yellow); font-family:'JetBrains Mono',monospace; }
+/* VIX pill: same shape/height/baseline as the NIFTY price pill so the top bar reads as one row. */
+.vix-pill { display:flex; align-items:baseline; gap:7px; background:var(--card); padding:5px 14px; border-radius:var(--radius); border:1px solid var(--border); line-height:1.25; }
+.vix-pill .vix-label { font-size:9px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; }
+.vix-pill #vixValue { font-size:15px; font-weight:800; color:var(--yellow); font-family:'JetBrains Mono',monospace; }
+/* Dedicated class (not Bootstrap utilities) so the pill's own colour rules can't override it. */
+.vix-chg { font-size:11px; font-weight:600; font-family:'JetBrains Mono',monospace; color:var(--text-muted); }
+.vix-chg.up { color:var(--green); }
+.vix-chg.down { color:var(--red); }
 .trend-pill { padding:3px 10px; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; }
 .auto-panel { display:flex; align-items:center; gap:8px; }
 .auto-status { font-size:11px; font-weight:700; color:var(--text-muted); letter-spacing:.5px; }
