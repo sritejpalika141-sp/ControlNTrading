@@ -1120,9 +1120,11 @@ function connectWebSocket() {
             if (vixEl) vixEl.textContent = Number(data.vix.lp).toFixed(2);
             const vixChEl = document.getElementById('vixChange');
             if (vixChEl) {
-                const vixSign = data.vix.change >= 0 ? '+' : '';
-                vixChEl.textContent = `${vixSign}${data.vix.change.toFixed(2)}`;
-                vixChEl.className = data.vix.change >= 0 ? 'text-success ms-1' : 'text-danger ms-1';
+                // Backend sends vix.change as chp (change PERCENT), so render it with a % suffix.
+                const vixChp = Number(data.vix.change) || 0;
+                const vixSign = vixChp >= 0 ? '+' : '';
+                vixChEl.textContent = `${vixSign}${vixChp.toFixed(2)}%`;
+                vixChEl.className = vixChp >= 0 ? 'text-success ms-1' : 'text-danger ms-1';
             }
         }
         
