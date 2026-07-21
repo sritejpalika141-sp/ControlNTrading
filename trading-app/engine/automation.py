@@ -98,7 +98,7 @@ class TradingState:
         # These are purged automatically at end-of-day so the watchlist resets to the user's base
         # symbols each night; the agent re-adds fresh picks the next session.
         self.agent_added_symbols = []
-        self.paper_trading = True
+        self.paper_trading = False
         self.paper_positions = []
         self.paper_orders = []
         self.paper_funds = {"availableBalance": 1000000.0, "realizedPnl": 0.0}
@@ -202,7 +202,7 @@ class TradingState:
                         self.daily_profit_target = data.get("daily_profit_target", 5000.0)
                         self.webhook_url = data.get("webhook_url", "")
                         self.trade_lots = data.get("trade_lots", 1)
-                        self.paper_trading = data.get("paper_trading", True)
+                        self.paper_trading = data.get("paper_trading", False)
                         self.paper_positions = data.get("paper_positions", [])
                         self.paper_orders = data.get("paper_orders", [])
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
