@@ -3,6 +3,9 @@ import httpx
 import logging
 logger = logging.getLogger("notifier")
 
+# Suppress httpx INFO logs that leak full URLs (including Telegram bot tokens)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 async def send_webhook_alert(webhook_url, message, title="Sritej Trading Alert"):
     """
     Sends a generic webhook alert (compatible with Discord and generic webhooks).
