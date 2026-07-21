@@ -13,11 +13,6 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from pathlib import Path
 from engine.encryption import get_secret, save_to_vault
-# NOTE: calculate_position_size is imported LAZILY at its call site, not here. state.py does
-# `from fyers_client import FyersClient` at module level, so a module-level import back into
-# state creates a CIRCULAR IMPORT that fails at startup with:
-#   ImportError: cannot import name 'FyersClient' from 'fyers_client'
-# Same lazy pattern used elsewhere in this file/codebase (e.g. engine.ws_feed).
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -1289,13 +1284,7 @@ class FyersClient:
         try:
             import app
             state = app.get_user_state(self.user_id)
-            # COMMODITY-PAPER SAFETY GATE: MCX commodities and CDS currency are FORCED to paper
-            # regardless of the user's live/paper setting, until the commodity strategy family is
-            # validated. This prevents any accidental LIVE commodity order while we tune paper-first.
-            _force_paper_commodity = symbol.startswith("MCX:") or symbol.startswith("CDS:")
-            if _force_paper_commodity and not state.paper_trading:
-                print(f"🧪 [COMMODITY PAPER GATE] {symbol} forced to PAPER (commodity live-trade not yet enabled).", flush=True)
-            if state.paper_trading or _force_paper_commodity:
+            if state.paper_trading:
                 # 1. Fetch live price
                 quote = self.get_quote(symbol)
                 ltp = quote.get("lp", 0) if quote else limit_price
