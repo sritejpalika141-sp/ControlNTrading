@@ -990,11 +990,18 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             current_trend = "NEUTRAL"
 
         strategy_name = sig.get("strategy", "")
-        # ONLY apply strict trend lockout to Strategy 1 (OB+FVG)
+        # Strategy 1 (OB+FVG) directional consistency.
+        # FIX 5: the old rule ALSO returned outright on NEUTRAL/RANGE/SIDEWAYS/CHOPPY. That blocked
+        # Strategy 1 on the majority of days (NSE regime is frequently CHOPPY_SIDEWAYS, and 133 of
+        # 159 days were flat). Two reasons it's now relaxed:
+        #   1. The Variant L backtest that justified this configuration (confluence-only +
+        #      breakeven-trail, 57.6% win, max DD -113 pts) was measured WITHOUT this lockout, so
+        #      keeping it means live behaviour does not match what was actually validated.
+        #   2. With AI now bounded (FIX 1), an unavailable/slow provider yields NEUTRAL far more
+        #      often — under the old rule that silently became a permanent block.
+        # Directional consistency is KEPT: never buy a CALL into a bearish trend or vice-versa.
+        # Counter-trend setups are already filtered upstream in signals.py.
         if "Strategy 1" in strategy_name:
-            if any(x in current_trend for x in ["NEUTRAL", "RANGE_BOUND", "RANGE", "SIDEWAYS", "CHOOPY", "CHOPPY"]):
-                return
-
             sig_type = sig.get("type", "").upper()
             if "BULL" in current_trend and sig_type != "CALL":
                 return
@@ -1583,7 +1590,14 @@ async def automation_loop():
                         can_trade, reason = state.can_trade("Strategy 1", signal_type=sig['type'], symbol=symbol)
                         if not can_trade: continue
                         
-                        if tech_conf >= 70 or (tech_conf >= 50 and sig.get("ai_confidence", 0) >= 50):
+                        # FIX 3: "AI unavailable" must not act as an AI veto. Signal confidence is
+                        # 60 + trend_strength/5 (typically 60-75), so most signals fall in the 60-69
+                        # band that REQUIRED ai_confidence >= 50. Whenever the AI provider was
+                        # rate-limited, ai_confidence defaulted to 0 and every one of those signals
+                        # was silently dropped — a major contributor to "no trades placed".
+                        _ai_conf = sig.get("ai_confidence", 0) or 0
+                        _ai_down = sig.get("ai_status") in ("unavailable", "skipped", "timeout", "error")
+                        if tech_conf >= 70 or (tech_conf >= 50 and _ai_conf >= 50) or (_ai_down and tech_conf >= 60):
                             await risk_orchestrator.propose_trade("Strategy 1", symbol, sig, analysis, client, state)
                             break
                             
@@ -1655,7 +1669,21 @@ async def automation_loop():
                     
                 # 2. Execute the entire Swarm simultaneously (Zero Delay)
                 import asyncio
+                _cycle_t0 = time.time()
                 await asyncio.gather(*tasks)
+                # FIX 2: cycle watchdog. The time-boxed strategies are only reachable if a cycle
+                # completes well inside their window — Strategy 3 ORB has just 09:20-09:30 (10 min)
+                # and Strategy 2 fires 09:26-09:40. A single hung API call previously pushed one
+                # cycle to 15-20 MINUTES, which made those windows structurally unreachable and
+                # produced zero trades for months. The api_queue per-call timeout fixes the cause;
+                # this makes any regression LOUD instead of silent.
+                _cycle_secs = time.time() - _cycle_t0
+                if _cycle_secs > 60:
+                    logger.warning(
+                        f"🐢 Automation cycle took {_cycle_secs:.0f}s for user {u_id} "
+                        f"({len(tasks)} evaluations). Time-boxed strategies (ORB 09:20-09:30, "
+                        f"09:26 entry) risk being MISSED — check API-queue timeouts / provider latency."
+                    )
                 
                 # 3. Ask Orchestrator to resolve any simultaneous trade signals
                 await risk_orchestrator.flush_signals(u_id)

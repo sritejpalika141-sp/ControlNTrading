@@ -229,12 +229,21 @@ async def market_data_worker():
                         
                     username = user_data.get("username", f"User {u_id}")
 
-                    # Try refresh_token once every 5 minutes (official Fyers API)
-                    # Don't spam retries — if refresh_token fails, manual login is required
+                    # Try refresh_token every 5 minutes (official Fyers API).
+                    # FIX 4: the attempt counter previously reset ONLY on success, so after 2 failed
+                    # refreshes the app gave up for the WHOLE session — the token stayed expired,
+                    # every API call failed, and no trades could be placed (845 token-expiry errors
+                    # across 18-21 Jul: 229/318/122/39 per day). A transient refresh failure must not
+                    # permanently disable recovery, so the budget now REARMS after a quiet period.
                     login_attempts = cache.get("login_attempts", 0)
-                    if login_attempts < 2:  # Max 2 attempts via refresh_token
-                        last_auto_login = cache.get("last_auto_login", 0)
-                        now = datetime.now(IST).timestamp()
+                    now = datetime.now(IST).timestamp()
+                    last_auto_login = cache.get("last_auto_login", 0)
+                    REARM_AFTER = 1800          # 30 min without a successful refresh -> try again
+                    if login_attempts >= 2 and (now - last_auto_login) > REARM_AFTER:
+                        login_attempts = 0
+                        cache["login_attempts"] = 0
+                        print(f"🔁 Re-arming token-refresh attempts for user {u_id} after cooldown.", flush=True)
+                    if login_attempts < 2:  # Max 2 attempts per rearm window
                         if (now - last_auto_login) > 300:  # Every 5 min instead of 60s
                             cache["last_auto_login"] = now
                             cache["login_attempts"] = login_attempts + 1

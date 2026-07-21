@@ -1970,6 +1970,45 @@ def synthesize_15m_candles(candles_5m: List[Dict]) -> List[Dict]:
         
     return candles_15m
 
+# ── FIX 1: AI hot-path guard ─────────────────────────────────────────────────────────
+# get_analysis used to AWAIT AI calls with NO timeout. Under provider rate limits (53
+# cooldown events in a single session) one symbol's analysis measured >150s, so a 7-symbol
+# automation cycle took 15-20+ MINUTES — long enough that time-boxed strategies (ORB
+# 09:20-09:30, the 09:26 entry) could never be evaluated inside their window, and no trades
+# were placed at all. AI is ADVISORY, so it must never block execution: every AI call in the
+# trading hot path is now bounded by a hard timeout and served from a short TTL cache, with
+# the existing technical-analysis result used whenever AI is slow or unavailable.
+AI_HOT_PATH_TIMEOUT = 4.0      # seconds; never stall the trading loop longer than this
+AI_TREND_CACHE_TTL = 300       # AI trend is a slow-moving view — 5 min is plenty
+AI_FAIL_CACHE_TTL = 60         # after a miss, don't retry (and re-stall) every cycle
+_ai_hot_cache: Dict[str, tuple] = {}   # key -> (expires_at, payload)
+
+
+async def _ai_bounded(coro, fallback, label=""):
+    """Await an AI coroutine with a HARD timeout. Returns `fallback` if slow/failed so the
+    trading loop degrades to technical analysis instead of hanging."""
+    try:
+        return await asyncio.wait_for(coro, timeout=AI_HOT_PATH_TIMEOUT)
+    except asyncio.TimeoutError:
+        print(f"⏱️ AI {label} exceeded {AI_HOT_PATH_TIMEOUT}s — using technical fallback.", flush=True)
+    except Exception as _e:
+        print(f"⚠️ AI {label} failed ({_e}) — using technical fallback.", flush=True)
+    return fallback
+
+
+async def _ai_cached(key, coro_factory, fallback, label=""):
+    """TTL-cached + timeout-bounded AI call. Failures are cached briefly so a rate-limited
+    provider cannot re-stall the loop on every symbol, every cycle."""
+    now = time.time()
+    hit = _ai_hot_cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    val = await _ai_bounded(coro_factory(), fallback, label)
+    ok = isinstance(val, dict) and val is not fallback
+    _ai_hot_cache[key] = (now + (AI_TREND_CACHE_TTL if ok else AI_FAIL_CACHE_TTL), val)
+    return val
+
+
 async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
     """
     Core analysis logic for a specific symbol.
@@ -2134,13 +2173,20 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             # Fetch AI Confirmation unconditionally
             ai_simple = {"trend": "NEUTRAL", "strength": 50, "rationale": "Pending...", "ai_status": "skipped", "cached": False}
             try:
-                ai_simple = await ai_engine.get_simple_trend(
-                    scrip_name="NIFTY 50",
-                    spot=spot,
-                    vix=vix,
-                    chp=result.get("chp", 0),
+                # FIX 1: bounded + TTL-cached. Previously an unbounded await here was the single
+                # biggest contributor to the 150s-per-symbol analysis that stalled the whole loop.
+                ai_simple = await _ai_cached(
+                    f"simple_trend:{symbol}",
+                    lambda: ai_engine.get_simple_trend(
+                        scrip_name="NIFTY 50",
+                        spot=spot,
+                        vix=vix,
+                        chp=result.get("chp", 0),
+                    ),
+                    ai_simple,
+                    "simple_trend",
                 )
-                print(f"🤖 AI Simple Trend (LIVE): {ai_simple.get('trend')} ({ai_simple.get('strength')}%) - {ai_simple.get('rationale')}", flush=True)
+                print(f"🤖 AI Simple Trend: {ai_simple.get('trend')} ({ai_simple.get('strength')}%) - {ai_simple.get('rationale')}", flush=True)
             except Exception as ai_err:
                 print(f"⚠️ AI Simple Trend Error: {ai_err}. Defaulting to NEUTRAL.", flush=True)
                 ai_simple = {"trend": "NEUTRAL", "strength": 50, "rationale": f"AI Error: {str(ai_err)[:60]}", "ai_status": "error", "cached": False}
@@ -2197,7 +2243,13 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             print(f"⚠️ Multi-TF Trend Error: {e}. Falling back to old AI trend.", flush=True)
             # Graceful fallback: use old AI trend method
             try:
-                ai_trend = await ai_engine.get_ai_trend(symbol, result)
+                # FIX 1: bounded + cached (was an unbounded await in the hot path).
+                ai_trend = await _ai_cached(
+                    f"ai_trend:{symbol}",
+                    lambda: ai_engine.get_ai_trend(symbol, result),
+                    result.get("trend") or {"trend": "NEUTRAL", "strength": 0},
+                    "ai_trend",
+                )
                 result["trend"] = ai_trend
             except Exception as e2:
                 print(f"⚠️ Fallback AI trend also failed: {e2}", flush=True)
@@ -2286,8 +2338,16 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             for sig in filtered_signals:
                 if sig.get("type") in ("CALL", "PUT"):
                     sig["tech_confidence"] = sig.get("confidence")
-                    ai_result = await ai_engine.confirm_signal(symbol, sig, result)
-                    sig.update(ai_result)
+                    # FIX 1 + FIX 3: bounded AI confirmation. If AI is slow/rate-limited we mark the
+                    # signal ai_status="unavailable" rather than leaving ai_confidence=0 — a missing
+                    # opinion is NOT a negative opinion, and the old gate silently vetoed valid
+                    # signals whenever the provider was throttled.
+                    ai_result = await _ai_bounded(
+                        ai_engine.confirm_signal(symbol, sig, result),
+                        {"ai_status": "unavailable"},
+                        "confirm_signal",
+                    )
+                    sig.update(ai_result or {"ai_status": "unavailable"})
                 confirmed_signals.append(sig)
                 
             result["signals"] = confirmed_signals
