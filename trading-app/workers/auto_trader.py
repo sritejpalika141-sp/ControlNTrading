@@ -28,6 +28,7 @@ from state import (
     logger,
     DAILY_DRAWDOWN_LIMIT_PCT,
 )
+from engine.api_queue import api_queue
 from engine.notifier import trigger_webhook_background
 from engine.logger import log_signal, log_trade
 from engine.strategy_926 import evaluate_926_strategy
@@ -1516,7 +1517,7 @@ async def automation_loop():
         try:
             analysis = await get_analysis(symbol, client=client)
             if not analysis: return
-            
+
             spot = analysis.get("spot", 0)
             candles_5m = analysis.get("candles_5m", [])
             candles_1m = analysis.get("candles_1m", [])
@@ -1628,6 +1629,14 @@ async def automation_loop():
 
     while True:
         try:
+            # Engine liveness heartbeat: update at the TOP of every iteration so the watchdog
+            # knows the loop is alive, even during off-market hours or stuck API calls.
+            try:
+                import state as _state_hb
+                _state_hb.last_automation_cycle_ts = time.time()
+            except Exception:
+                pass
+
             any_market_open = is_market_open()
             if not any_market_open:
                 # Check if any user has active MCX/CDS symbols that are still open
@@ -1666,7 +1675,17 @@ async def automation_loop():
                 if not client: continue
                 try:
                     import asyncio
-                    if not await api_queue.enqueue(2, client.is_authenticated): continue
+                    # HARD TIMEOUT: is_authenticated must never block the loop. If the Fyers
+                    # SDK's internal token check hangs, we skip this user for this cycle.
+                    try:
+                        _auth_ok = await asyncio.wait_for(
+                            api_queue.enqueue(2, client.is_authenticated), timeout=15
+                        )
+                    except (asyncio.TimeoutError, TimeoutError):
+                        logger.warning(f"⏱️ is_authenticated timed out for user {u_id} — skipping cycle")
+                        continue
+                    if not _auth_ok:
+                        continue
                 except Exception: continue
 
                 state = get_user_state(u_id)
@@ -1717,9 +1736,22 @@ async def automation_loop():
                     tasks.append(eval_symbol_strats(client, state, u_id, symbol))
                     
                 # 2. Execute the entire Swarm simultaneously (Zero Delay)
+                # HARD CYCLE TIMEOUT: A single hung API call must never block the loop forever.
+                # If the cycle exceeds MAX_CYCLE_SECS, log and continue to the next tick.
                 import asyncio
+                MAX_CYCLE_SECS = 180  # 3 minutes max per cycle
                 _cycle_t0 = time.time()
-                await asyncio.gather(*tasks)
+                try:
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=MAX_CYCLE_SECS)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"⏱️ Automation cycle TIMEOUT after {MAX_CYCLE_SECS}s for user {u_id} "
+                        f"({len(tasks)} evaluations). A hung API call is blocking the loop."
+                    )
+                    await broadcast_log(
+                        f"⏱️ Strategy cycle timed out after {MAX_CYCLE_SECS}s — a stuck API call is blocking.",
+                        level="warning", user_id=u_id
+                    )
                 # FIX 2: cycle watchdog. The time-boxed strategies are only reachable if a cycle
                 # completes well inside their window — Strategy 3 ORB has just 09:20-09:30 (10 min)
                 # and Strategy 2 fires 09:26-09:40. A single hung API call previously pushed one
@@ -1744,8 +1776,8 @@ async def automation_loop():
                 
                 # Diagnostic: log strategy activity summary every 2 minutes
                 _now_min = int(time.time() / 120)
-                if not hasattr(run_strat_1, '_last_log_min') or run_strat_1._last_log_min != _now_min:
-                    run_strat_1._last_log_min = _now_min
+                if not hasattr(automation_loop, '_last_log_min') or automation_loop._last_log_min != _now_min:
+                    automation_loop._last_log_min = _now_min
                     _active = getattr(state, 'active_strategies', [])
                     _auto = getattr(state, 'automation_enabled', False)
                     _trades = getattr(state, 'trades_today', 0)

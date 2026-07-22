@@ -16,12 +16,15 @@ logger = logging.getLogger("STRATEGY_926")
 IST = pytz.timezone('Asia/Kolkata')
 
 # Strategy Constants
-ENTRY_PRICE = 183.0      # Target LTP to trigger buy
-ARMING_THRESHOLD = 181.5 # Price must drop below this to arm the trigger
-SELECTION_MIN = 170.0    # Minimum LTP for candidate selection
-SELECTION_MAX = 190.0    # Maximum LTP for candidate selection
-SL_POINTS = 20.0         # Stop loss (₹163)
-TARGET_POINTS = 40.0     # Target (₹223) → 1:2 RR
+# NOTE: ENTRY_PRICE, SELECTION_MIN/MAX, SL, and TARGET are now computed dynamically
+# from the ATM premium in _find_180_strikes() so the strategy adapts to varying IV levels.
+# These defaults are kept as fallbacks only.
+ENTRY_PRICE = 183.0      # Fallback target LTP (overridden by ATM-based calculation)
+ARMING_THRESHOLD = 181.5 # Fallback arming (overridden dynamically)
+SELECTION_MIN = 170.0    # Fallback min (overridden dynamically)
+SELECTION_MAX = 190.0    # Fallback max (overridden dynamically)
+SL_POINTS = 20.0         # Stop loss points
+TARGET_POINTS = 40.0     # Target points → ~1:2 RR
 
 
 
@@ -73,12 +76,18 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL"):
                 if strikes.get('pe'): msg += f"PE: {strikes['pe']['symbol']} @ ₹{strikes['pe']['ltp']:.2f}"
                 logger.info(msg)
             else:
-                logger.warning("⚠️ Strategy 2: Failed to find strikes near ₹180. Will retry.")
+                logger.warning("⚠️ Strategy 2: Failed to find strikes. Will retry.")
                 return None
 
-    # 6. Monitoring Phase: 9:26 to 9:40 — watch for ₹180 crossover
+    # 6. Monitoring Phase: 9:26 to 9:40 — watch for crossover
     if getattr(state, "strat_926_strikes", None) and not getattr(state, "strat_926_triggered", False):
         strikes = state.strat_926_strikes
+
+        # Use dynamic params if available, else fallback to constants
+        _entry = strikes.get("_entry_price", ENTRY_PRICE)
+        _arming = strikes.get("_arming_threshold", ARMING_THRESHOLD)
+        _sl_pts = strikes.get("_sl_points", SL_POINTS)
+        _tgt_pts = strikes.get("_target_points", TARGET_POINTS)
 
         # Get live LTPs for both selected strikes
         symbols = []
@@ -111,14 +120,14 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL"):
             # Update live price in strike info
             strike_info['ltp'] = ltp
 
-            # TRIGGER CONDITION: Price must be < ARMING_THRESHOLD to arm, then cross >= 183 to trigger
-            if ltp < ARMING_THRESHOLD:
+            # TRIGGER CONDITION: Price must be < arming to arm, then cross >= entry to trigger
+            if ltp < _arming:
                 if not strike_info.get('armed', False):
                     strike_info['armed'] = True
-                    logger.info(f"Strategy 2: {sym} dipped below {ARMING_THRESHOLD} (LTP: {ltp}), now ARMED.")
-            elif ltp >= ENTRY_PRICE:
+                    logger.info(f"Strategy 2: {sym} dipped below {_arming} (LTP: {ltp}), now ARMED.")
+            elif ltp >= _entry:
                 if strike_info.get('armed', False):
-                    logger.info(f"🚀 Strategy 2 TRIGGERED! {sig_type} {sym} crossed ₹{ENTRY_PRICE} from below (LTP: {ltp})")
+                    logger.info(f"🚀 Strategy 2 TRIGGERED! {sig_type} {sym} crossed ₹{_entry} from below (LTP: {ltp})")
                     state.strat_926_triggered = True
 
                 return {
@@ -126,11 +135,11 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL"):
                     "type": sig_type,
                     "side": "BUY",
                     "strategy": "Strategy 2: 9:26 - 180 Buy",
-                    "reason": f"9:26 Strategy: {sig_type} breakout of ₹{ENTRY_PRICE} level",
+                    "reason": f"9:26 Strategy: {sig_type} breakout of ₹{_entry} level",
                     "confidence": 95,
                     "entry_price": ltp,
-                    "sl": ltp - SL_POINTS,
-                    "target": ltp + TARGET_POINTS,
+                    "sl": ltp - _sl_pts,
+                    "target": ltp + _tgt_pts,
                     "strike_info": {
                         "symbol": sym,
                         "ltp": ltp,
@@ -148,7 +157,7 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL"):
     return None
 
 async def _find_180_strikes(client):
-    """Find CE and PE strikes with LTP nearest but below ₹180."""
+    """Find CE and PE strikes with LTP nearest but below the dynamic ATM premium anchor."""
     try:
         # 1. Get NIFTY spot price
         symbol = "NSE:NIFTY50-INDEX"
@@ -188,33 +197,70 @@ async def _find_180_strikes(client):
             if i + 50 < len(all_syms):
                 await asyncio.sleep(0.3)  # Rate limit protection between chunks
 
-        # 5. Find best CE (Nearest to ₹183 between 170-190)
+        # 5. Compute dynamic premium anchor from ATM option premiums
+        atm_sym_ce = f"NSE:NIFTY{expiry_code}{atm}CE"
+        atm_sym_pe = f"NSE:NIFTY{expiry_code}{atm}PE"
+        atm_ce_ltp = all_quotes.get(atm_sym_ce, {}).get('lp', 0)
+        atm_pe_ltp = all_quotes.get(atm_sym_pe, {}).get('lp', 0)
+        atm_premium = 0
+        if atm_ce_ltp > 0 and atm_pe_ltp > 0:
+            atm_premium = (atm_ce_ltp + atm_pe_ltp) / 2
+        elif atm_ce_ltp > 0:
+            atm_premium = atm_ce_ltp
+        elif atm_pe_ltp > 0:
+            atm_premium = atm_pe_ltp
+
+        if atm_premium > 0:
+            # Anchor the selection range around ATM premium
+            entry_price = round(atm_premium * 0.95, 1)  # 95% of ATM
+            selection_min = round(atm_premium * 0.85, 1)  # 85% of ATM
+            selection_max = round(atm_premium * 1.15, 1)  # 115% of ATM
+            arming_threshold = round(entry_price * 0.99, 1)
+            sl_points = round(atm_premium * 0.15, 1)  # 15% of ATM
+            target_points = round(atm_premium * 0.30, 1)  # 30% of ATM (~1:2 RR)
+            logger.info(f"Strategy 2: ATM premium ₹{atm_premium:.1f} → selection [{selection_min}-{selection_max}], entry ₹{entry_price}, SL ₹{sl_points}, target ₹{target_points}")
+        else:
+            # Fallback to hardcoded values
+            entry_price = ENTRY_PRICE
+            selection_min = SELECTION_MIN
+            selection_max = SELECTION_MAX
+            arming_threshold = ARMING_THRESHOLD
+            sl_points = SL_POINTS
+            target_points = TARGET_POINTS
+            logger.warning(f"Strategy 2: Could not determine ATM premium. Using fallback range [{selection_min}-{selection_max}]")
+
+        # 6. Find best CE
         best_ce = None
         for sym in ce_symbols:
             ltp = all_quotes.get(sym, {}).get('lp', 0)
-            if SELECTION_MIN <= ltp <= SELECTION_MAX:
-                dist = abs(ltp - ENTRY_PRICE)
+            if selection_min <= ltp <= selection_max:
+                dist = abs(ltp - entry_price)
                 if not best_ce or dist < best_ce['dist']:
-                    # Extract strike from symbol (e.g., NSE:NIFTY2652024400CE → 24400)
                     strike_str = sym.replace(f"NSE:NIFTY{expiry_code}", "").replace("CE", "")
-                    best_ce = {"symbol": sym, "ltp": ltp, "strike": int(strike_str), "dist": dist, "armed": ltp < ARMING_THRESHOLD}
+                    best_ce = {"symbol": sym, "ltp": ltp, "strike": int(strike_str), "dist": dist, "armed": ltp < arming_threshold}
 
-        # 6. Find best PE (Nearest to ₹183 between 170-190)
+        # 7. Find best PE
         best_pe = None
         for sym in pe_symbols:
             ltp = all_quotes.get(sym, {}).get('lp', 0)
-            if SELECTION_MIN <= ltp <= SELECTION_MAX:
-                dist = abs(ltp - ENTRY_PRICE)
+            if selection_min <= ltp <= selection_max:
+                dist = abs(ltp - entry_price)
                 if not best_pe or dist < best_pe['dist']:
                     strike_str = sym.replace(f"NSE:NIFTY{expiry_code}", "").replace("PE", "")
-                    best_pe = {"symbol": sym, "ltp": ltp, "strike": int(strike_str), "dist": dist, "armed": ltp < ARMING_THRESHOLD}
+                    best_pe = {"symbol": sym, "ltp": ltp, "strike": int(strike_str), "dist": dist, "armed": ltp < arming_threshold}
 
         if best_ce or best_pe:
-            if not best_pe: logger.warning("Strategy 2: Only found CE candidate, no PE in 170-190 range.")
-            if not best_ce: logger.warning("Strategy 2: Only found PE candidate, no CE in 170-190 range.")
-            return {"ce": best_ce, "pe": best_pe}
+            if not best_pe: logger.warning(f"Strategy 2: Only found CE candidate, no PE in [{selection_min}-{selection_max}] range.")
+            if not best_ce: logger.warning(f"Strategy 2: Only found PE candidate, no CE in [{selection_min}-{selection_max}] range.")
+            # Attach dynamic params so the caller uses consistent values
+            result = {"ce": best_ce, "pe": best_pe}
+            result["_entry_price"] = entry_price
+            result["_arming_threshold"] = arming_threshold
+            result["_sl_points"] = sl_points
+            result["_target_points"] = target_points
+            return result
         else:
-            logger.warning("Strategy 2: No CE or PE found in 170-190 range.")
+            logger.warning(f"Strategy 2: No CE or PE found in [{selection_min}-{selection_max}] range (ATM premium: ₹{atm_premium:.1f}).")
 
     except Exception as e:
         logger.error(f"Strategy 2 find_180_strikes error: {e}")
