@@ -167,6 +167,20 @@ class AIEngine:
         self.providers["ollama"] = AIProvider("Ollama", enabled=True)
         logger.info("✅ Ollama Local AI initialized (ultimate fallback).")
 
+        # ── Prune KNOWN-DEAD providers (the cheap fix) ──────────────────────────────────
+        # On 22-Jul the chain wasted cycles on providers that will never succeed this session:
+        # Claude ("credit balance too low", HTTP 400), OpenAI (quota exhausted), GitHub (HTTP 401
+        # "models permission required"). Each failed call adds latency to every AI request before
+        # falling through to a provider that works. Disabling them up front makes the chain fall
+        # straight to Gemini/Groq/Ollama. This is CONFIG, not hard-coded: set DISABLED_AI_PROVIDERS
+        # (comma-separated, e.g. "claude,openai,github") to change it — top up Claude credits and
+        # drop it from the list to re-enable, no code change. Default disables the three dead ones.
+        _disabled = os.environ.get("DISABLED_AI_PROVIDERS", "claude,openai,github")
+        for _name in [x.strip().lower() for x in _disabled.split(",") if x.strip()]:
+            if _name in self.providers and self.providers[_name].enabled:
+                self.providers[_name].enabled = False
+                logger.info(f"⏭️ AI provider '{self.providers[_name].name}' disabled via DISABLED_AI_PROVIDERS.")
+
         # Log provider chain
         active = [p.name for p in self.providers.values() if p.enabled]
         logger.info(f"🔗 AI Provider Chain: {' → '.join(active) if active else 'Technical Only'}")
@@ -357,7 +371,10 @@ class AIEngine:
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "meta-llama/llama-3-8b-instruct:free",
+                        # Was "meta-llama/llama-3-8b-instruct:free" — OpenRouter returns HTTP 404
+                        # "No endpoints found" for it (retired free model), so every call failed.
+                        # Overridable via OPENROUTER_MODEL; default is a current free model.
+                        "model": os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
                         "response_format": {"type": "json_object"},
                         "messages": [
                             {"role": "user", "content": f"{prompt}\n\nRespond strictly with JSON only."}
