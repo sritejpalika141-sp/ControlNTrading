@@ -56,6 +56,11 @@ class FyersWSFeed:
         self._ws_thread = None
         self._redundancy_thread = None
         self._redundancy_running = False
+        # Reconnect guard: prevents overlapping restart()/reconnect from opening a SECOND socket
+        # on the same token. Fyers allows one WS per token, so a duplicate is force-closed server
+        # side ("Connection to remote host was lost - goodbye") — that race was the churn (11
+        # connects / 10 drops in a session). Only one reconnect runs at a time now.
+        self._reconnecting = False
         self._queues = []  # List of (asyncio.Queue, asyncio.AbstractEventLoop)
     
     # ==================== PUBLIC API ====================
@@ -237,25 +242,43 @@ class FyersWSFeed:
             self._socket = None
 
     def restart(self, client=None):
-        """Restart the WebSocket data feed with a new client/token."""
-        logger.info("🔄 Request to restart Fyers WebSocket received.")
-        if client:
-            self._client = client
-        self.stop()
-        
-        # Clear ticks cache so stale price data from yesterday doesn't persist
-        with self._lock:
-            self._ticks.clear()
-            logger.info("🧹 Cleared WebSocket tick cache.")
-        
-        # Give the old thread a tiny moment to unblock and exit
-        time.sleep(0.5)
-        
-        self._started = True
-        self._reconnect_count = 0
-        self._ws_thread = threading.Thread(target=self._connect, daemon=True)
-        self._ws_thread.start()
-        logger.info("✅ Fyers WebSocket Data Feed restart thread spawned.")
+        """Restart the WebSocket data feed with a new client/token.
+
+        Guarded + serialized: the market_worker calls this on a 30s health check, the Fyers SDK
+        also auto-reconnects internally, and _connect() can schedule its own reconnect. If two of
+        those overlap they open a SECOND socket on the same token and Fyers force-closes the
+        duplicate, producing the connect/drop churn. The _reconnecting flag makes this a no-op
+        while a restart is already in flight, and we JOIN the old connect thread so the previous
+        socket is fully gone before a new one opens."""
+        if self._reconnecting:
+            logger.info("🔄 WS restart already in progress — ignoring duplicate request.")
+            return
+        self._reconnecting = True
+        try:
+            logger.info("🔄 Request to restart Fyers WebSocket received.")
+            if client:
+                self._client = client
+            old_thread = self._ws_thread
+            self.stop()  # sets _started=False and calls close_connection() on the old socket
+
+            # Clear ticks cache so stale price data from yesterday doesn't persist
+            with self._lock:
+                self._ticks.clear()
+                logger.info("🧹 Cleared WebSocket tick cache.")
+
+            # Wait for the OLD connect thread (blocked in keep_running) to actually exit, so we
+            # never run two sockets at once. Bounded so a stuck SDK thread can't hang the restart;
+            # the thread is a daemon and will die regardless.
+            if old_thread and old_thread.is_alive() and old_thread is not threading.current_thread():
+                old_thread.join(timeout=4)
+
+            self._started = True
+            self._reconnect_count = 0
+            self._ws_thread = threading.Thread(target=self._connect, daemon=True)
+            self._ws_thread.start()
+            logger.info("✅ Fyers WebSocket Data Feed restart thread spawned.")
+        finally:
+            self._reconnecting = False
     
     def _connect(self):
         """Connect to Fyers WebSocket (runs in background thread)."""
