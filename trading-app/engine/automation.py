@@ -541,6 +541,13 @@ class TradingState:
         # Check for daily reset first
         self.check_daily_reset()
 
+        # DEFENSE-IN-DEPTH safety gate. A "streamline can_trade — fewer gates" commit (50af9fa)
+        # removed this check; the automation-loop still gates on automation_enabled, but can_trade
+        # is the authoritative "may I place this trade?" call reached from several strategy paths,
+        # so it must honour the master switch itself. Restored + locked by test_trading_core.py.
+        if not self.automation_enabled:
+            return False, "Automation disabled"
+
         if self.hard_exit_triggered:
             return False, "Max loss exit triggered — no more trades today"
         # Per-session (asset-aware) EOD gate: once a symbol's session has hard-exited today

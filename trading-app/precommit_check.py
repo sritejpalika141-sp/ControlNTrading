@@ -138,6 +138,31 @@ def main():
     else:
         print("  ✅ no module-level import cycles")
 
+    # 3. money-critical unit tests (best-effort). Runs the fast, deterministic core suite so a
+    #    commit that breaks a trading gate / state-persistence invariant is blocked. Skipped
+    #    cleanly if pytest isn't importable in this environment (e.g. a different agent's setup)
+    #    — the syntax + cycle checks above still run there.
+    core_tests = os.path.join(BASE, "tests", "test_trading_core.py")
+    try:
+        import importlib.util as _ilu
+        has_pytest = _ilu.find_spec("pytest") is not None
+    except Exception:
+        has_pytest = False
+    if has_pytest and os.path.exists(core_tests):
+        import subprocess
+        r = subprocess.run([sys.executable, "-m", "pytest", core_tests, "-q",
+                            "-p", "no:cacheprovider"], cwd=BASE,
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            last = [l for l in r.stdout.strip().splitlines() if l.strip()]
+            print(f"  ✅ core trading tests pass ({last[-1] if last else 'ok'})")
+        else:
+            ok = False
+            print("  ❌ CORE TRADING TESTS FAILED:")
+            print("     " + (r.stdout + r.stderr).strip().replace("\n", "\n     ")[-1500:])
+    else:
+        print("  ⏭️ core trading tests skipped (pytest not available here)")
+
     print("\n" + "=" * 58)
     if ok:
         print("RESULT: PASS — safe to commit.")
