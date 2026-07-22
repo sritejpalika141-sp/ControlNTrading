@@ -222,19 +222,9 @@ def calculate_position_size(user_id: int, entry_price: float, sl_points: float, 
         if not user:
             return 1
         
-        # Get available funds from user states or cache
-        import sqlite3
-        conn = sqlite3.connect(Database.DB_NAME)
-        conn.row_factory = sqlite3.Row
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT daily_profit, daily_loss FROM user_states WHERE user_id=?", (user_id,))
-            row = cursor.fetchone()
-            # Use a reasonable default capital estimate if not available
-            # In production, this should come from the broker API or a config
-            capital = 500000  # Default ₹5L capital
-        finally:
-            conn.close()
+        # Use a reasonable default capital estimate.
+        # TODO: source from broker API or user config when available
+        capital = 500000  # Default ₹5L capital
         
         # Calculate risk amount
         risk_amount = capital * (RISK_PER_TRADE_PCT / 100)

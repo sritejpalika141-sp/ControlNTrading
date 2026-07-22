@@ -124,7 +124,7 @@ async def trailing_monitor():
         # B3: isolate each user's iteration in its own try/except so one user's malformed
         # data or unexpected exception cannot abort the monitoring tick for every other user.
         # A failure here logs and `continue`s to the next user instead of unwinding the loop.
-        for u_id, client in USER_CONTEXTS.items():
+        for u_id, client in list(USER_CONTEXTS.items()):
             try:
                 state = get_user_state(u_id)
                 MAX_LOSS_LIMIT = -abs(state.max_loss_per_day)

@@ -87,7 +87,7 @@ class FyersClient:
             import app
             if 1 in app.USER_CONTEXTS and app.USER_CONTEXTS[1].client:
                 return app.USER_CONTEXTS[1].client
-        except:
+        except Exception:
             pass
             
         return None
@@ -196,7 +196,7 @@ class FyersClient:
                     "orders": self.get_orders(),
                     "cooldown": False
                 }
-        except:
+        except Exception:
             pass
 
         import time
@@ -248,7 +248,9 @@ class FyersClient:
                     db_client_id = user.get("fyers_client_id")
                     db_access_token = user.get("fyers_access_token")
                     client_id = db_client_id or get_secret("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
-                    access_token = db_access_token or get_secret("FYERS_ACCESS_TOKEN")
+                    # SECURITY: Non-admin users must NOT fall back to the admin's env-var token.
+                    # If their DB token is missing/expired, return None (they need to re-auth).
+                    access_token = db_access_token
                     if client_id and access_token:
                         # Allow any valid suffix like -100, -200, -300 for websocket
                         if "-" in client_id:
@@ -737,10 +739,10 @@ class FyersClient:
         except Exception:
             pass
 
-        if self._check_cooldown(): return {}
+        if self._check_cooldown(): return None
         client = self._get_active_client()
         if not client:
-            return {}
+            return None
         try:
             resp = client.quotes({"symbols": symbol})
             if resp.get("code") == 200:
@@ -759,7 +761,7 @@ class FyersClient:
             return None
         except Exception as e:
             print(f"Quote error for {symbol}: {e}")
-            return {}
+            return None
 
     def get_quotes(self, symbols: List[str], force_rest: bool = False) -> Dict[str, Dict]:
         """Get live quotes for multiple symbols. Checks WebSocket cache first unless force_rest is True."""
@@ -1234,7 +1236,7 @@ class FyersClient:
             if resp.get("code") == 200:
                 return resp.get("netPositions", [])
             return []
-        except:
+        except Exception:
             return []
 
     def get_trade_book(self) -> List[Dict]:
@@ -1264,7 +1266,7 @@ class FyersClient:
             state = app.get_user_state(self.user_id)
             if state.paper_trading:
                 return state.paper_orders
-        except:
+        except Exception:
             pass
 
         if not self.client:
@@ -1274,7 +1276,7 @@ class FyersClient:
             if resp.get("code") == 200:
                 return resp.get("orderBook", [])
             return []
-        except:
+        except Exception:
             return []
 
     def get_funds(self) -> Dict:
@@ -1284,7 +1286,7 @@ class FyersClient:
             state = app.get_user_state(self.user_id)
             if state.paper_trading:
                 return state.paper_funds
-        except:
+        except Exception:
             pass
 
         if not self.client:

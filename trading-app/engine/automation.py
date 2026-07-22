@@ -51,9 +51,8 @@ class TradingState:
         self.user_id = str(user_id)
         self.state_file = f"logs/trading_state_{self.user_id}.json"
         
-        # Concurrency lock for order placement
-        import asyncio
-        self.order_lock = asyncio.Lock()
+        # NOTE: active_auto_trades mutations are safe in asyncio single-threaded context.
+        # append() and list reassignment are atomic in CPython (GIL). No lock needed.
         
         self.automation_enabled = False
         # Risk Management Settings
@@ -252,13 +251,22 @@ class TradingState:
                         print(f"🧹 Pruned {len(_orphans)} orphaned auto-trade enable(s) "
                               f"(not in watchlist): {_orphans}", flush=True)
             except Exception as e:
-                print(f"⚠️ State load error: {e}. Resetting.", flush=True)
+                print(f"⚠️ State load error: {e}. Attempting backup restore.", flush=True)
+                # Try to restore from backup
+                backup_file = self.state_file + ".bak"
+                if os.path.exists(backup_file):
+                    try:
+                        import shutil
+                        shutil.copy2(backup_file, self.state_file)
+                        print(f"🔄 Restored state from backup: {backup_file}", flush=True)
+                        return self.load()
+                    except Exception as be:
+                        print(f"⚠️ Backup restore failed: {be}. Resetting.", flush=True)
                 self.reset_day()
         else:
             self.reset_day()
 
     def save(self):
-        import asyncio
         data_dict = {
             "automation_enabled": self.automation_enabled,
             "live_trades_today": self.live_trades_today,
@@ -272,7 +280,7 @@ class TradingState:
             # process restart and nightly learning cannot double-run after a restart.
             "nightly_learning_date": getattr(self, "nightly_learning_date", ""),
             "max_trades_per_day": self.max_trades_per_day,
-            "max_loss_per_day": getattr(self, "max_loss_per_day", 1500.0),
+            "max_loss_per_day": getattr(self, "max_loss_per_day", 2500.0),
             "max_loss_trades_per_day": self.max_loss_trades_per_day,
             "loss_trades_today": self.loss_trades_today,
             "daily_profit_target": self.daily_profit_target,
@@ -332,13 +340,28 @@ class TradingState:
         async def _async_save():
             if not os.path.exists("logs"):
                 os.makedirs("logs")
+            tmp_file = self.state_file + ".tmp"
+            backup_file = self.state_file + ".bak"
             try:
+                # Create backup of current state before overwriting
+                if os.path.exists(self.state_file):
+                    import shutil
+                    shutil.copy2(self.state_file, backup_file)
                 import aiofiles
-                async with aiofiles.open(self.state_file, 'w') as f:
+                async with aiofiles.open(tmp_file, 'w') as f:
                     await f.write(json.dumps(data_dict))
+                os.replace(tmp_file, self.state_file)
             except ImportError:
-                with open(self.state_file, 'w') as f:
+                if os.path.exists(self.state_file):
+                    import shutil
+                    shutil.copy2(self.state_file, backup_file)
+                with open(tmp_file, 'w') as f:
                     json.dump(data_dict, f)
+                os.replace(tmp_file, self.state_file)
+            except Exception as e:
+                print(f"⚠️ State save failed: {e}", flush=True)
+                if os.path.exists(tmp_file):
+                    os.remove(tmp_file)
             
             # Throttle DB writes to once every 30s
             now = time.time()
@@ -349,14 +372,15 @@ class TradingState:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_async_save())
+            task = loop.create_task(_async_save())
+            task.add_done_callback(lambda t: t.exception() and print(f"⚠️ State save task failed: {t.exception()}", flush=True))
         except RuntimeError:
             if not os.path.exists("logs"):
                 os.makedirs("logs")
-            with open(self.state_file, 'w') as f:
+            tmp_file = self.state_file + ".tmp"
+            with open(tmp_file, 'w') as f:
                 json.dump(data_dict, f)
-            # Cannot safely block and run async DB update without an event loop
-            pass
+            os.replace(tmp_file, self.state_file)
 
     def reset_day(self):
         """Reset all daily counters for a fresh trading day."""
@@ -652,11 +676,7 @@ class TradingState:
             self.loss_trades_today += 1
             print(f"📉 Loss trade #{self.loss_trades_today}/{self.max_loss_trades_per_day} recorded. {'⛔ MAX LOSS TRADES REACHED — stopping for the day!' if self.loss_trades_today >= self.max_loss_trades_per_day else ''}", flush=True)
         elif result == "profit":
-            if getattr(self, 'paper_trading', True):
-                self.paper_trades_today = max(0, getattr(self, 'paper_trades_today', 0) - 1)
-            else:
-                self.live_trades_today = max(0, getattr(self, 'live_trades_today', 0) - 1)
-            print(f"🎉 Profitable trade closed! Reclaiming 1 trade limit. Current trades: {self.trades_today}/{self.max_trades_per_day}", flush=True)
+            print(f"🎉 Profitable trade closed! Current trades: {self.trades_today}/{self.max_trades_per_day}", flush=True)
         
         # ADDITIVE trade-outcome tracking (win-rate recording). Best-effort ONLY — this must
         # NEVER affect trade execution/exit logic. Any failure is caught and logged.

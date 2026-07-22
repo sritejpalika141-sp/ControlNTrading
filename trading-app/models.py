@@ -547,8 +547,6 @@ class Database:
         finally:
             conn.close()
 
-    @staticmethod
-    
     @classmethod
     def update_fyers_tokens_sync(cls, user_id, access_token, refresh_token=None):
         import sqlite3

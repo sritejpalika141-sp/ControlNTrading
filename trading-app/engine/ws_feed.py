@@ -496,8 +496,7 @@ class FyersWSFeed:
                 pass  # Don't let candle builder errors break the hot path
             
         except Exception as e:
-            # Don't log every error on hot path — too noisy
-            pass
+            logger.debug(f"WS _on_message error: {e}")
     
     def _on_error(self, message):
         """Called on WebSocket error."""
@@ -522,11 +521,8 @@ class FyersWSFeed:
         logger.warning(f"⚠️ WS Feed Closed: {message}")
         
         # Send Telegram alert if we lose WS during market hours
-        from datetime import datetime
-        import pytz
-        IST = pytz.timezone('Asia/Kolkata')
         now = datetime.now(IST).time()
-        # 09:15 to 15:30 IST
+        # 09:15 to 15:30 IST (NSE hours)
         if (9, 15) <= (now.hour, now.minute) <= (15, 30):
             try:
                 from engine.notifier import trigger_webhook_background
@@ -575,10 +571,16 @@ class FyersWSFeed:
                     self._reconnect_count = 0
                     self._last_reconnect_reset = time.time()
                 
-            # Only apply fail-over during active market hours
-            now = datetime.now(IST).time()
-            if not ((9, 15) <= (now.hour, now.minute) <= (15, 30)):
-                continue
+            # Only apply fail-over during active market hours (any asset class)
+            try:
+                from state import is_market_open
+                if not is_market_open():
+                    continue
+            except Exception:
+                # Fallback: NSE hours only
+                now = datetime.now(IST).time()
+                if not ((9, 15) <= (now.hour, now.minute) <= (15, 30)):
+                    continue
                 
             # Check if Fyers went silent
             silence_duration = time.time() - self._last_tick_time

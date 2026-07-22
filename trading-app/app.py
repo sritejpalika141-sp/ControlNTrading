@@ -269,7 +269,7 @@ async def lifespan(app):
 
 app = FastAPI(title="ControlN Trading Dashboard", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-VERSION = "6.0.1"
+from state import VERSION
 SERVER_START_TIME = datetime.now(pytz.timezone('Asia/Kolkata'))
 
 # Ensure Database is initialized
@@ -285,17 +285,9 @@ def get_user_state(user_id) -> TradingState:
     return state.get_user_state(user_id)
 
 def get_lot_size(symbol: str) -> int:
-    """Get the official NSE lot size (effective Jan 2026)."""
-    symbol_upper = symbol.upper()
-    if "BANKNIFTY" in symbol_upper:
-        return 30
-    if "FINNIFTY" in symbol_upper:
-        return 60
-    if "MIDCPNIFTY" in symbol_upper:
-        return 120
-    if "NIFTY" in symbol_upper:
-        return 65
-    return 65  # Default fallback
+    """Get the lot size for a symbol. Delegates to state.py's JSON-based lookup."""
+    from state import get_lot_size as _state_get_lot_size
+    return _state_get_lot_size(symbol)
 
 # --- AUTHENTICATION ROUTES (v4.2.0) ---
 @app.get("/login")
@@ -462,33 +454,35 @@ async def admin_analytics(request: Request):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
-    c.execute("SELECT id, username, is_active FROM users")
-    db_users = [dict(r) for r in c.fetchall()]
-    total_users = len(db_users)
-    active_users = sum(1 for u in db_users if u["is_active"])
-    
-    logged_in_users = []
-    for u in db_users:
-        uid_str = str(u["id"])
-        if uid_str in USER_CACHES and USER_CACHES[uid_str].get("is_auth", False):
-            logged_in_users.append({
-                "id": u["id"],
-                "username": u["username"]
-            })
-            
-    strategies_count = {}
-    for state in USER_STATES.values():
-        if state.automation_enabled:
-            for s in state.active_strategies:
-                strategies_count[s] = strategies_count.get(s, 0) + 1
+    try:
+        c.execute("SELECT id, username, is_active FROM users")
+        db_users = [dict(r) for r in c.fetchall()]
+        total_users = len(db_users)
+        active_users = sum(1 for u in db_users if u["is_active"])
+        
+        logged_in_users = []
+        for u in db_users:
+            uid_str = str(u["id"])
+            if uid_str in USER_CACHES and USER_CACHES[uid_str].get("is_auth", False):
+                logged_in_users.append({
+                    "id": u["id"],
+                    "username": u["username"]
+                })
                 
-    active_ws = len(active_connections)
-    users_with_automation = sum(1 for s in USER_STATES.values() if s.automation_enabled)
-    
-    # 2. Crash Analytics
-    c.execute("SELECT timestamp, message FROM system_logs WHERE level='error' ORDER BY id DESC LIMIT 50")
-    error_logs = [{"timestamp": r["timestamp"], "message": r["message"]} for r in c.fetchall()]
-    conn.close()
+        strategies_count = {}
+        for state in USER_STATES.values():
+            if state.automation_enabled:
+                for s in state.active_strategies:
+                    strategies_count[s] = strategies_count.get(s, 0) + 1
+                    
+        active_ws = len(active_connections)
+        users_with_automation = sum(1 for s in USER_STATES.values() if s.automation_enabled)
+        
+        # 2. Crash Analytics
+        c.execute("SELECT timestamp, message FROM system_logs WHERE level='error' ORDER BY id DESC LIMIT 50")
+        error_logs = [{"timestamp": r["timestamp"], "message": r["message"]} for r in c.fetchall()]
+    finally:
+        conn.close()
     
     # 3. Update Pipelines
     try:
@@ -974,50 +968,8 @@ async def serve_static(file_path: str):
 active_connections = state.active_connections
 
 async def broadcast_log(msg: str, level: str = "info", user_id: int = None):
-    """Send a log message to connected clients and store in DB."""
-    import pytz
-    import sys
-    import traceback
-    from datetime import datetime
-    
-    # Auto-heal hook: Print full tracebacks to stdout so the external VM orchestrator can catch them
-    if level == "error":
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        if exc_type is not None:
-            tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            print(f"🏥 [VM-ORCHESTRATOR-HOOK] Traceback caught:\n{tb_str}", flush=True)
-
-    ist = pytz.timezone('Asia/Kolkata')
-    timestamp_ws = datetime.now(ist).strftime("%H:%M:%S")
-    timestamp_db = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
-
-    # 1. Asynchronously write to DB
-    try:
-        asyncio.create_task(Database.insert_log(level, msg, timestamp_db, user_id))
-    except Exception as e:
-        print(f"⚠️ DB log insert error: {e}")
-
-    if not active_connections:
-        return
-    
-    payload = {
-        "type": "log",
-        "msg": msg,
-        "level": level,
-        "time": timestamp_ws
-    }
-    
-    disconnected = set()
-    for ws in active_connections:
-        # Route to specific user if user_id is provided, else broadcast to all
-        if user_id is None or getattr(ws, "user_id", None) == user_id:
-            try:
-                await ws.send_text(orjson.dumps(payload).decode("utf-8"))
-            except:
-                disconnected.add(ws)
-    
-    for ws in disconnected:
-        active_connections.discard(ws)
+    """Send a log message to connected clients and store in DB. Delegates to state.py's version."""
+    await state.broadcast_log(msg, level=level, user_id=user_id)
 
 
 
@@ -1608,7 +1560,7 @@ async def ws_connection_monitor():
                     # A stale/expired cached token can still satisfy get_access_token_for_ws(),
                     # which caused "disconnected" alerts when nobody was actually connected.
                     active_client = None
-                    for u_id, client in USER_CONTEXTS.items():
+                    for u_id, client in list(USER_CONTEXTS.items()):
                         if (client and USER_CACHES.get(str(u_id), {}).get("is_auth")
                                 and hasattr(client, 'get_access_token_for_ws')
                                 and client.get_access_token_for_ws()):
