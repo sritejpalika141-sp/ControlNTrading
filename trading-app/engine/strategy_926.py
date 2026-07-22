@@ -220,6 +220,8 @@ async def _find_180_strikes(client):
         logger.error(f"Strategy 2 find_180_strikes error: {e}")
 
     return None
-
-async def _find_180_strikes(client):
-    """Find CE and PE strikes with LTP nearest but below ₹180."""
+# NOTE: an EMPTY second `async def _find_180_strikes(client):` (docstring only, no body) used to
+# sit here. In Python the later definition wins, so it SHADOWED the real implementation above and
+# always returned None — Strategy 2 could therefore never select its ~Rs180 strikes and logged
+# "Failed to find strikes near Rs180. Will retry." on every 9:26 window, placing zero trades. The
+# dead duplicate is removed so the working implementation above is the one that runs.

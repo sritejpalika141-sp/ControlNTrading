@@ -1015,21 +1015,85 @@ class FyersClient:
             logger.error(f"Error fetching option chain for {base_symbol}: {e}")
             return {"calls": [], "puts": [], "atm": spot}
 
+    def _nearest_real_expiry(self, base_symbol: str = "NSE:NIFTY50-INDEX") -> Optional[Dict]:
+        """AUTHORITATIVE nearest expiry from Fyers' actual expiryData (cached ~1h).
+
+        The programmatic path below assumed NIFTY weeklies fall on THURSDAY and hand-built the
+        expiry code. NSE has since moved NIFTY weekly expiry to TUESDAY and many indices are
+        effectively monthly-only, so the computed code (e.g. '26723') was a PHANTOM contract:
+        every option symbol built from it returned no quote, the option chain came back empty,
+        and Strategy 1 / Strategy 2 could never find strikes -> zero trades. Reading Fyers' real
+        expiry list removes the guesswork. Code format matches Fyers' own option symbols:
+        monthly -> YYMMM (e.g. 26JUL), weekly -> YYMDD (e.g. 26804 for 04-Aug)."""
+        import time as _t
+        from datetime import datetime
+        import pytz
+        ist = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(ist)
+
+        cache = getattr(self, "_expiry_cache", None)
+        if cache and cache.get("symbol") == base_symbol and cache.get("until", 0) > _t.time():
+            exps = cache["exps"]
+        else:
+            if self._check_cooldown():
+                return None
+            client = self._get_active_client()
+            if not client:
+                return None
+            resp = client.optionchain({"symbol": base_symbol, "strikecount": 1, "timestamp": ""})
+            if not resp or resp.get("code") != 200:
+                return None
+            exps = resp.get("data", {}).get("expiryData", []) or []
+            self._expiry_cache = {"symbol": base_symbol, "exps": exps, "until": _t.time() + 3600}
+
+        today = now.date()
+        best = None
+        for e in exps:
+            try:
+                ed = datetime.strptime(e["date"], "%d-%m-%Y").date()
+            except Exception:
+                continue
+            if ed < today:
+                continue
+            if ed == today and now.hour >= 16:   # today's expiry already settled
+                continue
+            if best is None or ed < best[0]:
+                best = (ed, e)
+        if not best:
+            return None
+
+        d, e = best
+        yy = d.strftime("%y")
+        if e.get("expiry_flag", "M") == "M":
+            code, etype = f"{yy}{d.strftime('%b').upper()}", "monthly"
+        else:
+            m_map = {10: "O", 11: "N", 12: "D"}
+            code, etype = f"{yy}{m_map.get(d.month, str(d.month))}{d.strftime('%d')}", "weekly"
+        return {"date": d.strftime("%Y-%m-%d"), "day": d.strftime("%A"),
+                "code": code, "dte": (d - today).days, "type": etype}
+
     def find_nearest_expiry(self, spot: float, base_symbol: str = "NSE:NIFTY50-INDEX") -> Optional[Dict]:
         """
-        Find the nearest valid NIFTY weekly or monthly expiry.
-        Uses PROGRAMMATIC calculation (no API calls).
-        Index weeklies: NIFTY (Thu), BANKNIFTY (Wed), FINNIFTY (Tue), MIDCPNIFTY (Mon).
-        Stocks: Last Thursday of the month.
+        Find the nearest valid expiry. Prefers Fyers' REAL expiry list (_nearest_real_expiry);
+        falls back to programmatic computation only if the API is unavailable.
+        Index weeklies historically: NIFTY (Thu) — NOW Tuesday per NSE. Stocks: last Thursday.
         """
         from datetime import datetime, timedelta
         import pytz
         import calendar
-        
+
+        # AUTHORITATIVE first — this is the fix for "no option strikes / no trades".
+        try:
+            real = self._nearest_real_expiry(base_symbol)
+            if real and real.get("code"):
+                return real
+        except Exception:
+            pass
+
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
         today = now.date()
-        
+
         is_index = "INDEX" in base_symbol
         d = None
 
