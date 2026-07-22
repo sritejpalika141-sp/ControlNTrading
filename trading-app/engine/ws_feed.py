@@ -134,25 +134,14 @@ class FyersWSFeed:
 
     
     def is_connected(self) -> bool:
-        """Check if WebSocket is connected and receiving data."""
-        if not self._connected:
-            return False
-            
-        if self._last_tick_time > 0:
-            elapsed = time.time() - self._last_tick_time
-            
-            # Fast-fail if completely dead for 5 mins (even off-market)
-            if elapsed > 300:
-                return False
-                
-            # During market hours, be strict but not too aggressive (30 seconds)
-            # Fyers LiteMode can have brief pauses between ticks
-            if elapsed > 30:
-                now = datetime.now(IST).time()
-                # 09:15 to 15:30 IST
-                if (9, 15) <= (now.hour, now.minute) <= (15, 30):
-                    return False
-                    
+        """Check if WebSocket is connected.
+        
+        Uses ONLY the socket connection state (_connected flag), which is set by the
+        Fyers SDK's on_close callback when the TCP connection actually dies. The previous
+        tick-timing heuristic (30s market-hours, 5min off-market) caused false positives:
+        Fyers LiteMode only sends ticks on price changes, so a quiet symbol for 30s made
+        the market worker think the feed was dead, triggering a kill-restart death loop.
+        """
         return self._connected
     def get_stats(self) -> Dict:
         """Get WebSocket feed stats."""
