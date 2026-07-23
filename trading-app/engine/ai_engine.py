@@ -221,7 +221,16 @@ class AIEngine:
                 )
                 if response.status_code == 200:
                     data = response.json()
-                    content = data["candidates"][0]["content"]["parts"][0]["text"]
+                    choices = data.get("choices")
+                    if not choices or not isinstance(choices, list) or len(choices) == 0:
+                        logger.error(f"OpenRouter: no choices in response: {str(data)[:200]}")
+                        prov.fail_count += 1
+                        return None
+                    content = choices[0].get("message", {}).get("content")
+                    if not content:
+                        logger.error(f"OpenRouter: empty content in response: {str(data)[:200]}")
+                        prov.fail_count += 1
+                        return None
                     prov.on_success()
                     return content
                 elif response.status_code == 429:
@@ -371,11 +380,7 @@ class AIEngine:
                         "Content-Type": "application/json"
                     },
                     json={
-                        # Was "meta-llama/llama-3-8b-instruct:free" — OpenRouter returns HTTP 404
-                        # "No endpoints found" for it (retired free model), so every call failed.
-                        # Overridable via OPENROUTER_MODEL; default is a current free model.
                         "model": os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free"),
-                        "response_format": {"type": "json_object"},
                         "messages": [
                             {"role": "user", "content": f"{prompt}\n\nRespond strictly with JSON only."}
                         ]
