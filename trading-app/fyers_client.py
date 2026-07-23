@@ -1329,6 +1329,79 @@ class FyersClient:
         except Exception:
             return []
 
+    def check_margin(self, symbol: str, qty: int, side: str, product: str,
+                     limit_price: float, sl_points: float = 0) -> Dict:
+        """Query Fyers margin API to get actual margin required for an order.
+
+        Returns {"total_margin": float, "available_margin": float, "error": str|None}.
+        Uses the /api/v3/multiorder/margin endpoint with a single-order basket.
+        Falls back to {"total_margin": 0, "available_margin": 0, "error": "..."} on failure
+        so callers can decide whether to proceed or skip.
+        """
+        try:
+            if not self.client:
+                return {"total_margin": 0, "available_margin": 0, "error": "No Fyers client"}
+
+            # Resolve auth credentials from the DB for this user
+            from models import Database
+            user = Database.get_user_by_id_sync(self.user_id) if self.user_id else None
+            if not user:
+                return {"total_margin": 0, "available_margin": 0, "error": "User not found"}
+
+            client_id = user.get("fyers_client_id") or get_secret("FYERS_CLIENT_ID")
+            access_token = user.get("fyers_access_token")
+            if not access_token and user.get("is_admin"):
+                access_token = get_secret("FYERS_ACCESS_TOKEN")
+            if not client_id or not access_token:
+                return {"total_margin": 0, "available_margin": 0, "error": "Missing credentials"}
+
+            if client_id and len(client_id.split("-")) == 1:
+                client_id = f"{client_id}-100"
+
+            side_int = 1 if side.upper() == "BUY" else -1
+            product_map = {"NRML": "MARGIN", "MIS": "INTRADAY"}
+            mapped_product = product_map.get(product.upper(), product.upper())
+            if product.upper() == "CO":
+                mapped_product = "CO"
+
+            order_payload = {
+                "symbol": symbol,
+                "qty": qty,
+                "type": 1,  # LIMIT
+                "side": side_int,
+                "productType": mapped_product,
+                "limitPrice": limit_price,
+                "stopPrice": 0,
+            }
+            if mapped_product == "CO" and sl_points > 0:
+                order_payload["stopLoss"] = round(sl_points, 2)
+
+            import requests
+            resp = requests.post(
+                "https://api-t1.fyers.in/api/v3/multiorder/margin",
+                json=[order_payload],
+                headers={
+                    "Authorization": f"{client_id}:{access_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10,
+            )
+            data = resp.json()
+
+            if data.get("code") == 200 and data.get("margin"):
+                m = data["margin"]
+                total = float(m.get("total_margin", 0) or 0)
+                available = float(m.get("available_margin", 0) or 0)
+                logger.info(f"💰 Margin check for {symbol}: required=₹{total:.0f}, available=₹{available:.0f}")
+                return {"total_margin": total, "available_margin": available, "error": None}
+            else:
+                msg = data.get("message", str(data))
+                logger.warning(f"⚠️ Margin API error for {symbol}: {msg}")
+                return {"total_margin": 0, "available_margin": 0, "error": msg}
+        except Exception as e:
+            logger.warning(f"⚠️ Margin check failed for {symbol}: {e}")
+            return {"total_margin": 0, "available_margin": 0, "error": str(e)[:80]}
+
     def get_funds(self) -> Dict:
         """Get account funds."""
         try:
