@@ -1711,9 +1711,9 @@ class FyersClient:
             "offlineOrder": False,
         }
 
-        # Fyers v3 SDK requires 'stopLoss' field for CO orders (absolute point diff)
+        # Fyers v3 CO: stopLoss is the absolute trigger price, not points
         if is_co and sl_points > 0:
-            order_data["stopLoss"] = round(sl_points, 2)
+            order_data["stopLoss"] = stop_trigger
 
         if is_bo:
             order_data["stopLoss"] = sl_points
