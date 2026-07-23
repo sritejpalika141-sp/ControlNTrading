@@ -545,8 +545,16 @@ class FyersWSFeed:
 
     def _redundancy_monitor(self):
         """Background thread that monitors for WebSocket freezes and injects Yahoo Finance data."""
-        import yfinance as yf
-        
+        # yfinance is an OPTIONAL failover source and is not installed on the VM. An unguarded
+        # `import yfinance` here raised ModuleNotFoundError on every spawn, crashing this thread
+        # (repeated "Exception in thread _redundancy_monitor" tracebacks). It must degrade
+        # gracefully — the primary Fyers WS feed does not depend on it.
+        try:
+            import yfinance as yf
+        except Exception:
+            logger.warning("⚠️ yfinance not available — WS Yahoo-failover disabled (primary feed unaffected).")
+            return
+
         # Map Fyers index symbols to Yahoo Finance symbols
         yf_mapping = {
             "NSE:NIFTY50-INDEX": "^NSEI",
