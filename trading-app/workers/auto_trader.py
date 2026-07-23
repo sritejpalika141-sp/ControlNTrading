@@ -1198,7 +1198,84 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             await broadcast_log(f"⚠️ No strikes found for {sig['type']}", "warning", user_id=client.user_id)
             return
 
-        best_strike = recommendations[0]
+        # ═══════════════════════════════════════════
+        # MARGIN-AWARE STRIKE SELECTION
+        # A bought-option Cover Order needs ≈ premium × lot_size of margin (the SL buffer is
+        # negligible — verified live: the Fyers "Margin Shortfall" == premium×lot − available,
+        # to the rupee). Instead of always taking the ATM strike[0] and getting rejected — then
+        # re-spamming a fresh strike every cycle as the ATM drifts — pick the BEST-RANKED strike
+        # whose estimated cost fits the available margin. If nothing fits, skip + back off.
+        # ═══════════════════════════════════════════
+        try:
+            _funds = await api_queue.enqueue(2, client.get_funds) or {}
+            _avail = float(_funds.get("equityAmount", 0) or 0) + float(_funds.get("commodityAmount", 0) or 0)
+        except Exception:
+            _avail = 0.0
+        _lots = (getattr(state, "mcx_lots", 1) if symbol.startswith(("MCX:", "CDS:"))
+                 else getattr(state, "stock_lots", 1) if symbol.endswith("-EQ")
+                 else getattr(state, "trade_lots", 1))
+        try:
+            _lot_size = get_lot_size(recommendations[0].get("symbol", symbol))
+        except Exception:
+            _lot_size = 1
+        _qty_est = max(1, int(_lots) * int(_lot_size))
+        _budget = _avail * 0.95  # 5% headroom for the CO SL buffer + slippage
+
+        best_strike = None
+        if _avail > 0:
+            for _rec in recommendations:
+                _prem = float(_rec.get("ltp", 0) or 0)
+                if _prem > 0 and _prem * _qty_est <= _budget:
+                    best_strike = _rec
+                    break
+            if best_strike is None:
+                # The near-ATM chain has nothing affordable. Widen once to reach deeper (cheaper)
+                # OTM strikes before giving up — this is what lets a small account still take the
+                # trade on a further-OTM strike that fits the margin.
+                try:
+                    _wide = await asyncio.to_thread(
+                        client.get_option_chain_strikes, spot,
+                        expiry["code"] if expiry else None, 12, base_symbol=symbol
+                    )
+                    _wide_recs = get_strike_recommendations(
+                        _wide, sig["type"], spot, dte, exclude_symbols=state.traded_strikes_today
+                    )
+                    for _rec in _wide_recs:
+                        _prem = float(_rec.get("ltp", 0) or 0)
+                        if _prem > 0 and _prem * _qty_est <= _budget:
+                            best_strike = _rec
+                            recommendations = _wide_recs
+                            logger.info(
+                                f"💰 Margin-aware (wide chain): picked {best_strike.get('symbol')} "
+                                f"(₹{best_strike.get('ltp')}) to fit ₹{_avail:.0f} margin."
+                            )
+                            break
+                except Exception as _we:
+                    logger.warning(f"Wide-chain margin fallback failed for {symbol}: {_we}")
+
+            if best_strike is None:
+                _prems = [float(r.get("ltp", 0) or 0) for r in recommendations if float(r.get("ltp", 0) or 0) > 0]
+                _cheapest = min(_prems) if _prems else 0
+                logger.warning(
+                    f"⏭️ No affordable {sig['type']} strike for {symbol}: cheapest ≈ ₹{_cheapest}×{_qty_est} "
+                    f"= ₹{_cheapest*_qty_est:.0f} > budget ₹{_budget:.0f} (avail ₹{_avail:.0f}). Backing off."
+                )
+                await broadcast_log(
+                    f"⏭️ {symbol}: no strike fits margin (need ≥ ₹{_cheapest*_qty_est:.0f}, have ₹{_avail:.0f}). Skipping.",
+                    "warning", user_id=client.user_id
+                )
+                state._last_trade_fail_time = datetime.now(IST).timestamp()  # reuse the 60s backoff
+                return
+            if best_strike is not recommendations[0]:
+                logger.info(
+                    f"💰 Margin-aware pick: {best_strike.get('symbol')} (₹{best_strike.get('ltp')}) "
+                    f"instead of ATM {recommendations[0].get('symbol')} (₹{recommendations[0].get('ltp')}) "
+                    f"to fit ₹{_avail:.0f} margin."
+                )
+        else:
+            # Funds unknown (API error) — fall back to the original ATM pick; the broker still gates.
+            best_strike = recommendations[0]
+
         strike_symbol = best_strike.get("symbol")
 
         if not strike_symbol:

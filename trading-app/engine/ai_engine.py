@@ -374,7 +374,7 @@ class AIEngine:
                         # Was "meta-llama/llama-3-8b-instruct:free" — OpenRouter returns HTTP 404
                         # "No endpoints found" for it (retired free model), so every call failed.
                         # Overridable via OPENROUTER_MODEL; default is a current free model.
-                        "model": os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
+                        "model": os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
                         "response_format": {"type": "json_object"},
                         "messages": [
                             {"role": "user", "content": f"{prompt}\n\nRespond strictly with JSON only."}

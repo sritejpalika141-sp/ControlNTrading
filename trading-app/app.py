@@ -2262,8 +2262,8 @@ def synthesize_15m_candles(candles_5m: List[Dict]) -> List[Dict]:
 # trading hot path is now bounded by a hard timeout and served from a short TTL cache, with
 # the existing technical-analysis result used whenever AI is slow or unavailable.
 AI_HOT_PATH_TIMEOUT = 4.0      # seconds; never stall the trading loop longer than this
-AI_TREND_CACHE_TTL = 300       # AI trend is a slow-moving view — 5 min is plenty
-AI_FAIL_CACHE_TTL = 60         # after a miss, don't retry (and re-stall) every cycle
+AI_TREND_CACHE_TTL = 600       # AI trend is a slow-moving view — 10 min reduces Gemini call volume
+AI_FAIL_CACHE_TTL = 120        # after a miss, don't retry (and re-stall) every cycle — 2 min
 _ai_hot_cache: Dict[str, tuple] = {}   # key -> (expires_at, payload)
 
 
