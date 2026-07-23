@@ -248,9 +248,16 @@ class FyersClient:
                     db_client_id = user.get("fyers_client_id")
                     db_access_token = user.get("fyers_access_token")
                     client_id = db_client_id or get_secret("FYERS_CLIENT_ID") or FyersClient._get_master_credentials()[0]
-                    # SECURITY: Non-admin users must NOT fall back to the admin's env-var token.
-                    # If their DB token is missing/expired, return None (they need to re-auth).
+                    # SECURITY: Non-admin users must NOT fall back to the admin's token.
+                    # BUG FIX: for the ADMIN this must mirror __init__ (the REST path) which DOES
+                    # fall back to the vault token — the login persists the token to the encrypted
+                    # vault (get_secret 'FYERS_ACCESS_TOKEN'), NOT users.fyers_access_token (that
+                    # column is empty). Without this fallback the WS feed alone got no token
+                    # ("Missing access token") while REST/balance worked — so the app showed
+                    # "connected" but produced no ticks, no signals, no trades.
                     access_token = db_access_token
+                    if not access_token and user.get("is_admin"):
+                        access_token = get_secret("FYERS_ACCESS_TOKEN")
                     if client_id and access_token:
                         # Allow any valid suffix like -100, -200, -300 for websocket
                         if "-" in client_id:
