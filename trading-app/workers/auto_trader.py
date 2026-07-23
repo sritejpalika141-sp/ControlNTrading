@@ -1201,88 +1201,104 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
 
         # ═══════════════════════════════════════════
         # MARGIN-AWARE STRIKE SELECTION
-        # Query Fyers margin API for actual CO margin per strike instead of
-        # estimating with premium × lot_size (which is wrong for MCX commodity COs).
-        # Pick the best-ranked strike whose actual margin fits available funds.
-        # If nothing fits, skip + back off.
+        # A small account may not afford the ATM strike (esp. crude, where 1 lot's margin ≈
+        # premium × 100). Pick the best-DELTA strike whose ACTUAL Fyers margin fits available
+        # funds. Efficiency: one margin call on the ATM yields the premium→margin multiplier;
+        # every other strike is then estimated analytically and only the FINAL pick is confirmed
+        # with a second margin call. If the near chain has nothing affordable, widen once to reach
+        # deeper (cheaper) OTM strikes. If still nothing fits, skip + back off (no spam-rejects).
         # ═══════════════════════════════════════════
-        try:
-            _funds = await api_queue.enqueue(2, client.get_funds) or {}
-            _avail = float(_funds.get("equityAmount", 0) or 0) + float(_funds.get("commodityAmount", 0) or 0)
-        except Exception:
-            _avail = 0.0
         _lots = (getattr(state, "mcx_lots", 1) if symbol.startswith(("MCX:", "CDS:"))
                  else getattr(state, "stock_lots", 1) if symbol.endswith("-EQ")
                  else getattr(state, "trade_lots", 1))
-        try:
-            _lot_size = get_lot_size(recommendations[0].get("symbol", symbol))
-        except Exception:
-            _lot_size = 1
-        _qty_est = max(1, int(_lots) * int(_lot_size))
-        _budget = _avail * 0.95  # 5% headroom for slippage
+
+        def _qty_for(sym):
+            try:
+                return max(1, int(_lots) * int(get_lot_size(sym)))
+            except Exception:
+                return max(1, int(_lots))
+
+        _sl_pts = float(sig.get("sl", sig.get("sl_points", 12)) or 12)
+
+        async def _margin_of(rec):
+            _p = float(rec.get("ltp", 0) or 0)
+            if _p <= 0:
+                return None, _p, 0.0
+            try:
+                _m = await asyncio.to_thread(
+                    client.check_margin, rec.get("symbol", symbol), _qty_for(rec.get("symbol", symbol)),
+                    "BUY", "CO", _p, _sl_pts
+                )
+                return float(_m.get("total_margin", 0) or 0), _p, float(_m.get("available_margin", 0) or 0)
+            except Exception:
+                return None, _p, 0.0
+
+        def _pick_affordable(recs, mult, budget):
+            """Best-delta strike whose estimated margin fits: most expensive strike with
+            premium×mult ≤ budget (closest to ATM among the affordable ones)."""
+            aff = [r for r in recs if float(r.get("ltp", 0) or 0) > 0
+                   and float(r.get("ltp")) * mult <= budget]
+            return max(aff, key=lambda r: float(r.get("ltp")), default=None)
 
         best_strike = None
-        if _avail > 0:
-            for _rec in recommendations:
-                _prem = float(_rec.get("ltp", 0) or 0)
-                if _prem <= 0:
-                    continue
-                _sym = _rec.get("symbol", symbol)
-                _sl_pts = float(sig.get("sl", 12))
-                # Query actual CO margin from Fyers for this specific strike
-                try:
-                    _margin = await asyncio.to_thread(
-                        client.check_margin, _sym, _qty_est, "BUY", "CO", _prem, _sl_pts
-                    )
-                    _req = _margin.get("total_margin", 0)
-                except Exception:
-                    _req = _prem * _qty_est  # fallback to estimate
-                if _req > 0 and _req <= _budget:
-                    best_strike = _rec
-                    logger.info(
-                        f"💰 Margin-aware: picked {_sym} (₹{_prem}, margin=₹{_req:.0f}) "
-                        f"fits budget ₹{_budget:.0f}."
-                    )
-                    break
-            if best_strike is None:
-                # Widen once to reach deeper (cheaper) OTM strikes before giving up
+        _atm = recommendations[0]
+        _res = await _margin_of(_atm)
+        _atm_margin = _res[0]
+        _atm_prem = _res[1]
+        _api_avail = _res[2] if len(_res) > 2 else 0.0
+
+        # Available margin: prefer the value the margin API reports; fall back to get_funds.
+        _avail = _api_avail
+        if _avail <= 0:
+            try:
+                _f = await api_queue.enqueue(2, client.get_funds) or {}
+                _avail = float(_f.get("equityAmount", 0) or 0) + float(_f.get("commodityAmount", 0) or 0)
+            except Exception:
+                _avail = 0.0
+        _budget = _avail * 0.95  # 5% headroom for slippage / SL buffer
+
+        if _atm_margin and _atm_margin > 0 and _avail > 0:
+            if _atm_margin <= _budget:
+                best_strike = _atm  # ATM fits — ideal pick
+            else:
+                _mult = _atm_margin / _atm_prem if _atm_prem > 0 else 0
+                # Try the near chain first, then a wide chain for deeper OTM strikes.
+                _pools = [recommendations]
                 try:
                     _wide = await asyncio.to_thread(
                         client.get_option_chain_strikes, spot,
-                        expiry["code"] if expiry else None, 12, base_symbol=symbol
+                        expiry["code"] if expiry else None, 14, base_symbol=symbol
                     )
                     _wide_recs = get_strike_recommendations(
                         _wide, sig["type"], spot, dte, exclude_symbols=state.traded_strikes_today
                     )
-                    for _rec in _wide_recs:
-                        _prem = float(_rec.get("ltp", 0) or 0)
-                        if _prem <= 0:
-                            continue
-                        _sym = _rec.get("symbol", symbol)
-                        try:
-                            _margin = await asyncio.to_thread(
-                                client.check_margin, _sym, _qty_est, "BUY", "CO", _prem, _sl_pts
-                            )
-                            _req = _margin.get("total_margin", 0)
-                        except Exception:
-                            _req = _prem * _qty_est
-                        if _req > 0 and _req <= _budget:
-                            best_strike = _rec
-                            recommendations = _wide_recs
-                            logger.info(
-                                f"💰 Margin-aware (wide chain): picked {_sym} (₹{_prem}, "
-                                f"margin=₹{_req:.0f}) to fit ₹{_avail:.0f} margin."
-                            )
-                            break
+                    if _wide_recs:
+                        _pools.append(_wide_recs)
                 except Exception as _we:
-                    logger.warning(f"Wide-chain margin fallback failed for {symbol}: {_we}")
+                    logger.warning(f"Wide-chain margin fallback fetch failed for {symbol}: {_we}")
+
+                for _pool in _pools:
+                    _cand = _pick_affordable(_pool, _mult, _budget) if _mult > 0 else None
+                    if not _cand:
+                        continue
+                    # Confirm the estimate with a real margin call before committing.
+                    _cres = await _margin_of(_cand)
+                    _cmargin = _cres[0]
+                    if _cmargin and 0 < _cmargin <= _budget:
+                        best_strike = _cand
+                        if _pool is not recommendations:
+                            recommendations = _pool
+                        logger.info(
+                            f"💰 Margin-aware: picked {_cand.get('symbol')} (₹{_cand.get('ltp')}, "
+                            f"margin ₹{_cmargin:.0f}) over ATM {_atm.get('symbol')} "
+                            f"(margin ₹{_atm_margin:.0f}) to fit ₹{_avail:.0f}."
+                        )
+                        break
 
             if best_strike is None:
-                _prems = [float(r.get("ltp", 0) or 0) for r in recommendations if float(r.get("ltp", 0) or 0) > 0]
-                _cheapest = min(_prems) if _prems else 0
                 logger.warning(
-                    f"⏭️ No affordable {sig['type']} strike for {symbol}: cheapest ≈ ₹{_cheapest}×{_qty_est} "
-                    f"= ₹{_cheapest*_qty_est:.0f} > budget ₹{_budget:.0f} (avail ₹{_avail:.0f}). Backing off."
+                    f"⏭️ No affordable {sig['type']} strike for {symbol}: ATM margin ₹{_atm_margin:.0f} "
+                    f"> budget ₹{_budget:.0f} (avail ₹{_avail:.0f}); no cheaper strike fits. Backing off."
                 )
                 await broadcast_log(
                     f"⏭️ {symbol}: no strike fits margin (have ₹{_avail:.0f}). Skipping.",
@@ -1291,7 +1307,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 state._last_trade_fail_time = datetime.now(IST).timestamp()  # reuse the 60s backoff
                 return
         else:
-            # Funds unknown (API error) — fall back to the original ATM pick; the broker still gates.
+            # Margin API unavailable — fall back to the original ATM pick; the broker still gates.
             best_strike = recommendations[0]
 
         strike_symbol = best_strike.get("symbol")

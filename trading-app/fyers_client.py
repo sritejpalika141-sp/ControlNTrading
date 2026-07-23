@@ -1364,6 +1364,7 @@ class FyersClient:
             if product.upper() == "CO":
                 mapped_product = "CO"
 
+            # Bare-minimum payload matching Fyers Go SDK CalculateMarginRequest
             order_payload = {
                 "symbol": symbol,
                 "qty": qty,
@@ -1371,12 +1372,6 @@ class FyersClient:
                 "side": side_int,
                 "productType": mapped_product,
                 "limitPrice": limit_price,
-                "stopPrice": 0,
-                "disclosedQty": 0,
-                "validity": "DAY",
-                "offlineOrder": False,
-                "stopLoss": 0,
-                "takeProfit": 0,
             }
             if mapped_product == "CO" and sl_points > 0:
                 order_payload["stopLoss"] = round(limit_price - sl_points, 2)
@@ -1384,19 +1379,23 @@ class FyersClient:
             import requests
             resp = requests.post(
                 "https://api-t1.fyers.in/api/v3/multiorder/margin",
-                json=[order_payload],
+                json={"data": [order_payload]},  # Fyers requires a {"data":[...]} wrapper; a raw list -> -50 "Invalid input"
                 headers={
                     "Authorization": f"{client_id}:{access_token}",
                     "Content-Type": "application/json",
+                    "version": "3",
                 },
                 timeout=10,
             )
             data = resp.json()
 
-            if data.get("code") == 200 and data.get("margin"):
-                m = data["margin"]
-                total = float(m.get("total_margin", 0) or 0)
-                available = float(m.get("available_margin", 0) or 0)
+            if data.get("code") == 200 and data.get("data"):
+                # Fyers /multiorder/margin returns: data.margin_total (required), data.margin_avail
+                # (available), data.margin_new_order. The old code read data.margin.total_margin —
+                # keys that do not exist in the response — so every check silently returned ₹0.
+                m = data["data"]
+                total = float(m.get("margin_total", m.get("margin_new_order", 0)) or 0)
+                available = float(m.get("margin_avail", 0) or 0)
                 logger.info(f"💰 Margin check for {symbol}: required=₹{total:.0f}, available=₹{available:.0f}")
                 return {"total_margin": total, "available_margin": available, "error": None}
             else:

@@ -143,17 +143,15 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
     ranked_calls = score_options(calls, True)
     ranked_puts = score_options(puts, False)
 
+    # Return the FULL score-ranked list (was: only [0], a single strike). results[0] is still the
+    # best pick, so every caller that reads recommendations[0] is unchanged — but margin-aware
+    # callers can now walk down to a cheaper affordable strike when the top pick exceeds available
+    # margin (a small account could otherwise NEVER trade an expensive underlying like crude).
+    ranked = ranked_calls if signal_type == "CALL" else (ranked_puts if signal_type == "PUT" else [])
     results = []
-    
-    if signal_type == "CALL" and ranked_calls:
-        best = ranked_calls[0]
-        best["type_label"] = f"{best['moneyness']} CALL (OI Optimized)"
-        results.append(best)
-    elif signal_type == "PUT" and ranked_puts:
-        best = ranked_puts[0]
-        best["type_label"] = f"{best['moneyness']} PUT (OI Optimized)"
-        results.append(best)
-        
+    for opt in ranked:
+        opt["type_label"] = f"{opt['moneyness']} {signal_type} (OI Optimized)"
+        results.append(opt)
     return results
 
 def resolve_current_commodity_expiry(prefix: str, client=None) -> str:
