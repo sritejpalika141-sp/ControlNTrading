@@ -435,7 +435,7 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             for i in range(len(candles_5m)-5, len(candles_5m)):
                 c = candles_5m[i]
                 c_ema = _calculate_ema(c_closes[:i+1], 9)
-                t_str = datetime.fromtimestamp(c["t"]).strftime("%H:%M")
+                t_str = datetime.fromtimestamp(c.get("t", c.get("timestamp", 0))).strftime("%H:%M")
                 formatted_5m.insert(0, {
                     "time": t_str, "open": c["open"], "high": c["high"], 
                     "low": c["low"], "close": c["close"], "ema9": c_ema

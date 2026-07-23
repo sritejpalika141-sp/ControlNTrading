@@ -611,6 +611,14 @@ class TradingState:
         # Double-fire protection (10s buffer between any trade action)
         if now - self.last_trade_time < 10:
             return False, "Rate limiting trades (10s buffer)"
+
+        # ═══ FAILURE BACKOFF ═══
+        # After a trade execution fails (margin shortfall, broker rejection, etc.),
+        # block ALL strategies for 60s to prevent infinite signal loops where the
+        # same unaffordable signal is re-proposed every cycle.
+        _last_fail = getattr(self, "_last_trade_fail_time", 0)
+        if _last_fail and (now - _last_fail) < 60:
+            return False, f"⏳ Failure backoff: {int(60 - (now - _last_fail))}s remaining"
             
         return True, "OK"
 
