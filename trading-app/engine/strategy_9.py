@@ -472,7 +472,7 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             
         # Active trade context
         active_t = None
-        for t in state.get_active_trades():
+        for t in getattr(state, "active_auto_trades", []):
             if t.get("strategy") == "Strategy 9: 9-EMA Momentum Scalper":
                 active_t = {"type": t.get("type", "CALL"), "entry_premium": t.get("entry_price", 0), 
                             "sl_underlying": t.get("sl", 0), "sl_premium": 0}
