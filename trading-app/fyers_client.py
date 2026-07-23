@@ -1372,9 +1372,14 @@ class FyersClient:
                 "productType": mapped_product,
                 "limitPrice": limit_price,
                 "stopPrice": 0,
+                "disclosedQty": 0,
+                "validity": "DAY",
+                "offlineOrder": False,
+                "stopLoss": 0,
+                "takeProfit": 0,
             }
             if mapped_product == "CO" and sl_points > 0:
-                order_payload["stopLoss"] = round(sl_points, 2)
+                order_payload["stopLoss"] = round(limit_price - sl_points, 2)
 
             import requests
             resp = requests.post(
@@ -1396,7 +1401,7 @@ class FyersClient:
                 return {"total_margin": total, "available_margin": available, "error": None}
             else:
                 msg = data.get("message", str(data))
-                logger.warning(f"⚠️ Margin API error for {symbol}: {msg}")
+                logger.warning(f"⚠️ Margin API error for {symbol}: {msg} | resp={str(data)[:200]}")
                 return {"total_margin": 0, "available_margin": 0, "error": msg}
         except Exception as e:
             logger.warning(f"⚠️ Margin check failed for {symbol}: {e}")
