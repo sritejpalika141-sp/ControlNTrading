@@ -945,6 +945,28 @@ ai_trend_cache = state.ai_trend_cache # Cache for AI predictions to prevent rate
 # Global dependencies
 _analysis_store = state._analysis_store
 
+# TTL cache for slow-changing 1H trend reads (BankNifty correlation + heavyweights).
+# These were re-fetched via get_historical on EVERY analysis cycle (3 REST calls each pass),
+# which burned the Fyers REST budget and repeatedly tripped the 60s global cooldown — starving
+# the option-chain/strike enrichment that a live signal needs. A 1H candle only closes once an
+# hour, so a 30-min cache is safe and still picks up each new hourly candle within the hour.
+_htf_trend_cache = {}  # symbol -> (trend_str, epoch_ts)
+_HTF_TREND_TTL = 1800  # 30 minutes
+
+
+async def _cached_htf_trend(client, symbol, now_ts):
+    """1H trend for `symbol`, cached ~30 min. Only the expensive get_historical call is cached;
+    callers still read the live lp from the (cheap, WS-backed) quote path separately."""
+    hit = _htf_trend_cache.get(symbol)
+    if hit and (now_ts - hit[1]) < _HTF_TREND_TTL:
+        return hit[0]
+    candles_1h = await api_queue.enqueue(2, client.get_historical, symbol, "60", days_back=2)
+    from engine.key_levels import detect_trend
+    trend = (detect_trend(candles_1h) if candles_1h else {"trend": "NEUTRAL"}).get("trend", "NEUTRAL")
+    if candles_1h:  # only cache a real read; leave a failed fetch uncached so it retries next pass
+        _htf_trend_cache[symbol] = (trend, now_ts)
+    return trend
+
 # Event loop reference for background tasks
 main_loop = state.main_loop
 
@@ -2552,12 +2574,9 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             bnf_quotes = await get_quotes_with_fallback(client, [bnf_symbol])
             bnf_data = bnf_quotes.get(bnf_symbol, {})
             result["bnf_spot"] = bnf_data.get("lp", 0)
-            
-            # Fetch 1H candles for BNF trend
-            bnf_candles_1h = await api_queue.enqueue(2, client.get_historical, bnf_symbol, "60", days_back=2)
-            from engine.key_levels import detect_trend
-            bnf_trend_res = detect_trend(bnf_candles_1h) if bnf_candles_1h else {"trend": "NEUTRAL"}
-            result["bnf_trend"] = bnf_trend_res.get("trend", "NEUTRAL")
+
+            # 1H BNF trend — cached ~30 min (was an uncached get_historical every cycle).
+            result["bnf_trend"] = await _cached_htf_trend(client, bnf_symbol, now_ts)
         except Exception as e:
             logger.error(f"BNF Correlation Fetch Error: {e}")
             result["bnf_spot"] = 0
@@ -2570,14 +2589,11 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
             h_data_list = []
             for hs in heavy_symbols:
                 q = h_quotes.get(hs, {})
-                # Fetch trend for each heavyweight
-                h_candles_1h = await api_queue.enqueue(2, client.get_historical, hs, "60", days_back=2)
-                from engine.key_levels import detect_trend
-                h_tr = detect_trend(h_candles_1h) if h_candles_1h else {"trend": "NEUTRAL"}
+                # 1H heavyweight trend — cached ~30 min (was an uncached get_historical per symbol per cycle).
                 h_data_list.append({
                     "symbol": hs,
                     "lp": q.get("lp", 0),
-                    "trend": h_tr.get("trend", "NEUTRAL")
+                    "trend": await _cached_htf_trend(client, hs, now_ts)
                 })
             result["heavyweights"] = h_data_list
         except Exception as e:
