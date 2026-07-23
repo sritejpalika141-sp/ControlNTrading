@@ -106,7 +106,10 @@ async def regime_evaluator():
         try:
             if state.is_market_open("COMMODITY_OPTIONS"):
                 from engine.strikes import resolve_current_commodity_expiry
-                crude_fut = resolve_current_commodity_expiry("MCX:CRUDEOIL")
+                from fyers_client import FyersClient
+                # Pass a client so the LIVE contract is used (history-validated, rolls past an
+                # expired month); the result is cached ~2h so this does not hammer the API.
+                crude_fut = resolve_current_commodity_expiry("MCX:CRUDEOIL", client=FyersClient(user_id=1))
                 r, reason = await _compute_regime_for(crude_fut, ai_engine)
                 state.mcx_regime, state.mcx_regime_reason = r, reason
                 logger.info(f"🟠 MCX Regime ({crude_fut}): {r} - {reason}")

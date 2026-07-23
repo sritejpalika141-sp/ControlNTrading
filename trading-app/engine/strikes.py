@@ -156,16 +156,25 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
         
     return results
 
-def resolve_current_commodity_expiry(prefix: str) -> str:
+def resolve_current_commodity_expiry(prefix: str, client=None) -> str:
     """
-    Resolve a high-level prefix (MCX:CRUDEOIL) into a tradable Fyers Future symbol 
-    for the current month (e.g. MCX:CRUDEOIL24NOVFUT).
+    Resolve a high-level prefix (MCX:CRUDEOIL) into a TRADABLE Fyers future symbol.
+
+    When a Fyers `client` is given, this defers to client.resolve_active_commodity_contract(),
+    which VALIDATES the contract against the history API and rolls past an expired month — the
+    fix for 'watchlist stuck on an expired 26JUL contract -> 0 candles -> no MCX trades'. Without
+    a client it falls back to the naive current-calendar-month guess (may be expired mid-month).
     """
+    if client is not None:
+        try:
+            sym = client.resolve_active_commodity_contract(prefix)
+            if sym:
+                return sym
+        except Exception:
+            pass
     from datetime import datetime
     now = datetime.now()
-    year_str = str(now.year)[-2:]  # e.g., '24' for 2024
-    month_str = now.strftime("%b").upper()  # e.g., 'NOV'
-    
-    # E.g., MCX:CRUDEOIL + 24 + NOV + FUT -> MCX:CRUDEOIL24NOVFUT
+    year_str = str(now.year)[-2:]
+    month_str = now.strftime("%b").upper()
     return f"{prefix}{year_str}{month_str}FUT"
 

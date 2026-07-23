@@ -1620,9 +1620,40 @@ async def automation_loop():
                             await risk_orchestrator.propose_trade("Strategy 1", symbol, sig, analysis, client, state)
                             break
                             
+            async def run_crude_strats():
+                # The evening/EIA crude strategies are the ONLY ones designed for the MCX evening
+                # session — the ORB/9-EMA/Swing commodity variants are hard-gated to NSE daytime
+                # hours (<=14:15/15:15), so before this, crude had NO strategy that ran in its
+                # actual session. Each strategy self-gates by time (evening window / EIA Wednesday)
+                # and returns NO TRADE outside it. Signals route through the SAME propose_trade path
+                # as every other strategy, so strike/SL/qty and all safety rails apply unchanged.
+                if not (symbol.startswith("MCX:") and "CRUDE" in symbol.upper()):
+                    return
+                if not (spot and candles_5m):
+                    return
+                coms = getattr(state, "commodity_strategies", [])
+                try:
+                    if "Commodity: Evening Momentum" in coms:
+                        from engine.strategy_crude_evening import generate_signal as _crude_evening
+                        sig = _crude_evening(candles=candles_5m)
+                        if sig and sig.get("type") in ("CALL", "PUT") and \
+                           state.can_trade("Commodity: Evening Momentum", signal_type=sig["type"], symbol=symbol)[0]:
+                            print(f"🛢️ CRUDE EVENING SIGNAL: {sig['type']} {symbol} — {sig.get('reason','')}", flush=True)
+                            await risk_orchestrator.propose_trade("Commodity: Evening Momentum", symbol, sig, {"trend": "NEUTRAL"}, client, state)
+                            return
+                    if "Commodity: EIA Volatility (Wed)" in coms:
+                        from engine.strategy_crude_eia import generate_signal as _crude_eia
+                        sig = _crude_eia(candles=candles_5m)
+                        if sig and sig.get("type") in ("CALL", "PUT") and \
+                           state.can_trade("Commodity: EIA Volatility (Wed)", signal_type=sig["type"], symbol=symbol)[0]:
+                            print(f"🛢️ CRUDE EIA SIGNAL: {sig['type']} {symbol} — {sig.get('reason','')}", flush=True)
+                            await risk_orchestrator.propose_trade("Commodity: EIA Volatility (Wed)", symbol, sig, {"trend": "NEUTRAL"}, client, state)
+                except Exception as _ce:
+                    logger.error(f"Crude strategy error for {symbol}: {_ce}")
+
             # Execute all symbol-level strategies simultaneously
             import asyncio
-            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_1())
+            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_1(), run_crude_strats())
             
         except Exception as e:
             logger.error(f"Error in Symbol loop for {symbol}: {e}")

@@ -900,6 +900,49 @@ class FyersClient:
             print(f"Historical data error: {e}")
             return _stale()
 
+    def resolve_active_commodity_contract(self, prefix: str, max_months_ahead: int = 4) -> str:
+        """Nearest TRADEABLE MCX/CDS future for a commodity prefix (e.g. 'MCX:CRUDEOIL'),
+        validated against the history API and cached ~2h.
+
+        Why this exists: the old resolver just stamped the current CALENDAR month
+        (MCX:CRUDEOIL26JULFUT). MCX crude expires mid-month (~19-20th), and an EXPIRED contract
+        still returns a stale QUOTE but its history comes back -300 "Invalid symbol" — so from the
+        20th onward the watchlist/agent kept pointing at a dead contract: 0 candles -> strategies
+        had no data -> zero MCX trades. History (code 200 + candles) is the authoritative "is this
+        contract live" signal, so we roll month-by-month until one returns candles.
+        """
+        import time as _t
+        cache = getattr(self, "_commodity_contract_cache", {})
+        hit = cache.get(prefix)
+        if hit and hit.get("until", 0) > _t.time():
+            return hit["sym"]
+
+        now = datetime.now(IST)
+        client = self._get_active_client()
+        end_s = now.strftime("%Y-%m-%d")
+        start_s = (now - timedelta(days=4)).strftime("%Y-%m-%d")
+        fallback = f"{prefix}{now.strftime('%y')}{now.strftime('%b').upper()}FUT"
+        if client is None or self._check_cooldown():
+            return fallback
+
+        for m in range(max_months_ahead + 1):
+            month0 = now.month - 1 + m
+            year = now.year + month0 // 12
+            mon = month0 % 12 + 1
+            d = now.replace(year=year, month=mon, day=1)
+            sym = f"{prefix}{d.strftime('%y')}{d.strftime('%b').upper()}FUT"
+            try:
+                r = client.history({"symbol": sym, "resolution": "5", "date_format": "1",
+                                    "range_from": start_s, "range_to": end_s, "cont_flag": "1"})
+                if r and r.get("code") == 200 and r.get("candles"):
+                    self._commodity_contract_cache = {**cache, prefix: {"sym": sym, "until": _t.time() + 7200}}
+                    if m > 0:
+                        print(f"🛢️ Rolled {prefix} to live contract {sym} (current month expired).", flush=True)
+                    return sym
+            except Exception:
+                continue
+        return fallback
+
     def get_option_chain_strikes(self, spot: float, expiry_code: str = None, num_strikes: int = 10, base_symbol: str = "NSE:NIFTY50-INDEX") -> dict:
         """
         Cached, stampede-safe wrapper around the Fyers optionchain API.

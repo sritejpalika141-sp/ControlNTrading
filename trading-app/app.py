@@ -833,10 +833,12 @@ async def add_script(request: Request, data: Dict):
         else:
             symbol = f"NSE:{symbol}"
     
-    # Auto-resolve commodity active futures
+    # Auto-resolve commodity active futures. Pass the client so it resolves to the LIVE contract
+    # (history-validated; rolls past an expired month) instead of the naive calendar-month guess.
     if symbol.startswith("MCX:") and not any(char.isdigit() for char in symbol):
         from engine.strikes import resolve_current_commodity_expiry
-        symbol = resolve_current_commodity_expiry(symbol)
+        _rc = await get_current_client(request)  # cached in USER_CONTEXTS; cheap to fetch here
+        symbol = resolve_current_commodity_expiry(symbol, client=_rc)
             
     # 2. If no suffix, check if it's a known index or option
     if "-" not in symbol:

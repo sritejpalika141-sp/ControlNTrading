@@ -119,18 +119,18 @@ class NewsWorker:
             symbol_prefix = self._resolve_symbol(asset)
             if not symbol_prefix:
                 return
+            val_client = self._get_validation_client()
             if symbol_prefix.startswith("MCX:") or symbol_prefix.startswith("CDS:"):
                 from engine.strikes import resolve_current_commodity_expiry
-                # Resolve to the exact CURRENT futures contract, e.g. MCX:CRUDEOIL26JULFUT.
-                # A guessed month may not exist (esp. gold/silver); validation below drops it
-                # cleanly rather than arming a dead contract for auto-trade.
-                exact_symbol = resolve_current_commodity_expiry(symbol_prefix)
+                # Resolve to the LIVE futures contract. Passing the client validates against the
+                # history API and rolls past an expired month (crude expires ~19-20th), so we never
+                # inject a dead contract like MCX:CRUDEOIL26JULFUT after July expiry.
+                exact_symbol = resolve_current_commodity_expiry(symbol_prefix, client=val_client)
             else:
                 exact_symbol = symbol_prefix
             if not exact_symbol:
                 return
 
-            val_client = self._get_validation_client()
             if not self._is_quotable(val_client, exact_symbol):
                 logger.warning(f"⏭️ Skipped unquotable {kind} injection: {exact_symbol} "
                                f"(from '{asset}') — not added to watch")
