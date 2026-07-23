@@ -278,7 +278,13 @@ class FyersWSFeed:
             self._ws_thread.start()
             logger.info("✅ Fyers WebSocket Data Feed restart thread spawned.")
         finally:
-            self._reconnecting = False
+            # Delay releasing _reconnecting until the new connect thread is past the
+            # critical connect()/keep_running() window, preventing a second restart
+            # from clearing self._socket while the first is still establishing.
+            def _release_reconnecting():
+                time.sleep(3)
+                self._reconnecting = False
+            threading.Thread(target=_release_reconnecting, daemon=True).start()
     
     def _connect(self):
         """Connect to Fyers WebSocket (runs in background thread)."""
@@ -293,7 +299,7 @@ class FyersWSFeed:
                 self._started = False
                 return
             
-            self._socket = data_ws.FyersDataSocket(
+            sock = data_ws.FyersDataSocket(
                 access_token=token,
                 log_path="",
                 litemode=True,  # Lite mode (LTP only) to prevent drops on indices
@@ -306,9 +312,16 @@ class FyersWSFeed:
                 on_message=self._on_message
             )
             
-            self._socket.connect()
-            # keep_running blocks the thread
-            self._socket.keep_running()
+            # Store locally first, then assign — a concurrent stop() may clear self._socket
+            # between connect() and keep_running(). Using the local ref avoids the race.
+            sock.connect()
+            self._socket = sock
+            # keep_running blocks the thread; guard against stop() clearing self._socket
+            # during the window between connect() and keep_running().
+            if self._socket is sock:
+                sock.keep_running()
+            else:
+                logger.debug("WS _connect: socket replaced before keep_running — exiting thread")
             
         except Exception as e:
             logger.error(f"❌ WS Feed connect error: {e}")
