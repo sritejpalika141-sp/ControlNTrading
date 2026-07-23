@@ -844,25 +844,30 @@ async def trailing_monitor():
 
 async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, client) -> Dict:
     """
-    SL strictly from the 3-candle swing low on the 1-min OPTION chart.
+    Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from
+    the buy price (the Cover-Order stop then sits AT that swing low, always BELOW entry for a long).
 
-    The SL distance is CAPPED to a fraction of the premium so it stays inside the Fyers
-    Cover-Order SL band. A stop wider than the band (the old fixed-20 pts = 74% of a ₹27 option)
-    gets the ENTIRE CO rejected, which forced a separate SELL stop-loss — a pending short on a long
-    option that reserves ~₹1.2L naked-short margin and was rejected, leaving trades with NO stop.
-    A CO-compatible SL means the stop rides along as the CO's own leg (margin-benefited).
+    Priority (per owner directive 23-07-26):
+      1. PRIMARY  — 3-candle swing low on the 1-min option chart (all symbols, incl. MCX/CDS).
+      2. FALLBACK — only if the swing low is unavailable or would sit at/above entry:
+           • MCX/CDS (commodities/currency): AI-picked stop distance.
+           • index/stock: fixed premium-based stop (5 pts index / 2 pts stock).
+           • last resort: 30%-of-premium.
+      In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
+      absolute price, never a stop at/above entry.
+
+    The distance is CAPPED to ~40% of premium so the stop stays inside the Fyers Cover-Order SL
+    band (a stop wider than the band gets the whole CO rejected, leaving the trade unprotected).
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
-    # When the 3-candle swing low is at/above entry (the stop would sit ABOVE the buy price —
-    # invalid for a long option), fall back to a FIXED option-premium stop: 5 pts for INDEX
-    # options, 2 pts for STOCK options. Index = NIFTY-family / SENSEX / BANKEX.
     _is_index = any(k in (strike_symbol or "").upper() for k in ("NIFTY", "SENSEX", "BANKEX"))
+    _is_commodity = strike_symbol.startswith("MCX") or strike_symbol.startswith("CDS")
     _fixed_pts = 5.0 if _is_index else 2.0
-    # Cover-Order SL band ceiling: keep the stop within ~40% of premium so the CO's SL leg is
-    # accepted. Uncapped-but-rejected leaves the trade naked, which is strictly worse.
     _cap = max(round(entry_ltp * 0.40, 1), 2.0)
 
     def _pkg(sl_pts: float, method: str) -> Dict:
+        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts),
+        # i.e. subtracted from the buy price and strictly below it.
         sl_pts = max(round(sl_pts, 1), 1.0)
         if sl_pts > _cap:
             sl_pts = _cap
@@ -870,50 +875,61 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
-
-    try:
-        if strike_symbol.startswith("MCX") or strike_symbol.startswith("CDS"):
-            logger.info(f"🧠 Asking AI for Commodities/Currency SL and TSL dynamic adjustment for {strike_symbol}")
+    async def _ai_sl():
+        """AI-picked stop distance (commodities/currency fallback), as a positive number of points
+        subtracted from the buy price. Returns None if the AI is unavailable or gives no usable value."""
+        try:
+            logger.info(f"🧠 Asking AI for Commodities/Currency SL (fallback) for {strike_symbol}")
             from engine.ai_engine import ai_engine
             ai_prompt = f"""
             You are a Quantitative Risk AI for Commodities and Currencies.
             We entered {strike_symbol} at {entry_ltp} in a {trend} trend.
-            Provide the ideal Stop Loss distance (in points, NOT percentage) and the Trailing method.
+            Provide the ideal Stop Loss DISTANCE (in points BELOW the entry price, NOT a price, NOT a percentage).
             Return ONLY a valid JSON object with `sl_points` (float) and `target_points` (float).
             Example: {{"sl_points": 10.5, "target_points": 21.0}}
             """
-            ai_resp = await ai_engine._call_chain(ai_prompt) if hasattr(ai_engine, '_call_chain') else None
+            ai_resp = await ai_engine._call_chain(ai_prompt) if hasattr(ai_engine, "_call_chain") else None
             if ai_resp:
                 import json
-                start_idx = ai_resp.find('{')
-                end_idx = ai_resp.rfind('}')
-                if start_idx != -1 and end_idx != -1:
-                    json_str = ai_resp[start_idx:end_idx+1]
-                    ai_data = json.loads(json_str)
-                    ai_sl = float(ai_data.get("sl_points", entry_ltp * 0.2))
-                    return _pkg(ai_sl, "ai_dynamic_sl")
+                s, e = ai_resp.find("{"), ai_resp.rfind("}")
+                if s != -1 and e != -1:
+                    ai_sl = float(json.loads(ai_resp[s:e + 1]).get("sl_points", 0) or 0)
+                    if ai_sl > 0:  # must be a positive distance so (entry - sl) stays below entry
+                        return _pkg(ai_sl, "ai_dynamic_sl")
+        except Exception as _e:
+            logger.warning(f"AI SL fallback failed for {strike_symbol}: {_e}")
+        return None
 
+    try:
+        # ── PRIMARY: 3-candle swing low on the 1-min OPTION chart (all symbols) ──
         # 2 days of history so a freshly-ATM / thin strike still yields >=3 candles.
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
+        have_candles = bool(candles) and len(candles) >= 3
 
-        if not candles or len(candles) < 3:
-            # No option candles (thin/new strike or throttled history). Use a %-of-premium stop
-            # that fits the CO band instead of a fixed 20 pts that blew it.
-            logger.warning(f"No option candles for {strike_symbol} — 30%-of-premium CO-safe SL.")
+        if have_candles:
+            recent = candles[-3:]
+            lowest_low = min(c["low"] for c in recent)
+            sl_distance = round(entry_ltp - lowest_low, 2)  # subtracted from the buy price
+            if sl_distance > 0:
+                logger.info(f"📊 3-CANDLE OPTION SL: swing_low={lowest_low}, distance={sl_distance} (stop = entry {entry_ltp} - {sl_distance}), cap={_cap}")
+                return _pkg(sl_distance, "strict_3_candle_low")
+            # Swing low is at/above entry -> can't subtract meaningfully; drop to the fallback below.
+            logger.info(f"⚠️ 3-candle swing low {lowest_low} >= entry {entry_ltp} — using fallback stop (still subtracted from buy price).")
+
+        # ── FALLBACK (swing low unavailable or invalid) ──
+        if _is_commodity:
+            ai = await _ai_sl()
+            if ai:
+                return ai
+            logger.warning(f"No swing low + AI unavailable for {strike_symbol} — 30%-of-premium CO-safe stop.")
             return _pkg(entry_ltp * 0.30, "pct_fallback")
 
-        recent = candles[-3:]
-        lowest_low = min(c["low"] for c in recent)
-        sl_distance = round(entry_ltp - lowest_low, 2)
-
-        if sl_distance <= 0:
-            # Swing low is at/above the buy price -> the stop would sit ABOVE entry (invalid for a
-            # long). Use the fixed fallback: 5 pts (index) / 2 pts (stock).
-            logger.info(f"⚠️ Swing low {lowest_low} >= entry {entry_ltp} (SL above buy) — fixed {_fixed_pts}pt SL ({'index' if _is_index else 'stock'}).")
-            return _pkg(_fixed_pts, "fixed_sl_above_buy")
-
-        logger.info(f"📊 3-CANDLE OPTION SL: Low={lowest_low}, Distance={sl_distance}, Cap={_cap}")
-        return _pkg(sl_distance, "strict_3_candle_low")
+        # index/stock: fixed premium-based stop if we had candles (swing invalid), else %-of-premium.
+        if have_candles:
+            logger.info(f"⚠️ Using fixed {_fixed_pts}pt stop for {strike_symbol} ({'index' if _is_index else 'stock'}) — subtracted from buy price.")
+            return _pkg(_fixed_pts, "fixed_sl_below_buy")
+        logger.warning(f"No option candles for {strike_symbol} — 30%-of-premium CO-safe stop.")
+        return _pkg(entry_ltp * 0.30, "pct_fallback")
 
     except Exception as e:
         logger.error(f"Smart SL calculation error: {e}")
