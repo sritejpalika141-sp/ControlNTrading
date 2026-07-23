@@ -1196,6 +1196,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         if not recommendations:
             logger.warning(f"No suitable strikes found for {sig['type']} at spot {spot}")
             await broadcast_log(f"⚠️ No strikes found for {sig['type']}", "warning", user_id=client.user_id)
+            state._last_trade_fail_time = datetime.now(IST).timestamp()
             return
 
         # ═══════════════════════════════════════════
