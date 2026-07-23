@@ -31,7 +31,7 @@ def is_in_no_trade_time(t):
         return True
     return False
 
-async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbols, client, state):
+async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbols, client, state, is_commodity=False):
     """
     Evaluates Strategy 7: Intraday Swing-Pivot Breakout with optimizations:
     - Double Close Confirmation
@@ -167,7 +167,9 @@ async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbo
     
     ct = latest_candle["Datetime"].time()
     
-    if is_in_no_trade_time(ct):
+    # The 9:15-9:30 / 15:00-15:15 no-trade windows are NSE-clock specific. For MCX/CDS commodity
+    # symbols they are meaningless (MCX trades to ~23:30), so skip them and run the full session.
+    if not is_commodity and is_in_no_trade_time(ct):
         return False, None
 
     if market_state == "TRANSITION" or market_state == "UNCLEAR":

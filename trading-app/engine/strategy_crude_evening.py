@@ -31,24 +31,24 @@ def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSE
         now = datetime.now(IST)
 
     ac = get_asset_class(asset_class)
-    sh, sm = ac.risk_config.get("evening_session_start", (17, 0))
     heh, hem = ac.hard_exit_time
-    start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
     hard_exit = now.replace(hour=heh, minute=hem, second=0, microsecond=0)
 
-    if now < start:
-        return _no_trade(f"Before evening session start {sh:02d}:{sm:02d}")
+    # Per owner directive (22-07-26): this momentum strategy now runs the FULL MCX session, not
+    # only the post-17:00 evening window. The 17:00 lower-bound gate has been removed. The
+    # hard-exit upper bound is kept — it is a safety rail (no new entries right before the
+    # mandatory session close), not a strategy-identity gate.
     if now >= hard_exit:
-        return _no_trade("Past crude hard-exit — no new evening entries")
+        return _no_trade("Past crude hard-exit — no new entries")
     if not candles or len(candles) < 3:
-        return _no_trade("Evening window active but insufficient candle data")
+        return _no_trade("Insufficient candle data")
 
     # Momentum continuation: three consecutive higher/lower closes -> ride the move.
     closes = [c["close"] for c in candles[-3:]]
     if closes[0] < closes[1] < closes[2]:
         return {"type": "CALL", "side": "BUY", "strategy": "Crude Evening Momentum",
-                "reason": "Evening upside momentum continuation", "confidence": 86, "asset_class": _ASSET}
+                "reason": "Upside momentum continuation", "confidence": 86, "asset_class": _ASSET}
     if closes[0] > closes[1] > closes[2]:
         return {"type": "PUT", "side": "BUY", "strategy": "Crude Evening Momentum",
-                "reason": "Evening downside momentum continuation", "confidence": 86, "asset_class": _ASSET}
-    return _no_trade("Evening window active but no clear momentum")
+                "reason": "Downside momentum continuation", "confidence": 86, "asset_class": _ASSET}
+    return _no_trade("No clear momentum")

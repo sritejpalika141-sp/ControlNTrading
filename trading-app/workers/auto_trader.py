@@ -1561,7 +1561,8 @@ async def automation_loop():
                         state.save()
                     else:
                         from engine.strategy_swing import evaluate_swing_pivot_strategy
-                        has_sig, sig = await evaluate_swing_pivot_strategy(spot, candles_5m, analysis, state.active_symbols, client, state)
+                        _is_com = symbol.startswith(("MCX:", "CDS:"))
+                        has_sig, sig = await evaluate_swing_pivot_strategy(spot, candles_5m, analysis, state.active_symbols, client, state, is_commodity=_is_com)
                         if has_sig:
                             state.strat_7_pending_order = {"direction": "CE" if "CE" in sig["type"] else "PE", "type": sig["type"], "trigger_price": sig["trigger_price"], "sl_price": sig["sl_price"], "candles_alive": 0}
                             state.save()

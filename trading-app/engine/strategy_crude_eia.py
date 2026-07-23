@@ -18,24 +18,14 @@ import logging
 from datetime import datetime
 import pytz
 
-from engine.asset_classes import get_asset_class
-
 logger = logging.getLogger("CRUDE_EIA")
 IST = pytz.timezone("Asia/Kolkata")
 _ASSET = "CRUDE_OIL_OPTIONS"
-_WEDNESDAY = 2  # Monday=0 ... Wednesday=2
 
 
 def _no_trade(reason: str) -> dict:
     return {"type": "NO TRADE", "side": None, "strategy": "Crude EIA Volatility",
             "reason": reason, "confidence": 0, "asset_class": _ASSET}
-
-
-def _in_window(now: datetime, window) -> bool:
-    (sh, sm), (eh, em) = window
-    start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
-    end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
-    return start <= now <= end
 
 
 def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSET) -> dict:
@@ -44,14 +34,12 @@ def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSE
     if now is None:
         now = datetime.now(IST)
 
-    window = get_asset_class(asset_class).risk_config.get("eia_window", ((19, 30), (21, 0)))
-
-    if now.weekday() != _WEDNESDAY:
-        return _no_trade("Not Wednesday — EIA strategy inactive")
-    if not _in_window(now, window):
-        return _no_trade(f"Outside EIA window {window}")
+    # Per owner directive (22-07-26): this range-breakout strategy now runs the FULL MCX session,
+    # not only the Wednesday EIA-release window. The Wednesday gate and the intra-day window gate
+    # have been removed; it evaluates whenever crude candles are available and the market is open
+    # (session open/close is enforced upstream by the automation loop's is_market_open check).
     if not candles or len(candles) < 3:
-        return _no_trade("EIA window active but insufficient candle data")
+        return _no_trade("Insufficient candle data")
 
     # Breakout of the prior-range around the release: close above recent high -> CALL, below low -> PUT.
     prior = candles[:-1]

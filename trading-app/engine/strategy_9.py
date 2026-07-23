@@ -387,12 +387,27 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
     Evaluates Strategy 9 (AI-driven 5-Minute 9 EMA Retest)
     Returns (True, signal_dict) if a trade is found.
     """
-    if "Strategy 9: 9-EMA Momentum Scalper" not in state.active_strategies:
+    is_commodity = symbol.startswith(("MCX:", "CDS:"))
+
+    # Enablement: commodity symbols are gated by commodity_strategies (checked by the caller's
+    # _strat_enabled_for), so the equity active_strategies list must NOT block them here.
+    if not is_commodity and "Strategy 9: 9-EMA Momentum Scalper" not in state.active_strategies:
         return False, {}
 
-    phase = get_market_phase()
-    if phase not in ["OPEN", "CLOSING"]:
-        return False, {}
+    # Session gate, asset-aware.
+    if is_commodity:
+        # Run the FULL MCX/CDS session (not NSE-clock capped). MCX crude trades to ~23:30.
+        from state import is_market_open
+        if not is_market_open("COMMODITY_OPTIONS"):
+            return False, {}
+    else:
+        # NSE equity/index: trade only during the live session. NOTE: get_market_phase() returns
+        # 'market'/'pre_open'/'post_close'/'closed' — it NEVER returns "OPEN"/"CLOSING". The old
+        # check (phase not in ["OPEN","CLOSING"]) was therefore always True and silently killed
+        # this strategy for everyone. Compare against the strings the function actually returns.
+        phase = get_market_phase(getattr(state, "active_symbols", None))
+        if phase not in ("market", "post_close"):
+            return False, {}
 
     now = datetime.now(IST)
 
