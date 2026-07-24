@@ -849,29 +849,33 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
 
     Rule (per owner directive 24-07-26):
       1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
-      2. If that distance is comfortably wide (>= 15% of premium), use it as-is (strict_3_candle_low).
+      2. If that distance is comfortably wide (>= 10 pts), use it as-is (strict_3_candle_low).
       3. Otherwise the swing low is too tight (a real problem seen live: a ₹4 stop on a ₹371 option
          that was hit 2 seconds after entry) — apply an "AI floor": take the WIDER of the swing low
          and the floor distance, where the floor is:
              • MCX/CDS (commodities/currency): the AI-picked stop distance ("AI floor").
-             • index/stock (no AI path): 15% of premium.
+             • index/stock (no AI path): a 10-pt minimum.
+      HARD CAP: the stop is NEVER wider than 20 points (and never wider than 40% of premium for a
+      very cheap option, to stay inside the Fyers CO SL band). So max risk per trade = 20 pts.
       In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
-      absolute price, never a stop at/above entry. Capped at 40% of premium (CO band).
+      absolute price, never a stop at/above entry.
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
     _is_commodity = strike_symbol.startswith("MCX") or strike_symbol.startswith("CDS")
-    _cap = max(round(entry_ltp * 0.40, 1), 2.0)
-    # Floor: a stop tighter than this risks an instant stop-out. 15% of premium is the minimum, and
-    # also the threshold above which the swing low is trusted as-is (no floor/AI needed).
-    _floor_pct = max(round(entry_ltp * 0.15, 1), 2.0)
+    # HARD CAP: the stop is never wider than 20 points (owner directive 24-07-26) — and, for a very
+    # cheap option, never wider than 40% of premium (Fyers CO SL band). So max risk/trade = 20 pts.
+    _cap = max(min(20.0, round(entry_ltp * 0.40, 1)), 2.0)
+    # A stop tighter than this (in absolute points) risks an instant stop-out; it is also the
+    # threshold above which the swing low is trusted as-is (no floor / AI call needed).
+    _tight = min(10.0, _cap)
 
     def _pkg(sl_pts: float, method: str) -> Dict:
         # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts),
-        # i.e. subtracted from the buy price and strictly below it.
+        # i.e. subtracted from the buy price and strictly below it. Hard-capped at _cap (<=20 pts).
         sl_pts = max(round(sl_pts, 1), 1.0)
         if sl_pts > _cap:
             sl_pts = _cap
-            method += "_capped"
+            method += "_capped20"
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
@@ -911,18 +915,18 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
             if d > 0:
                 swing = d
 
-        # Swing low is comfortably wide -> use it directly (fast path, no floor / AI call needed).
-        if swing >= _floor_pct:
+        # Swing low is comfortably wide (>= _tight pts) -> use it directly, capped at 20 by _pkg.
+        if swing >= _tight:
             logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing}), cap={_cap}")
             return _pkg(swing, "strict_3_candle_low")
 
         # Swing low too tight (or unavailable) -> apply the floor; the final stop is the WIDER of the
-        # two, always subtracted from the buy price. This is what stops the 2-second stop-outs.
+        # two (then capped at 20), always subtracted from the buy price. Stops the 2-second stop-outs.
         if _is_commodity:
             ai = await _ai_distance()
-            floor, src = (ai, "ai") if (ai and ai > 0) else (_floor_pct, "pct15")
+            floor, src = (ai, "ai") if (ai and ai > 0) else (_tight, "min10")
         else:
-            floor, src = _floor_pct, "pct15"
+            floor, src = _tight, "min10"
 
         final = max(swing, floor)
         method = f"swing_floored_{src}" if swing > 0 else f"floor_{src}"
