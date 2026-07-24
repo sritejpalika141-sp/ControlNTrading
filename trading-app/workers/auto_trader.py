@@ -844,26 +844,26 @@ async def trailing_monitor():
 
 async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, client) -> Dict:
     """
-    Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from
-    the buy price (the Cover-Order stop then sits AT that swing low, always BELOW entry for a long).
+    Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from the
+    buy price — but NEVER tighter than a floor, so a quiet minute can't produce an instant stop-out.
 
-    Priority (per owner directive 23-07-26):
-      1. PRIMARY  — 3-candle swing low on the 1-min option chart (all symbols, incl. MCX/CDS).
-      2. FALLBACK — only if the swing low is unavailable or would sit at/above entry:
-           • MCX/CDS (commodities/currency): AI-picked stop distance.
-           • index/stock: fixed premium-based stop (5 pts index / 2 pts stock).
-           • last resort: 30%-of-premium.
+    Rule (per owner directive 24-07-26):
+      1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
+      2. If that distance is comfortably wide (>= 15% of premium), use it as-is (strict_3_candle_low).
+      3. Otherwise the swing low is too tight (a real problem seen live: a ₹4 stop on a ₹371 option
+         that was hit 2 seconds after entry) — apply an "AI floor": take the WIDER of the swing low
+         and the floor distance, where the floor is:
+             • MCX/CDS (commodities/currency): the AI-picked stop distance ("AI floor").
+             • index/stock (no AI path): 15% of premium.
       In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
-      absolute price, never a stop at/above entry.
-
-    The distance is CAPPED to ~40% of premium so the stop stays inside the Fyers Cover-Order SL
-    band (a stop wider than the band gets the whole CO rejected, leaving the trade unprotected).
+      absolute price, never a stop at/above entry. Capped at 40% of premium (CO band).
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
-    _is_index = any(k in (strike_symbol or "").upper() for k in ("NIFTY", "SENSEX", "BANKEX"))
     _is_commodity = strike_symbol.startswith("MCX") or strike_symbol.startswith("CDS")
-    _fixed_pts = 5.0 if _is_index else 2.0
     _cap = max(round(entry_ltp * 0.40, 1), 2.0)
+    # Floor: a stop tighter than this risks an instant stop-out. 15% of premium is the minimum, and
+    # also the threshold above which the swing low is trusted as-is (no floor/AI needed).
+    _floor_pct = max(round(entry_ltp * 0.15, 1), 2.0)
 
     def _pkg(sl_pts: float, method: str) -> Dict:
         # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts),
@@ -875,11 +875,11 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
-    async def _ai_sl():
-        """AI-picked stop distance (commodities/currency fallback), as a positive number of points
-        subtracted from the buy price. Returns None if the AI is unavailable or gives no usable value."""
+    async def _ai_distance():
+        """AI-picked stop DISTANCE in points below entry (the 'AI floor' for commodities/currency).
+        Returns a positive float, or None if the AI is unavailable / gives no usable value."""
         try:
-            logger.info(f"🧠 Asking AI for Commodities/Currency SL (fallback) for {strike_symbol}")
+            logger.info(f"🧠 Asking AI for Commodities/Currency SL floor for {strike_symbol}")
             from engine.ai_engine import ai_engine
             ai_prompt = f"""
             You are a Quantitative Risk AI for Commodities and Currencies.
@@ -894,42 +894,40 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
                 s, e = ai_resp.find("{"), ai_resp.rfind("}")
                 if s != -1 and e != -1:
                     ai_sl = float(json.loads(ai_resp[s:e + 1]).get("sl_points", 0) or 0)
-                    if ai_sl > 0:  # must be a positive distance so (entry - sl) stays below entry
-                        return _pkg(ai_sl, "ai_dynamic_sl")
+                    if ai_sl > 0:  # positive distance so (entry - sl) stays below entry
+                        return ai_sl
         except Exception as _e:
-            logger.warning(f"AI SL fallback failed for {strike_symbol}: {_e}")
+            logger.warning(f"AI SL floor failed for {strike_symbol}: {_e}")
         return None
 
     try:
-        # ── PRIMARY: 3-candle swing low on the 1-min OPTION chart (all symbols) ──
+        # ── 3-candle swing low on the 1-min OPTION chart ──
         # 2 days of history so a freshly-ATM / thin strike still yields >=3 candles.
+        swing = 0.0
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
-        have_candles = bool(candles) and len(candles) >= 3
+        if candles and len(candles) >= 3:
+            lowest_low = min(c["low"] for c in candles[-3:])
+            d = round(entry_ltp - lowest_low, 2)  # subtracted from the buy price
+            if d > 0:
+                swing = d
 
-        if have_candles:
-            recent = candles[-3:]
-            lowest_low = min(c["low"] for c in recent)
-            sl_distance = round(entry_ltp - lowest_low, 2)  # subtracted from the buy price
-            if sl_distance > 0:
-                logger.info(f"📊 3-CANDLE OPTION SL: swing_low={lowest_low}, distance={sl_distance} (stop = entry {entry_ltp} - {sl_distance}), cap={_cap}")
-                return _pkg(sl_distance, "strict_3_candle_low")
-            # Swing low is at/above entry -> can't subtract meaningfully; drop to the fallback below.
-            logger.info(f"⚠️ 3-candle swing low {lowest_low} >= entry {entry_ltp} — using fallback stop (still subtracted from buy price).")
+        # Swing low is comfortably wide -> use it directly (fast path, no floor / AI call needed).
+        if swing >= _floor_pct:
+            logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing}), cap={_cap}")
+            return _pkg(swing, "strict_3_candle_low")
 
-        # ── FALLBACK (swing low unavailable or invalid) ──
+        # Swing low too tight (or unavailable) -> apply the floor; the final stop is the WIDER of the
+        # two, always subtracted from the buy price. This is what stops the 2-second stop-outs.
         if _is_commodity:
-            ai = await _ai_sl()
-            if ai:
-                return ai
-            logger.warning(f"No swing low + AI unavailable for {strike_symbol} — 30%-of-premium CO-safe stop.")
-            return _pkg(entry_ltp * 0.30, "pct_fallback")
+            ai = await _ai_distance()
+            floor, src = (ai, "ai") if (ai and ai > 0) else (_floor_pct, "pct15")
+        else:
+            floor, src = _floor_pct, "pct15"
 
-        # index/stock: fixed premium-based stop if we had candles (swing invalid), else %-of-premium.
-        if have_candles:
-            logger.info(f"⚠️ Using fixed {_fixed_pts}pt stop for {strike_symbol} ({'index' if _is_index else 'stock'}) — subtracted from buy price.")
-            return _pkg(_fixed_pts, "fixed_sl_below_buy")
-        logger.warning(f"No option candles for {strike_symbol} — 30%-of-premium CO-safe stop.")
-        return _pkg(entry_ltp * 0.30, "pct_fallback")
+        final = max(swing, floor)
+        method = f"swing_floored_{src}" if swing > 0 else f"floor_{src}"
+        logger.info(f"📊 SL FLOORED: swing={swing} floor={floor}({src}) -> {final} (stop = entry {entry_ltp} - {final}), subtracted from buy price.")
+        return _pkg(final, method)
 
     except Exception as e:
         logger.error(f"Smart SL calculation error: {e}")
