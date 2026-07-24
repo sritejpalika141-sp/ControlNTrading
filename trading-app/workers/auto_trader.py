@@ -1444,10 +1444,16 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                         pass
                         
                     sl_points = max(round(entry_price - sl_price, 1), 1.0)
-                    
+                    # Honor the global SL rule (owner directive): floor 10 pts (anti instant-stop),
+                    # hard cap 20 pts (max risk/trade) — the same bounds every other strategy uses.
+                    # Strategy 1's own SL path previously bypassed this cap.
+                    sl_points = min(max(sl_points, 10.0), 20.0)
+
                     sl_method = "1m_option_candle"
-                    target_points = round(sl_points * 2, 1) # 1:2 RR for Strategy 1
-                    logger.info(f"📊 OPTION CANDLE SL: High={last_closed['high']}, Low={last_closed['low']}, Final Entry={entry_price}, SL_pts={sl_points}, TGT_pts={target_points}")
+                    # No fixed target — Strategy 1 now RIDES the 3-candle trailing stop like every other
+                    # strategy (owner directive 24-07-26). target=0 keeps it a Cover Order (CO), not a BO.
+                    target_points = 0.0
+                    logger.info(f"📊 OPTION CANDLE SL: High={last_closed['high']}, Low={last_closed['low']}, Final Entry={entry_price}, SL_pts={sl_points} (floored 10 / capped 20), TGT_pts={target_points} (ride trail)")
                 else:
                     raise ValueError("No option candles found")
             except Exception as e:
