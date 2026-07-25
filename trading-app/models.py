@@ -768,6 +768,12 @@ class Database:
         import json
         timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
         config_json = json.dumps(config_dict)
+        # pending_config_json (bound as SQL parameter 8) is a JSON-TEXT column. Callers sometimes
+        # pass an already-parsed dict/list (e.g. cfg.get('pending_config_json')); SQLite cannot bind
+        # those ("Error binding parameter 8: type 'dict' is not supported"), which silently broke the
+        # nightly AI-critique save. Serialize any dict/list to JSON text before binding.
+        if isinstance(pending_config_json, (dict, list)):
+            pending_config_json = json.dumps(pending_config_json)
         async with aiosqlite.connect(Database.DB_NAME) as conn:
             await conn.execute("""
                 INSERT INTO swarm_agent_configs (strategy_name, config_json, last_updated, win_rate, total_trades, winning_trades, status, pending_config_json, is_paper_trading, continuous_losses, asset_class)
