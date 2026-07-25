@@ -845,26 +845,26 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
     Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from the
     buy price — but NEVER tighter than a floor, so a quiet minute can't produce an instant stop-out.
 
-    Rule (per owner directive 24-07-26):
+    Rule (per owner directive 24/25-07-26):
       1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
       2. If that distance is comfortably wide (>= 10 pts), use it as-is (strict_3_candle_low).
       3. Otherwise the swing low is too tight (a real problem seen live: a ₹4 stop on a ₹371 option
-         that was hit 2 seconds after entry) — apply an "AI floor": take the WIDER of the swing low
-         and the floor distance, where the floor is:
-             • MCX/CDS (commodities/currency): the AI-picked stop distance ("AI floor").
-             • index/stock (no AI path): a 10-pt minimum.
+         that was hit 2 seconds after entry) — floor it: take the WIDER of the swing low and a
+         DETERMINISTIC volatility floor = the ATR (average high-low range) of the option's last few
+         1-min candles, clamped to [10, 20]. NO AI in the order path — free-tier AI is chronically
+         rate-limited and an AI call would stall order placement; the ATR floor is instant and
+         adapts to the option's own noise, so it achieves the same "no instant stop-out" goal.
       HARD CAP: the stop is NEVER wider than 20 points (and never wider than 40% of premium for a
       very cheap option, to stay inside the Fyers CO SL band). So max risk per trade = 20 pts.
       In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
       absolute price, never a stop at/above entry.
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
-    _is_commodity = strike_symbol.startswith("MCX") or strike_symbol.startswith("CDS")
     # HARD CAP: the stop is never wider than 20 points (owner directive 24-07-26) — and, for a very
     # cheap option, never wider than 40% of premium (Fyers CO SL band). So max risk/trade = 20 pts.
     _cap = max(min(20.0, round(entry_ltp * 0.40, 1)), 2.0)
     # A stop tighter than this (in absolute points) risks an instant stop-out; it is also the
-    # threshold above which the swing low is trusted as-is (no floor / AI call needed).
+    # threshold above which the swing low is trusted as-is (no floor needed).
     _tight = min(10.0, _cap)
 
     def _pkg(sl_pts: float, method: str) -> Dict:
@@ -877,36 +877,18 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
-    async def _ai_distance():
-        """AI-picked stop DISTANCE in points below entry (the 'AI floor' for commodities/currency).
-        Returns a positive float, or None if the AI is unavailable / gives no usable value."""
+    def _vol_floor(cndls) -> float:
+        """Deterministic volatility floor (no AI, no extra API call): the ATR — average high-low
+        range — of the option's last ~5 one-min candles, clamped to [_tight, _cap]. The stop is at
+        least the option's typical 1-min noise (so it isn't knocked out by a single wick) but never
+        beyond the 20-pt cap. Reuses the candles already fetched for the swing low."""
         try:
-            logger.info(f"🧠 Asking AI for Commodities/Currency SL floor for {strike_symbol}")
-            from engine.ai_engine import ai_engine
-            ai_prompt = f"""
-            You are a Quantitative Risk AI for Commodities and Currencies.
-            We entered {strike_symbol} at {entry_ltp} in a {trend} trend.
-            Provide the ideal Stop Loss DISTANCE (in points BELOW the entry price, NOT a price, NOT a percentage).
-            Return ONLY a valid JSON object with `sl_points` (float) and `target_points` (float).
-            Example: {{"sl_points": 10.5, "target_points": 21.0}}
-            """
-            # Hard 2.5s bound on the order-path AI call. Free-tier AI providers are chronically
-            # rate-limited; an unbounded _call_chain rotates the whole provider chain and can stall
-            # ORDER PLACEMENT for 10-20s. If AI doesn't answer fast, we fall through to the
-            # deterministic 10-pt floor and place the order now instead of missing the move.
-            ai_resp = None
-            if hasattr(ai_engine, "_call_chain"):
-                ai_resp = await asyncio.wait_for(ai_engine._call_chain(ai_prompt), timeout=2.5)
-            if ai_resp:
-                import json
-                s, e = ai_resp.find("{"), ai_resp.rfind("}")
-                if s != -1 and e != -1:
-                    ai_sl = float(json.loads(ai_resp[s:e + 1]).get("sl_points", 0) or 0)
-                    if ai_sl > 0:  # positive distance so (entry - sl) stays below entry
-                        return ai_sl
-        except Exception as _e:
-            logger.warning(f"AI SL floor failed for {strike_symbol}: {_e}")
-        return None
+            rngs = [float(c["high"]) - float(c["low"]) for c in (cndls or [])[-5:]
+                    if c.get("high") is not None and c.get("low") is not None]
+            atr = sum(rngs) / len(rngs) if rngs else 0.0
+        except Exception:
+            atr = 0.0
+        return max(_tight, min(round(atr, 1), _cap))
 
     try:
         # ── 3-candle swing low on the 1-min OPTION chart ──
@@ -924,17 +906,12 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
             logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing}), cap={_cap}")
             return _pkg(swing, "strict_3_candle_low")
 
-        # Swing low too tight (or unavailable) -> apply the floor; the final stop is the WIDER of the
-        # two (then capped at 20), always subtracted from the buy price. Stops the 2-second stop-outs.
-        if _is_commodity:
-            ai = await _ai_distance()
-            floor, src = (ai, "ai") if (ai and ai > 0) else (_tight, "min10")
-        else:
-            floor, src = _tight, "min10"
-
+        # Swing low too tight (or unavailable) -> deterministic ATR volatility floor (instant, no AI).
+        # Final stop = the WIDER of swing and floor (then capped at 20), subtracted from the buy price.
+        floor = _vol_floor(candles)
         final = max(swing, floor)
-        method = f"swing_floored_{src}" if swing > 0 else f"floor_{src}"
-        logger.info(f"📊 SL FLOORED: swing={swing} floor={floor}({src}) -> {final} (stop = entry {entry_ltp} - {final}), subtracted from buy price.")
+        method = "swing_floored_atr" if swing > 0 else "floor_atr"
+        logger.info(f"📊 SL FLOORED (ATR): swing={swing} atr_floor={floor} -> {final} (stop = entry {entry_ltp} - {final}), subtracted from buy price.")
         return _pkg(final, method)
 
     except Exception as e:
