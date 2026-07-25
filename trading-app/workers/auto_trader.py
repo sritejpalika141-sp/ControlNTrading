@@ -38,9 +38,6 @@ from engine.strategy_5 import evaluate_strat5_strategy
 from engine.strikes import get_strike_recommendations
 from engine.ws_feed import ws_feed
 from engine.risk_orchestrator import orchestrator as risk_orchestrator
-
-from engine.ws_feed import ws_feed
-from engine.risk_orchestrator import orchestrator as risk_orchestrator
 from datetime import timedelta
 
 # B1: how long a previously-open position must stay absent from the broker feed before the
@@ -555,10 +552,9 @@ async def trailing_monitor():
                                 try:
                                     # Fetch historical for ATR calculation
                                     bars = await api_queue.enqueue(2, client.get_historical, sym, "3", 1) # fetch a few days to get 14 bars
-                                    # But since get_historical takes time, let's just do a simple 10% trail or approximate ATR if history isn't ready.
-                                    # Assuming standard Nifty option ATR on 3-min is around 5-10 points.
-                                    # Let's say ATR = 8 points
-                                    atr = 8.0 
+                                    # Fallback ATR for Nifty options on 3-min timeframe when history is
+                                    # insufficient. Real ATR is computed below when ≥14 bars are available.
+                                    atr = 8.0
                                     if len(bars) >= 14:
                                         # Compute simple ATR
                                         trs = []
@@ -570,7 +566,9 @@ async def trailing_monitor():
                                             trs.append(tr)
                                         if trs:
                                             atr = sum(trs)/len(trs)
-                                            
+                                    else:
+                                        logger.warning(f"⚠️ Strategy 5 ATR for {sym}: insufficient candle data ({len(bars) if bars else 0} bars < 14), using fallback ATR={atr}")
+
                                     new_sl = ltp - (1.2 * atr)
                                     new_sl = round(round(new_sl / 0.05) * 0.05, 2)
                                     # B6: `new_sl` is an ABSOLUTE price. Compare against and store
@@ -892,7 +890,13 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
             Return ONLY a valid JSON object with `sl_points` (float) and `target_points` (float).
             Example: {{"sl_points": 10.5, "target_points": 21.0}}
             """
-            ai_resp = await ai_engine._call_chain(ai_prompt) if hasattr(ai_engine, "_call_chain") else None
+            # Hard 2.5s bound on the order-path AI call. Free-tier AI providers are chronically
+            # rate-limited; an unbounded _call_chain rotates the whole provider chain and can stall
+            # ORDER PLACEMENT for 10-20s. If AI doesn't answer fast, we fall through to the
+            # deterministic 10-pt floor and place the order now instead of missing the move.
+            ai_resp = None
+            if hasattr(ai_engine, "_call_chain"):
+                ai_resp = await asyncio.wait_for(ai_engine._call_chain(ai_prompt), timeout=2.5)
             if ai_resp:
                 import json
                 s, e = ai_resp.find("{"), ai_resp.rfind("}")
