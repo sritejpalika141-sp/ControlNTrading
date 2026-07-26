@@ -1022,6 +1022,38 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 return
 
         # ═══════════════════════════════════════════
+        # DIRECTIONAL REGIME GATE (owner directive 26-07-26) — trade WITH the trend only:
+        #   • UPTREND   -> BUY CE only  (block PUT)
+        #   • DOWNTREND -> BUY PE only  (block CALL)
+        #   • SIDEWAYS  -> NO new trades
+        # The direction comes from the UNDERLYING's own 15m structure via detect_trend (deterministic
+        # EMA crossover + higher-highs/lows) — NOT the rate-limited AI regime — so a slow/failed AI can
+        # never permanently block or mis-direct trading. Applies to EVERY strategy and asset class.
+        # NOTE: in a choppy/sideways market (common) this correctly places NO trades — fewer but
+        # higher-quality, with-trend entries. This is the intended risk-reducing behaviour.
+        # ═══════════════════════════════════════════
+        _dir = "NEUTRAL"
+        try:
+            from engine.key_levels import detect_trend
+            _uc = await api_queue.enqueue(2, client.get_historical, symbol, "15", 5)
+            if _uc and len(_uc) >= 20:
+                _dir = (detect_trend(_uc).get("trend", "NEUTRAL") or "NEUTRAL").upper()
+        except Exception as _de:
+            logger.warning(f"Directional gate trend calc failed for {symbol}: {_de}")
+        _sig_type = sig.get("type", "").upper()
+        if "BULL" in _dir:
+            if _sig_type != "CALL":
+                logger.info(f"⏭️ Directional gate: {symbol} UPTREND — CALL only, skipping {_sig_type}.")
+                return
+        elif "BEAR" in _dir:
+            if _sig_type != "PUT":
+                logger.info(f"⏭️ Directional gate: {symbol} DOWNTREND — PUT only, skipping {_sig_type}.")
+                return
+        else:
+            logger.info(f"⏭️ Directional gate: {symbol} SIDEWAYS/NEUTRAL — no new trades (trend-only policy).")
+            return
+
+        # ═══════════════════════════════════════════
         # STRATEGY 2: Direct Option Trade (skip strike selection)
         # ═══════════════════════════════════════════
         if sig.get("is_direct_option"):
