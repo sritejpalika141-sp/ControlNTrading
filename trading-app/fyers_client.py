@@ -1374,7 +1374,13 @@ class FyersClient:
                 "limitPrice": limit_price,
             }
             if mapped_product == "CO" and sl_points > 0:
-                order_payload["stopLoss"] = round(limit_price - sl_points, 2)
+                # stopLoss is the SL trigger PRICE (limit_price - distance). For a cheap strike where
+                # the premium is below sl_points this went NEGATIVE, and Fyers rejected the margin
+                # check with "stopLoss: Must be >= 0.0025" — so cheap strikes returned a margin error
+                # and the margin-aware selector mis-judged them (occasional margin-shortfall reject).
+                # Clamp to a small positive value; the CO margin is premium-dominated, so this keeps
+                # the estimate accurate while always sending a valid stopLoss.
+                order_payload["stopLoss"] = round(max(limit_price - sl_points, 0.05), 2)
 
             import requests
             resp = requests.post(
@@ -1691,19 +1697,24 @@ class FyersClient:
         is_bo = False
         is_co = False
         if product.upper() == "CO":
-            is_co = True
-            mapped_product = "CO"
+            print(f"⚠️ CO order requested. Converting to INTRADAY with separate SL to allow manual modification.")
+            is_co = False
+            mapped_product = "INTRADAY"
         elif sl_points > 0 and target_points > 0:
             is_bo = True
             mapped_product = "BO"
 
         stop_trigger = 0.0
-        if is_co and sl_points > 0:
+        target_trigger = 0.0
+        if (is_co or is_bo) and sl_points > 0:
             if side_int == 1: # BUY
                 stop_trigger = limit_price - sl_points
+                target_trigger = limit_price + target_points
             else: # SELL
                 stop_trigger = limit_price + sl_points
+                target_trigger = limit_price - target_points
             stop_trigger = round(round(stop_trigger / 0.05) * 0.05, 2)
+            target_trigger = round(round(target_trigger / 0.05) * 0.05, 2)
 
         order_data = {
             "symbol": symbol,
@@ -1718,13 +1729,13 @@ class FyersClient:
             "offlineOrder": False,
         }
 
-        # Fyers v3 CO: stopLoss is the absolute trigger price, not points
+        # Fyers v3 CO and BO: stopLoss and takeProfit are absolute trigger prices, not points
         if is_co and sl_points > 0:
             order_data["stopLoss"] = stop_trigger
 
         if is_bo:
-            order_data["stopLoss"] = sl_points
-            order_data["takeProfit"] = target_points
+            order_data["stopLoss"] = stop_trigger
+            order_data["takeProfit"] = target_trigger
 
         try:
             print(f"📤 Placing order: {order_data}")
