@@ -31,7 +31,7 @@ import time
 print("📦 Importing typing...", flush=True)
 from typing import Optional, List, Set, Dict
 print("📦 Importing fastapi...", flush=True)
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Query, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Query, BackgroundTasks, Depends, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
@@ -679,10 +679,52 @@ async def get_fyers_login_url(request: Request):
     # A2: bind the OAuth `state` to a signed, single-use, short-TTL nonce keyed to the
     # initiating user instead of the raw user_id (which any party could observe/guess and
     # replay to hijack another user's callback + session cookie).
+    # Backlog (oauth-state-binding-hardening): also set a PKCE-style verifier cookie
+    # bound to the initiating browser to prevent intercepted state replay.
     from urllib.parse import quote as _urlquote
-    oauth_state = generate_oauth_state(user_id)
+    oauth_state = generate_oauth_state(user_id, response=None)
+    # We can't easily set a cookie on the redirect response since we're returning JSON.
+    # The cookie will be set by the frontend via document.cookie after receiving the URL,
+    # OR we could refactor to return a redirect. For now, the state is still protected
+    # by signature + nonce + TTL, and the verifier cookie is an additional defense.
+    # TODO: Frontend should call a set-verifier-cookie endpoint or we refactor to redirect.
     url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
     return {"url": url}
+
+
+@app.get("/fyers/auth")
+async def fyers_auth_redirect(request: Request, response: Response):
+    """
+    Server-side redirect to Fyers OAuth with PKCE-style verifier cookie.
+    This endpoint sets the verifier cookie and redirects to the Fyers auth URL.
+    Frontend should navigate to this URL instead of calling /fyers/auth-url + redirect.
+    """
+    user_id = await resolve_authenticated_user_id(request)
+    if not user_id:
+        return RedirectResponse(url="/login?reason=session_expired")
+
+    from fyers_apiv3 import fyersModel
+    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+    master_creds = Database.get_master_fyers_creds()
+    client_id = master_creds[0] if master_creds else ""
+    secret = master_creds[1] if master_creds else ""
+    
+    if not client_id or not secret:
+        return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
+    
+    session = fyersModel.SessionModel(
+        client_id=client_id,
+        secret_key=secret,
+        redirect_uri=redirect_url,
+        response_type='code',
+        grant_type='authorization_code'
+    )
+    url = session.generate_authcode()
+    from urllib.parse import quote as _urlquote
+    oauth_state = generate_oauth_state(user_id, response=response)
+    url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+    return RedirectResponse(url=url)
+
 
 @app.get("/fyers/callback")
 async def fyers_oauth_callback(request: Request):
@@ -694,12 +736,14 @@ async def fyers_oauth_callback(request: Request):
     """
     # A2: when a `state` value is present it MUST be a valid, unexpired, single-use signed
     # nonce (see generate_oauth_state). We no longer trust a raw `state=user_id` at face value.
+    # Backlog (oauth-state-binding-hardening): also validate the PKCE-style verifier cookie
+    # to bind the callback to the initiating browser session.
     state = request.query_params.get("state")
     state_present = bool(state and state != "None")
     if state_present:
-        bound_uid = consume_oauth_state(state)
+        bound_uid = consume_oauth_state(state, request=request)
         if bound_uid is None:
-            print("⚠️ /fyers/callback rejected: invalid/expired/replayed OAuth state", flush=True)
+            print("⚠️ /fyers/callback rejected: invalid/expired/replayed OAuth state or verifier mismatch", flush=True)
             return RedirectResponse(url="/login?reason=invalid_state")
         user_id = bound_uid
     else:
@@ -1089,6 +1133,12 @@ async def _exchange_fyers_auth_code(user_id, auth_code: str) -> Dict:
         try:
             print(f"🔄 Restarting WS Feed for user {u_id_int} with new auth token...", flush=True)
             ws_feed.restart(client)
+            # Restart the Order WebSocket too, so real-time trades/positions pick up the new token.
+            try:
+                from engine.order_ws import order_feed
+                order_feed.restart(client)
+            except Exception as _oe:
+                print(f"⚠️ Order WS restart skipped: {_oe}", flush=True)
         except Exception as ws_err:
             print(f"❌ Error restarting WS Feed: {ws_err}", flush=True)
 

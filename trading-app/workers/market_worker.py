@@ -184,6 +184,13 @@ async def market_data_worker():
                                 # ws_feed.start is an async function!
                                 asyncio.create_task(ws_feed.start(client))
                                 asyncio.create_task(broadcast_log(f"✅ Fyers WS started on context recovery for User {u_id}", "success"))
+                            # Order WebSocket (real-time trades/positions) — start alongside the data feed.
+                            try:
+                                from engine.order_ws import order_feed
+                                if not order_feed._started:
+                                    asyncio.create_task(order_feed.start(client))
+                            except Exception:
+                                pass
                     except Exception:
                         pass
 
@@ -280,6 +287,17 @@ async def market_data_worker():
 
                 # Start WS feed if not started yet, or self-heal if disconnected during market hours
                 if cache.get("is_auth"):
+                    # Order WebSocket (real-time trades/positions) — start ONCE. The Fyers SDK has
+                    # reconnect=True and auto-reconnects internally, so we must NOT also restart it
+                    # from here: two competing reconnect mechanisms raced and caused subscribe churn
+                    # at startup. Re-login/token-change restarts are handled explicitly in the
+                    # /fyers/callback path instead.
+                    try:
+                        from engine.order_ws import order_feed
+                        if not order_feed._started:
+                            await order_feed.start(client)
+                    except Exception as _oe:
+                        logger.warning(f"Order WS start skipped: {_oe}")
                     if not ws_feed._started:
                         await ws_feed.start(client)
                     elif not ws_feed.is_connected() and phase in ["market", "pre_open"]:
