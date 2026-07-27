@@ -1420,9 +1420,16 @@ class FyersClient:
             return {}
         # During a rate-limit cooldown, serve the LAST GOOD funds from cache instead of an
         # error, so the dashboard keeps showing funds through transient Fyers 429s.
+        # PERMANENT FIX (27-07-26): if we have NEVER successfully fetched funds (empty cache),
+        # do NOT return the cooldown error — a busy-market cooldown would then permanently hide the
+        # account balance right after a reconnect (the exact symptom reported). Funds is a single
+        # low-frequency call, so fall through and attempt ONE real fetch to prime the cache. Once
+        # cached, the branch above serves the cache and adds zero API pressure during cooldowns.
         if self._check_cooldown():
             cached = getattr(self, '_funds_cache', None)
-            return cached if cached else {"s": "error", "message": "Rate Limited (Cooldown)", "code": -429}
+            if cached:
+                return cached
+            # no cached balance yet -> fall through and try once to populate it
         try:
             resp = self.client.funds()
             if resp.get("code") == 200:
