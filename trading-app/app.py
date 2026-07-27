@@ -118,7 +118,7 @@ print("📦 Importing models...", flush=True)
 from models import Database
 print("📦 Importing workers...", flush=True)
 from workers.market_worker import market_data_worker
-from workers.auto_trader import trailing_monitor, automation_loop, calculate_smart_sl, execute_auto_trade
+from workers.auto_trader import trailing_monitor, automation_loop, calculate_smart_sl, execute_auto_trade, pending_order_watchdog
 from workers.news_worker import news_worker
 from workers.health_agent import health_monitor_worker, HEALTH_AGENT_STATUS
 print("📦 Imports complete.", flush=True)
@@ -185,6 +185,7 @@ async def lifespan(app):
     asyncio.create_task(market_data_worker())
     asyncio.create_task(trailing_monitor())
     asyncio.create_task(automation_loop())
+    asyncio.create_task(pending_order_watchdog())  # cancel entry orders not filled within 2 min
     asyncio.create_task(news_worker.run())
     asyncio.create_task(health_monitor_worker())
     asyncio.create_task(fyers_token_refresh_scheduler())
@@ -2537,21 +2538,18 @@ async def get_analysis(symbol="NSE:NIFTY50-INDEX", client=None):
                     final_trend = math_trend
                     final_strength = min(100, max(multi_tf["strength"], ai_strength))
                     final_rationale = f"[CONFIRMED] Math + AI agree: {math_trend}. {multi_tf['rationale']}"
-                elif ai_trend == "NEUTRAL" or ai_strength < 40:
-                    # AI is uncertain OR has very low confidence → Trust math direction
-                    # FIX: Previously, low-confidence AI BEARISH (20%) conflicting with math BULLISH
-                    # caused CONFLICT → NEUTRAL → all signals blocked. Now treat low-confidence AI
-                    # as "uncertain" so math drives the decision.
+                elif ai_trend != "NEUTRAL" and ai_strength < 40:
+                    # AI has very low confidence (but not NEUTRAL) → Trust math direction
+                    # Treat low-confidence conflicting AI as "uncertain" so math drives the decision.
                     final_trend = math_trend
-                    final_strength = max(50, multi_tf["strength"] - (0 if ai_strength < 40 else 15))
+                    final_strength = max(50, multi_tf["strength"] - 15)
                     final_rationale = f"[MATH] {multi_tf['rationale']} (AI weak: {ai_trend} {ai_strength}%)"
                 else:
-                    # GENUINE CONFLICT: Math says one thing, AI says opposite with HIGH confidence
-                    # Only block trades when AI is genuinely confident AND disagrees with math
+                    # GENUINE CONFLICT OR AI NEUTRAL: Block trades for capital protection
                     final_trend = "NEUTRAL"
                     final_strength = 40
-                    final_rationale = f"[CONFLICT] Math={math_trend} vs AI={ai_trend}({ai_strength}%). Defaulting to NEUTRAL for capital protection."
-                    print(f"⚠️ SAFETY: Math({math_trend}) ≠ AI({ai_trend} {ai_strength}%). Blocking trades (Capital Protection).", flush=True)
+                    final_rationale = f"[BLOCKED] Math={math_trend} but AI={ai_trend}({ai_strength}%). Defaulting to NEUTRAL for capital protection."
+                    print(f"⚠️ SAFETY: Math({math_trend}) vs AI({ai_trend} {ai_strength}%). Blocking trades (Capital Protection).", flush=True)
             elif ai_trend in ("BULLISH", "BEARISH") and math_trend == "NEUTRAL":
                 # Math is neutral but AI has opinion → Use AI with LOW confidence only
                 final_trend = ai_trend
@@ -3245,7 +3243,8 @@ async def get_all_strategies(request: Request):
             "Strategy 6: Gap Fill Reversal",
             "Strategy 7: Swing-Pivot Breakout",
             "Strategy 8: Smart Money Concepts",
-            "Strategy 9: 9-EMA Momentum Scalper"
+            "Strategy 9: 9-EMA Momentum Scalper",
+            "Strategy 10: Adaptive ADX Engine"
         ]
     return [c['strategy_name'] for c in configs]
 

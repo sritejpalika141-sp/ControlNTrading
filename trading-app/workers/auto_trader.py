@@ -55,6 +55,84 @@ _COMMODITY_STRAT_MAP = {
     "Strategy 7: Swing-Pivot Breakout": "Commodity: Swing-Pivot Breakout",
 }
 
+# ── Pending-entry-order watchdog (owner rule 27-07-26): cancel an order not EXECUTED within 2 min ──
+# Entry orders are placed as LIMIT Cover Orders (limit_price forces LIMIT), so an entry can rest
+# unfilled if the market moves away. We track each placed ENTRY order id + placement time; a
+# background watchdog cancels any that is still pending after PENDING_ORDER_TIMEOUT so stale price
+# levels don't tie up margin. A FILLED entry (which now holds a position + live SL leg) is removed
+# untouched — the watchdog never cancels the SL leg.
+PENDING_ENTRY_ORDERS = {}          # str(order_id) -> {"ts": epoch, "symbol": str, "user_id": int}
+PENDING_ORDER_TIMEOUT = 120        # seconds (2 minutes)
+
+
+def track_pending_order(order_id, symbol, user_id, sl_order_id=None, tgt_order_id=None):
+    """Register a just-placed entry order for the 2-minute fill watchdog."""
+    if order_id:
+        try:
+            PENDING_ENTRY_ORDERS[str(order_id)] = {
+                "ts": time.time(), 
+                "symbol": symbol, 
+                "user_id": int(user_id),
+                "sl_order_id": sl_order_id,
+                "tgt_order_id": tgt_order_id
+            }
+        except Exception:
+            pass
+
+
+async def pending_order_watchdog():
+    """Cancel entry orders not executed within PENDING_ORDER_TIMEOUT (2 min). Only cancels orders
+    still PENDING/TRANSIT; filled/cancelled/rejected orders are simply untracked. Fyers order
+    status: 2=traded(filled), 1=cancelled, 5=rejected, 6=pending, 4=transit."""
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(15)
+            if not PENDING_ENTRY_ORDERS:
+                continue
+            now = time.time()
+            due = [(oid, m) for oid, m in list(PENDING_ENTRY_ORDERS.items())
+                   if now - m.get("ts", 0) >= PENDING_ORDER_TIMEOUT]
+            for oid, meta in due:
+                uid = meta.get("user_id", 1)
+                client = USER_CONTEXTS.get(uid) or USER_CONTEXTS.get(int(uid)) or USER_CONTEXTS.get(str(uid))
+                if not client:
+                    PENDING_ENTRY_ORDERS.pop(oid, None)
+                    continue
+                try:
+                    orders = await api_queue.enqueue(2, client.get_orders) or []
+                    o = next((x for x in orders if str(x.get("id")) == str(oid)), None)
+                    status = o.get("status") if o else None
+                    if status == 2:
+                        logger.info(f"⏱️ Order watchdog: {oid} ({meta['symbol']}) already FILLED — untracking.")
+                        PENDING_ENTRY_ORDERS.pop(oid, None)
+                    elif o is None or status in (1, 5):
+                        PENDING_ENTRY_ORDERS.pop(oid, None)  # gone/cancelled/rejected already
+                    else:
+                        # still pending/transit after 2 min -> cancel it
+                        res = await asyncio.to_thread(client.cancel_order, oid)
+                        ok = isinstance(res, dict) and (res.get("success") or res.get("s") == "ok")
+                        
+                        # Cancel associated SL and TGT orders if any
+                        sl_oid = meta.get("sl_order_id")
+                        tgt_oid = meta.get("tgt_order_id")
+                        if sl_oid:
+                            await asyncio.to_thread(client.cancel_order, sl_oid)
+                        if tgt_oid:
+                            await asyncio.to_thread(client.cancel_order, tgt_oid)
+
+                        logger.info(f"🚫 Order watchdog: cancelled {oid} ({meta['symbol']}) — not executed within {PENDING_ORDER_TIMEOUT}s (ok={ok}).")
+                        try:
+                            await broadcast_log(f"🚫 {meta['symbol']} order not filled in 2 min — cancelled.", "warning", user_id=uid)
+                        except Exception:
+                            pass
+                        PENDING_ENTRY_ORDERS.pop(oid, None)
+                except Exception as e:
+                    logger.warning(f"Order watchdog error for {oid}: {e}")
+                    PENDING_ENTRY_ORDERS.pop(oid, None)  # never retry-loop forever on one order
+        except Exception as e:
+            logger.error(f"pending_order_watchdog loop error: {e}")
+
 
 def _strat_enabled_for(state, equity_strat_name: str, symbol: str) -> bool:
     """Asset-class-aware strategy gate. For an equity/index/stock symbol, the (equity) strategy is
@@ -784,7 +862,8 @@ async def trailing_monitor():
                                                 order_id=t["sl_order_id"],
                                                 order_type=o_type,
                                                 stop_price=new_sl_price,
-                                                limit_price=new_sl_price - 1.0 if o_type == 4 else 0
+                                                limit_price=new_sl_price - 1.0 if o_type == 4 else 0,
+                                                qty=active_qty
                                             )
                                             if mod_res.get("success"):
                                                 logger.info(f"🛡️ Trailed SL to ₹{new_sl_price} for {sym}")
@@ -816,7 +895,8 @@ async def trailing_monitor():
                                                 order_id=t["sl_order_id"],
                                                 order_type=o_type,
                                                 stop_price=new_sl_price,
-                                                limit_price=new_sl_price + 1.0 if o_type == 4 else 0
+                                                limit_price=new_sl_price + 1.0 if o_type == 4 else 0,
+                                                qty=active_qty
                                             )
                                             if mod_res.get("success"):
                                                 logger.info(f"🛡️ [SELL] Trailed SL to ₹{new_sl_price} for {sym}")
@@ -860,35 +940,12 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
       absolute price, never a stop at/above entry.
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
-    # HARD CAP: the stop is never wider than 20 points (owner directive 24-07-26) — and, for a very
-    # cheap option, never wider than 40% of premium (Fyers CO SL band). So max risk/trade = 20 pts.
-    _cap = max(min(20.0, round(entry_ltp * 0.40, 1)), 2.0)
-    # A stop tighter than this (in absolute points) risks an instant stop-out; it is also the
-    # threshold above which the swing low is trusted as-is (no floor needed).
-    _tight = min(10.0, _cap)
 
     def _pkg(sl_pts: float, method: str) -> Dict:
-        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts),
-        # i.e. subtracted from the buy price and strictly below it. Hard-capped at _cap (<=20 pts).
-        sl_pts = max(round(sl_pts, 1), 1.0)
-        if sl_pts > _cap:
-            sl_pts = _cap
-            method += "_capped20"
+        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts)
+        sl_pts = max(round(sl_pts, 1), 1.0) # hard minimum 1.0 to prevent instant rejection
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
-
-    def _vol_floor(cndls) -> float:
-        """Deterministic volatility floor (no AI, no extra API call): the ATR — average high-low
-        range — of the option's last ~5 one-min candles, clamped to [_tight, _cap]. The stop is at
-        least the option's typical 1-min noise (so it isn't knocked out by a single wick) but never
-        beyond the 20-pt cap. Reuses the candles already fetched for the swing low."""
-        try:
-            rngs = [float(c["high"]) - float(c["low"]) for c in (cndls or [])[-5:]
-                    if c.get("high") is not None and c.get("low") is not None]
-            atr = sum(rngs) / len(rngs) if rngs else 0.0
-        except Exception:
-            atr = 0.0
-        return max(_tight, min(round(atr, 1), _cap))
 
     try:
         # ── 3-candle swing low on the 1-min OPTION chart ──
@@ -901,22 +958,16 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
             if d > 0:
                 swing = d
 
-        # Swing low is comfortably wide (>= _tight pts) -> use it directly, capped at 20 by _pkg.
-        if swing >= _tight:
-            logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing}), cap={_cap}")
+        if swing > 0:
+            logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing})")
             return _pkg(swing, "strict_3_candle_low")
-
-        # Swing low too tight (or unavailable) -> deterministic ATR volatility floor (instant, no AI).
-        # Final stop = the WIDER of swing and floor (then capped at 20), subtracted from the buy price.
-        floor = _vol_floor(candles)
-        final = max(swing, floor)
-        method = "swing_floored_atr" if swing > 0 else "floor_atr"
-        logger.info(f"📊 SL FLOORED (ATR): swing={swing} atr_floor={floor} -> {final} (stop = entry {entry_ltp} - {final}), subtracted from buy price.")
-        return _pkg(final, method)
+        else:
+            logger.warning(f"⚠️ Swing low distance <= 0 ({swing}), falling back to 5.0 pt default.")
+            return _pkg(5.0, "fallback_flat_swing")
 
     except Exception as e:
         logger.error(f"Smart SL calculation error: {e}")
-        return _pkg(entry_ltp * 0.30, "error_fallback")
+        return _pkg(5.0, "error_fallback")
 
 
 async def _recover_closed_pnl(client, sym):
@@ -1124,6 +1175,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             )
 
             if result.get("success"):
+                track_pending_order(
+                    result.get("order_id"), 
+                    strike_symbol, 
+                    client.user_id,
+                    sl_order_id=result.get("sl_order_id"),
+                    tgt_order_id=result.get("tgt_order_id")
+                )
                 state.record_trade()
                 state.add_active_trade(
                     symbol=strike_symbol,
@@ -1526,6 +1584,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         )
 
         if result.get("success"):
+            track_pending_order(
+                result.get("order_id"), 
+                strike_symbol, 
+                client.user_id,
+                sl_order_id=result.get("sl_order_id"),
+                tgt_order_id=result.get("tgt_order_id")
+            )
             state.record_trade()
             state.add_active_trade(
                 symbol=strike_symbol,
@@ -1729,6 +1794,13 @@ async def automation_loop():
                     if has_sig and state.can_trade("Strategy 9", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 9", symbol, sig, {"trend": "NEUTRAL"}, client, state)
                         
+            async def run_strat_10():
+                if _strat_enabled_for(state, "Strategy 10: Adaptive ADX Engine", symbol) and spot and candles_5m:
+                    from engine.strategy_10 import evaluate_strategy_10
+                    has_sig, sig = await evaluate_strategy_10(symbol, spot, candles_5m, analysis, client, state)
+                    if has_sig and state.can_trade("Strategy 10: Adaptive ADX Engine", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
+                        await risk_orchestrator.propose_trade("Strategy 10: Adaptive ADX Engine", symbol, sig, {"trend": sig.get("metadata", {}).get("regime", "NEUTRAL")}, client, state)
+
             async def run_strat_1():
                 if "Strategy 1: OB + FVG" in state.active_strategies and analysis.get("signals"):
                     trade_placed = False
@@ -1802,7 +1874,7 @@ async def automation_loop():
 
             # Execute all symbol-level strategies simultaneously
             import asyncio
-            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_1(), run_crude_strats())
+            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_1(), run_crude_strats())
             
         except Exception as e:
             logger.error(f"Error in Symbol loop for {symbol}: {e}")
