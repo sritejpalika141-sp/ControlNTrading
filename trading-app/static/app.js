@@ -1513,7 +1513,11 @@ async function fetchFunds() {
     
     // overallPnl is the correct field from Fyers API
     const totalPnl = posData.overallPnl !== undefined ? posData.overallPnl : 0;
-    updateFundsLive(fundData.funds || {}, totalPnl);
+    // /api/funds returns the funds dict DIRECTLY ({id,title,equityAmount,commodityAmount}), not
+    // wrapped as {funds:{...}}. Reading fundData.funds was always undefined -> {} -> balance showed
+    // 0 on every page refresh. Pass fundData itself. (The WS live-push path already passes the dict
+    // directly via updateFundsLive(data.funds).)
+    updateFundsLive(fundData || {}, totalPnl);
   } catch (e) {
     console.error('Funds/P&L fetch error:', e);
   }
