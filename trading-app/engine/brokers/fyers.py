@@ -1410,6 +1410,16 @@ class FyersClient(BaseBroker):
             elif actual_type in [1, 4]: # LIMIT or STOPLIMIT requires limitPrice > 0
                 return {"success": False, "message": f"Order rejected: limit_price must be > 0 for {order_type} orders."}
 
+        # OWNER RULE (28-07-26): every SL-bearing ENTRY must be a Cover Order (CO) so the stop is
+        # placed ATOMICALLY with the buy. A separate SELL stop on a long option is a NAKED SHORT —
+        # Fyers margins it enormously (a live crude PUT needed ₹2.76 lakh), it gets rejected, and the
+        # position is left with NO stop-loss. Force CO for any order carrying an SL; if the CO is not
+        # allowed / is rejected, the order is aborted below (never a naked entry, no separate-SL
+        # fallback). Exit/square-off orders pass sl_points=0 and are unaffected.
+        if sl_points > 0 and product.upper() != "CO":
+            print(f"🔁 Forcing product CO for SL-bearing entry {symbol} (was {product}).")
+            product = "CO"
+
         # Map product types (Fyers v3 dropped NRML, uses MARGIN for F&O)
         product_map = {"NRML": "MARGIN", "MIS": "INTRADAY"}
         mapped_product = product_map.get(product.upper(), product.upper())
