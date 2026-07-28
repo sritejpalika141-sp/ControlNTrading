@@ -1007,6 +1007,27 @@ async def _recover_closed_pnl(client, sym):
     return 0.0, 0.0, "unknown"
 
 
+async def _affordable_to_place(client, strike_symbol, qty, side, product_type, entry_price, sl_points):
+    """FINAL balance gate (owner rule 28-07-26): before an order is SENT, confirm the broker has
+    enough margin for THIS exact order. Returns (ok, required, available). If the margin API can't
+    give a real number (0/error), returns ok=True so a transient API blip never freezes all trading
+    — the broker's own margin check remains the ultimate backstop; this gate just stops the common
+    case of knowingly sending an unaffordable order (which would be rejected for Margin Shortfall)."""
+    try:
+        m = await asyncio.to_thread(client.check_margin, strike_symbol, qty, side, product_type, entry_price, sl_points)
+        required = float((m or {}).get("total_margin", 0) or 0)
+        available = float((m or {}).get("available_margin", 0) or 0)
+        if available <= 0:
+            f = await api_queue.enqueue(2, client.get_funds) or {}
+            available = float(f.get("equityAmount", 0) or 0) + float(f.get("commodityAmount", 0) or 0)
+        if required <= 0:
+            return True, required, available  # margin unknown -> don't block; broker gates
+        return (required <= available), required, available
+    except Exception as e:
+        logger.warning(f"Final affordability check failed for {strike_symbol}: {e}")
+        return True, 0.0, 0.0
+
+
 async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
     """Execute an automated trade based on confirmed signal with smart SL.
     POLICY: Only BUY trades on CE/PE options. SELL trades are blocked."""
@@ -1156,6 +1177,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             if side != "BUY":
                 logger.warning(f"⚠️ Options-buy-only guard: forced side to BUY (signal said {side}) for {strike_symbol}.")
                 side = "BUY"
+
+            # FINAL BALANCE GATE — do not send if the broker can't afford this exact order.
+            _ok, _req, _av = await _affordable_to_place(client, strike_symbol, qty, side, product_type, entry_price, sl_points)
+            if not _ok:
+                logger.warning(f"🛑 Insufficient balance for {strike_symbol}: needs ₹{_req:.0f}, have ₹{_av:.0f} — trade NOT sent.")
+                await broadcast_log(f"🛑 Insufficient balance: {strike_symbol} needs ₹{_req:.0f}, have ₹{_av:.0f} — trade skipped.", "error", user_id=client.user_id)
+                return
 
             logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Product: {product_type}")
             await broadcast_log(
@@ -1561,6 +1589,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         qty = lots * lot_size
 
 
+
+        # FINAL BALANCE GATE — do not send if the broker can't afford this exact order.
+        _ok, _req, _av = await _affordable_to_place(client, strike_symbol, qty, "BUY", product_type, entry_price, sl_points)
+        if not _ok:
+            logger.warning(f"🛑 Insufficient balance for {strike_symbol}: needs ₹{_req:.0f}, have ₹{_av:.0f} — trade NOT sent.")
+            await broadcast_log(f"🛑 Insufficient balance: {strike_symbol} needs ₹{_req:.0f}, have ₹{_av:.0f} — trade skipped.", "error", user_id=client.user_id)
+            return
 
         logger.info(f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points} ({sl_method}) | TGT: {target_points} | Regime: {'TRENDING (CO)' if is_trending else 'RANGE (BO)'}")
         await broadcast_log(
