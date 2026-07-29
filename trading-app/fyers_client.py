@@ -1734,13 +1734,17 @@ class FyersClient:
             "offlineOrder": False,
         }
 
-        # Fyers v3 CO and BO: stopLoss and takeProfit are absolute trigger prices, not points
+        # Fyers v3 CO/BO stopLoss & takeProfit are DISTANCES in points, NOT absolute trigger prices.
+        # Proven live: sending stop_trigger (the price, e.g. 381.7) placed the stop at
+        # entry - 381.7 = ~₹11.4 — i.e. Fyers subtracted our value from entry, so it treated it as a
+        # distance. That left a ₹394 option with a near-worthless stop 381 points away. Send the
+        # point distance (sl_points / target_points) so the stop sits at entry - sl_points as intended.
         if is_co and sl_points > 0:
-            order_data["stopLoss"] = stop_trigger
+            order_data["stopLoss"] = round(sl_points, 2)
 
         if is_bo:
-            order_data["stopLoss"] = stop_trigger
-            order_data["takeProfit"] = target_trigger
+            order_data["stopLoss"] = round(sl_points, 2)
+            order_data["takeProfit"] = round(target_points, 2)
 
         try:
             print(f"📤 Placing order: {order_data}")
