@@ -43,7 +43,7 @@ async def _compute_regime_for(symbol: str, ai_engine: AIEngine, vix: float = 0, 
             logger.warning(f"Regime CandleBuilder bootstrap failed for {symbol}: {e}")
 
     if len(candles_5m) < 3:
-        return "NEUTRAL", "Not enough 5m candles formed yet."
+        return "WARMING_UP", "Not enough 5m candles formed yet — regime warming up."
 
     recent_candles = [
         {
@@ -54,15 +54,22 @@ async def _compute_regime_for(symbol: str, ai_engine: AIEngine, vix: float = 0, 
     ]
     user_prompt = (f"Symbol: {symbol}\nCurrent Spot: {spot}\nIndia VIX: {vix}\n"
                    f"Recent 5M Candles: {json.dumps(recent_candles)}\nWhat is the current market regime?")
+    # Use the FULL provider fallback chain (groq → gemini → github → claude → …) with per-provider
+    # key rotation, NOT groq-only. Previously this forced Groq alone, so a single Groq 429/timeout
+    # made the regime silently return NEUTRAL even though Gemini/others were available. The regime
+    # runs every 5 min (not in the hot trade path), so the extra fall-through latency is irrelevant.
     try:
         decision = await ai_engine.run_trading_agent(
-            system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt, force_provider="groq"
+            system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt
         )
         if decision and "regime" in decision:
-            return decision.get("regime", "CHOPPY_SIDEWAYS"), decision.get("reason", "Groq evaluated.")
+            return decision.get("regime", "CHOPPY_SIDEWAYS"), decision.get("reason", "AI evaluated.")
     except Exception as e:
-        logger.warning(f"Regime Groq eval failed for {symbol}: {e}")
-    return "NEUTRAL", "Groq API Fallback"
+        logger.warning(f"Regime AI eval failed for {symbol}: {e}")
+    # Distinct label so the dashboard can tell "AI could not answer" apart from a genuine flat/neutral
+    # market. UNKNOWN matches none of the trade gates (CHOPPY_SIDEWAYS / STRONG_TREND_*), so it is
+    # behaviourally identical to the old NEUTRAL fallback — it only changes what the operator sees.
+    return "UNKNOWN", "AI unavailable — all providers failed; regime not evaluated this cycle"
 
 
 async def regime_evaluator():
@@ -89,9 +96,23 @@ async def regime_evaluator():
         # ── 1. NSE / Indian equity regime (NIFTY) ──
         try:
             if state.is_market_open():
-                cache0 = state.get_user_cache("0")
-                spot = (cache0.get("spot", {}) or {}).get("NSE:NIFTY50-INDEX", {}).get("lp", 0)
-                vix = cache0.get("vix", 0)
+                # Find the best spot/VIX data from any authenticated user cache (the guest
+                # cache "0" may be empty if no unauthenticated sessions exist). Spot and VIX
+                # are market-wide, so any user's cache is valid.
+                spot, vix = 0, 0
+                for _uid_key, _cache in state.USER_CACHES.items():
+                    if not _cache.get("is_auth"):
+                        continue
+                    _spot_dict = _cache.get("spot") or {}
+                    _s = _spot_dict.get("lp", 0)
+                    if _s > 0:
+                        spot = _s
+                    _vix_dict = _cache.get("vix") or {}
+                    _v = _vix_dict.get("lp", 0) if isinstance(_vix_dict, dict) else 0
+                    if _v > 0:
+                        vix = _v
+                    if spot > 0 and vix > 0:
+                        break
                 r, reason = await _compute_regime_for("NSE:NIFTY50-INDEX", ai_engine, vix=vix, spot=spot)
                 state.market_regime, state.regime_reason = r, reason
                 logger.info(f"🟢 NSE Regime: {r} - {reason}")

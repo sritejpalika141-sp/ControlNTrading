@@ -407,18 +407,26 @@ async function fetchAutomationStatus() {
     }
 
     // Update the 3 Regime Badges (NSE / MCX / Currency) — same regime logic per market.
-    const _regimeColor = (r) => (r || '').includes('TREND') ? 'var(--success)'
-                             : (r || '').includes('CHOPPY') ? 'var(--warning)'
+    // Use the vars that actually exist in styles.css (--green/--yellow/--red/--text-muted/--text).
+    // The old code referenced --success/--warning/--text-primary, which are undefined here, so the
+    // badge colours silently never applied.
+    const _regimeColor = (r) => (r || '').includes('TREND') ? 'var(--green)'
+                             : (r || '').includes('CHOPPY') ? 'var(--yellow)'
+                             : (r || '').includes('UNKNOWN') ? 'var(--red)'
+                             : (r || '').includes('WARMING') ? 'var(--text-muted)'
                              : (r || '').includes('CLOSED') ? 'var(--text-muted)'
-                             : 'var(--text-primary)';
+                             : 'var(--text)';
+    // Human-friendly label so "UNKNOWN" reads as an AI outage, not a market state.
+    const _regimeText = (r) => (r || '').includes('UNKNOWN') ? 'AI down ⚠️'
+                            : (r || '').includes('WARMING') ? 'warming…'
+                            : (r || '--');
     const _setRegime = (id, emoji, label, r, reason) => {
       const el = document.getElementById(id);
       if (!el) return;
-      const val = r || '--';
       el.style.display = 'inline-block';
-      el.textContent = `${emoji} ${label}: ${val}`;
-      el.title = reason || '';
-      el.style.color = _regimeColor(val);
+      el.textContent = `${emoji} ${label}: ${_regimeText(r)}`;
+      el.title = reason || '';          // full reason on hover (e.g. "AI unavailable — all providers failed")
+      el.style.color = _regimeColor(r);
     };
     const _rg = data.regimes || {};
     // Backward-compatible: fall back to flat market_regime for NSE if regimes{} absent.

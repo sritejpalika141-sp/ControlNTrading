@@ -942,8 +942,16 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
 
     def _pkg(sl_pts: float, method: str) -> Dict:
-        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts)
-        sl_pts = max(round(sl_pts, 1), 1.0) # hard minimum 1.0 to prevent instant rejection
+        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts).
+        # Floor: normally 1.0, but scaled DOWN for cheap options so a sub-rupee premium (e.g. a
+        # ₹0.30 USDINR/FX option) isn't forced to a 1.0-pt stop that would sit at/below zero and be
+        # rejected. For any premium >= 10 the floor is the usual 1.0 — identical to before.
+        # Cap: stop never wider than 80% of premium, so the stop price always stays above zero
+        # (only ever binds for very cheap options; never touches normal NIFTY/crude SLs).
+        _min = min(1.0, round(entry_ltp * 0.10, 2)) if entry_ltp > 0 else 1.0
+        sl_pts = max(round(sl_pts, 2), _min)
+        if entry_ltp > 0:
+            sl_pts = min(sl_pts, round(entry_ltp * 0.80, 2))
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
@@ -1105,13 +1113,23 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         # higher-quality, with-trend entries. This is the intended risk-reducing behaviour.
         # ═══════════════════════════════════════════
         _dir = "NEUTRAL"
+        _gate_data_ok = False
+        _gate_ncandles = 0
         try:
             from engine.key_levels import detect_trend
             _uc = await api_queue.enqueue(2, client.get_historical, symbol, "15", 5)
+            _gate_ncandles = len(_uc) if _uc else 0
             if _uc and len(_uc) >= 20:
                 _dir = (detect_trend(_uc).get("trend", "NEUTRAL") or "NEUTRAL").upper()
+                _gate_data_ok = True
+            else:
+                # VISIBILITY: a short/empty 15m history is NOT a real sideways market — it is a data
+                # gap. Without this log, MCX/FX symbols whose history feed is thin would be silently
+                # blocked and look like "no signal". Surface it distinctly so it can be diagnosed.
+                logger.warning(f"⚠️ Directional gate: {symbol} — only {_gate_ncandles} 15m candles (<20); "
+                               f"cannot read trend → treating as no-trade (DATA GAP, not a real sideways).")
         except Exception as _de:
-            logger.warning(f"Directional gate trend calc failed for {symbol}: {_de}")
+            logger.warning(f"⚠️ Directional gate trend calc FAILED for {symbol}: {_de} → no-trade (data error, not sideways).")
         _sig_type = sig.get("type", "").upper()
         if "BULL" in _dir:
             if _sig_type != "CALL":
@@ -1122,7 +1140,10 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 logger.info(f"⏭️ Directional gate: {symbol} DOWNTREND — PUT only, skipping {_sig_type}.")
                 return
         else:
-            logger.info(f"⏭️ Directional gate: {symbol} SIDEWAYS/NEUTRAL — no new trades (trend-only policy).")
+            if _gate_data_ok:
+                logger.info(f"⏭️ Directional gate: {symbol} SIDEWAYS/NEUTRAL ({_gate_ncandles} candles) — no new trades (trend-only policy).")
+            else:
+                logger.info(f"⏭️ Directional gate: {symbol} blocked — trend UNREADABLE ({_gate_ncandles} 15m candles); not a market call, a data gap.")
             return
 
         # ═══════════════════════════════════════════
@@ -1926,14 +1947,18 @@ async def automation_loop():
 
             any_market_open = is_market_open()
             if not any_market_open:
-                # Check if any user has active MCX/CDS symbols that are still open
+                # Check if any user has active MCX/CDS symbols that are still open. MCX and CDS keep
+                # DIFFERENT hours (MCX crude to 23:30; NSE currency to 17:00), so each must be tested
+                # against its own asset-class session — not both against COMMODITY_OPTIONS.
                 for u_id in list(USER_CONTEXTS.keys()):
                     state = get_user_state(u_id)
                     for symbol in state.active_symbols:
-                        if symbol.startswith("MCX:") or symbol.startswith("CDS:"):
-                            if is_market_open("COMMODITY_OPTIONS"):
-                                any_market_open = True
-                                break
+                        if symbol.startswith("MCX:") and is_market_open("COMMODITY_OPTIONS"):
+                            any_market_open = True
+                            break
+                        if symbol.startswith("CDS:") and is_market_open("CURRENCY_OPTIONS"):
+                            any_market_open = True
+                            break
                     if any_market_open: break
 
             if not any_market_open:
