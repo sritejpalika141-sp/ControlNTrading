@@ -1664,33 +1664,35 @@ class FyersClient(BaseBroker):
 
     def _get_bo_legs(self, parent_id: str) -> Dict:
         """
-        Scans order book to find SL and TGT leg IDs for a given BO parent ID.
+        Scans the order book for the SL/TGT child legs of a CO/BO parent id.
+
+        POLLS up to ~6 times (was a single 1s attempt). Fyers can take a couple of seconds to
+        populate a CO/BO child SL leg after the parent fills; the old one-shot lookup frequently
+        returned an EMPTY sl_id, so the trade was stored with no trailable SL order id and the
+        3-candle trailing stop then NEVER fired (the trailing monitor skips trades with no
+        sl_order_id). Returning the leg id reliably is what makes the TSL work.
         """
         import time
-        try:
-            # Give Fyers a moment to populate child orders in the book
-            time.sleep(1.0)
-            resp = self.client.orderbook()
-            if resp.get("code") != 200:
-                return {}
-
-            orders = resp.get("orderBook", [])
-            legs = {"sl_id": "", "tgt_id": ""}
-            
-            for o in orders:
-                if o.get("parentId") == parent_id:
-                    # Type 3 or 4 are SL legs
-                    if o.get("type") in [3, 4]:
-                        legs["sl_id"] = o.get("id")
-                    # Type 1 is Target (Limit) leg
-                    elif o.get("type") == 1:
-                        legs["tgt_id"] = o.get("id")
-            
-            if legs["sl_id"]: print(f"🔍 Found BO Legs: SL={legs['sl_id']}, TGT={legs['tgt_id']}")
-            return legs
-        except Exception as e:
-            print(f"❌ Error fetching BO legs: {e}")
-            return {}
+        legs = {"sl_id": "", "tgt_id": ""}
+        for _attempt in range(6):
+            try:
+                time.sleep(1.0)
+                resp = self.client.orderbook()
+                if resp.get("code") != 200:
+                    continue
+                for o in resp.get("orderBook", []):
+                    if o.get("parentId") == parent_id:
+                        if o.get("type") in [3, 4]:   # SL leg (STOP / STOPLIMIT)
+                            legs["sl_id"] = o.get("id")
+                        elif o.get("type") == 1:      # Target (LIMIT) leg
+                            legs["tgt_id"] = o.get("id")
+                if legs["sl_id"]:
+                    print(f"🔍 Found CO/BO legs (attempt {_attempt+1}): SL={legs['sl_id']}, TGT={legs['tgt_id']}")
+                    return legs
+            except Exception as e:
+                print(f"❌ Error fetching BO legs (attempt {_attempt+1}): {e}")
+        print(f"⚠️ CO/BO SL leg not found for parent {parent_id} after retries — this trade may not trail.")
+        return legs
 
     def modify_order(self, order_id: str, order_type: int, limit_price: float = 0, stop_price: float = 0, qty: int = 0) -> Dict:
         """
