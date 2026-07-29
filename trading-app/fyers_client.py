@@ -1696,10 +1696,15 @@ class FyersClient:
 
         is_bo = False
         is_co = False
-        if product.upper() == "CO":
-            print(f"⚠️ CO order requested. Converting to INTRADAY with separate SL to allow manual modification.")
-            is_co = False
-            mapped_product = "INTRADAY"
+        # OWNER RULE (28/29-07-26): a CO must stay a CO. The previous code CONVERTED every CO to
+        # INTRADAY + a SEPARATE SELL stop — a naked short on a long option that Fyers margins
+        # enormously (a live crude PUT needed ₹2.76 lakh), so the SL was rejected and the position
+        # was left with NO stop. The CO's stop is a built-in, margin-benefited leg placed atomically
+        # with the buy, and its leg id IS modifiable for the trailing stop (see _get_bo_legs). Keep
+        # SL-bearing entries as CO; if the CO is rejected the order is aborted below (never naked).
+        if product.upper() == "CO" or (sl_points > 0 and target_points <= 0):
+            is_co = True
+            mapped_product = "CO"
         elif sl_points > 0 and target_points > 0:
             is_bo = True
             mapped_product = "BO"
@@ -1939,33 +1944,34 @@ class FyersClient:
 
     def _get_bo_legs(self, parent_id: str) -> Dict:
         """
-        Scans order book to find SL and TGT leg IDs for a given BO parent ID.
+        Scans the order book for the SL/TGT child legs of a CO/BO parent id.
+
+        POLLS up to ~6 times (was a single 1s attempt). Fyers can take a couple of seconds to
+        populate a CO/BO child SL leg after the parent fills; the old one-shot lookup frequently
+        returned an EMPTY sl_id, so the trade was stored with no trailable SL order id and the
+        3-candle TRAILING STOP then never fired. Capturing this id reliably is what lets the TSL run.
         """
         import time
-        try:
-            # Give Fyers a moment to populate child orders in the book
-            time.sleep(1.0)
-            resp = self.client.orderbook()
-            if resp.get("code") != 200:
-                return {}
-
-            orders = resp.get("orderBook", [])
-            legs = {"sl_id": "", "tgt_id": ""}
-            
-            for o in orders:
-                if o.get("parentId") == parent_id:
-                    # Type 3 or 4 are SL legs
-                    if o.get("type") in [3, 4]:
-                        legs["sl_id"] = o.get("id")
-                    # Type 1 is Target (Limit) leg
-                    elif o.get("type") == 1:
-                        legs["tgt_id"] = o.get("id")
-            
-            if legs["sl_id"]: print(f"🔍 Found BO Legs: SL={legs['sl_id']}, TGT={legs['tgt_id']}")
-            return legs
-        except Exception as e:
-            print(f"❌ Error fetching BO legs: {e}")
-            return {}
+        legs = {"sl_id": "", "tgt_id": ""}
+        for _attempt in range(6):
+            try:
+                time.sleep(1.0)
+                resp = self.client.orderbook()
+                if resp.get("code") != 200:
+                    continue
+                for o in resp.get("orderBook", []):
+                    if o.get("parentId") == parent_id:
+                        if o.get("type") in [3, 4]:   # SL leg (STOP / STOPLIMIT)
+                            legs["sl_id"] = o.get("id")
+                        elif o.get("type") == 1:      # Target (LIMIT) leg
+                            legs["tgt_id"] = o.get("id")
+                if legs["sl_id"]:
+                    print(f"🔍 Found CO/BO legs (attempt {_attempt+1}): SL={legs['sl_id']}, TGT={legs['tgt_id']}")
+                    return legs
+            except Exception as e:
+                print(f"❌ Error fetching BO legs (attempt {_attempt+1}): {e}")
+        print(f"⚠️ CO/BO SL leg not found for parent {parent_id} after retries — this trade may not trail.")
+        return legs
 
     def modify_order(self, order_id: str, order_type: int, limit_price: float = 0, stop_price: float = 0, qty: int = 0) -> Dict:
         """
