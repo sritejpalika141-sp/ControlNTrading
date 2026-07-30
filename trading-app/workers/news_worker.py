@@ -164,6 +164,8 @@ class NewsWorker:
                 "summary": result.get("summary", "No clear sentiment."),
                 "ts": time.time()
             }
+            import state as _state_mod
+            _state_mod.global_macro_summary = self.last_summary
             logger.info(f"📰 AI Global Macro Summary Updated: EQ={self.last_summary['equities_trend']}, COM={self.last_summary['commodities_trend']}, FX={self.last_summary['currency_trend']}")
             
             # Auto-Symbol Injection (news-driven). Every candidate is VALIDATED with a live quote

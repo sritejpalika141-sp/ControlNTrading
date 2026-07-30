@@ -1982,6 +1982,13 @@ async def automation_loop():
                     if has_sig and state.can_trade("Strategy 10: Adaptive ADX Engine", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 10: Adaptive ADX Engine", symbol, sig, {"trend": sig.get("metadata", {}).get("regime", "NEUTRAL")}, client, state)
 
+            async def run_strat_11():
+                if _strat_enabled_for(state, "Strategy 11: FRVP LVN Vacuum", symbol) and spot and candles_5m:
+                    from engine.strategy_11_frvp import evaluate_frvp_strategy
+                    sig = await evaluate_frvp_strategy(client, state, symbol, candles_5m, vix=15.0)
+                    if sig and state.can_trade("Strategy 11: FRVP LVN Vacuum", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
+                        await risk_orchestrator.propose_trade("Strategy 11: FRVP LVN Vacuum", symbol, sig, {"trend": sig.get("direction", "NEUTRAL")}, client, state)
+
             async def run_strat_1():
                 if "Strategy 1: OB + FVG" in state.active_strategies and analysis.get("signals"):
                     trade_placed = False
@@ -2055,7 +2062,7 @@ async def automation_loop():
 
             # Execute all symbol-level strategies simultaneously
             import asyncio
-            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_1(), run_crude_strats())
+            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_11(), run_strat_1(), run_crude_strats())
             
         except Exception as e:
             logger.error(f"Error in Symbol loop for {symbol}: {e}")

@@ -71,6 +71,7 @@ currency_regime_reason: str = "Awaiting currency session."
 # Multi-asset regime map (symbol -> regime string, reason string)
 asset_regimes: Dict[str, str] = {}
 asset_regime_reasons: Dict[str, str] = {}
+global_macro_summary: dict = {"equities_trend": "NEUTRAL", "commodities_trend": "NEUTRAL", "currency_trend": "NEUTRAL", "summary": "Awaiting news update"}
 
 
 def get_symbol_regime(symbol: str) -> tuple[str, str]:
