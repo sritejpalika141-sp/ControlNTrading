@@ -8,6 +8,8 @@ import json
 import logging
 import threading
 import pytz
+import requests
+from requests.adapters import HTTPAdapter
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
@@ -15,6 +17,12 @@ from pathlib import Path
 from engine.encryption import get_secret, save_to_vault
 
 IST = pytz.timezone('Asia/Kolkata')
+
+# Shared Pre-Warmed HTTP TLS Connection Pool for Fyers REST API
+_FYERS_HTTP_SESSION = requests.Session()
+_adapter = HTTPAdapter(pool_connections=50, pool_maxsize=100, max_retries=2)
+_FYERS_HTTP_SESSION.mount("https://", _adapter)
+_FYERS_HTTP_SESSION.mount("http://", _adapter)
 
 # Load credentials from fyers-mcp-server .env
 BASE_DIR = Path(__file__).resolve().parent
@@ -137,6 +145,8 @@ class FyersClient:
                 token=access_token,
                 log_path=str(BASE_DIR / "logs")
             )
+            if self.client and hasattr(self.client, 'session'):
+                self.client.session = _FYERS_HTTP_SESSION
         except Exception as e:
             print(f"❌ Fyers client init error for user {self.user_id}: {e}")
             self.client = None
