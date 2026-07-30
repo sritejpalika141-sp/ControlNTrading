@@ -351,10 +351,15 @@ class Database:
             entry_time TEXT,
             sl_points REAL,
             sl_method TEXT,
+            sl_price REAL,
+            initial_sl_price REAL,
+            final_sl_price REAL,
+            sl_trail_count INTEGER DEFAULT 0,
             target_points REAL,
             product TEXT,
             regime TEXT,
             trend TEXT,
+            entry_reason TEXT,
             entry_order_id TEXT,
             status TEXT DEFAULT 'OPEN',
             exit_price REAL,
@@ -367,6 +372,13 @@ class Database:
         c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_date ON executed_trades(trade_date)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_openkey ON executed_trades(symbol, status)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_strat ON executed_trades(strategy_name, trade_date)")
+        # Migration for existing DBs (table already created without the SL/TSL/reason columns).
+        for _col, _decl in (("sl_price", "REAL"), ("initial_sl_price", "REAL"), ("final_sl_price", "REAL"),
+                            ("sl_trail_count", "INTEGER DEFAULT 0"), ("entry_reason", "TEXT")):
+            try:
+                c.execute(f"ALTER TABLE executed_trades ADD COLUMN {_col} {_decl}")
+            except sqlite3.OperationalError:
+                pass
 
         # First-run admin setup — NO hardcoded default credential (Phase 1 Item C1).
         # Only create the admin from an explicit INITIAL_ADMIN_PASSWORD env var; never fall
@@ -949,25 +961,56 @@ class Database:
                                  side: str, qty: int, entry_price: float, entry_time: str,
                                  sl_points: float, sl_method: str, target_points: float,
                                  product: str, regime: str, trend: str, entry_order_id: str,
-                                 trade_date: str) -> int:
-        """Write an OPEN row the moment an order is placed. Best-effort — callers must wrap so a DB
+                                 trade_date: str, entry_reason: str = "") -> int:
+        """Write an OPEN row the moment an order is placed. Captures WHICH strategy, the initial SL
+        (points + absolute price) and the entry reason. final_sl_price starts at the initial stop and
+        is bumped by record_trade_trail on every TSL move. Best-effort — callers must wrap so a DB
         failure never affects execution. Returns the new row id (0 on failure)."""
         try:
+            ep = float(entry_price or 0)
+            slp = float(sl_points or 0)
+            # Absolute initial stop price. Long option (BUY) stops below entry; short above.
+            sl_price = round(ep - slp, 2) if str(side).upper() == "BUY" else round(ep + slp, 2)
             async with aiosqlite.connect(Database.DB_NAME) as conn:
                 cur = await conn.execute("""
                     INSERT INTO executed_trades
                       (user_id, strategy_name, symbol, underlying, side, qty, entry_price, entry_time,
-                       sl_points, sl_method, target_points, product, regime, trend, entry_order_id,
+                       sl_points, sl_method, sl_price, initial_sl_price, final_sl_price, sl_trail_count,
+                       target_points, product, regime, trend, entry_reason, entry_order_id,
                        status, trade_date)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'OPEN', ?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?, 'OPEN', ?)
                 """, (user_id, strategy_name, symbol, underlying, side, int(qty or 0),
-                      float(entry_price or 0), entry_time, float(sl_points or 0), sl_method,
-                      float(target_points or 0), product, regime, trend, entry_order_id, trade_date))
+                      ep, entry_time, slp, sl_method, sl_price, sl_price, sl_price,
+                      float(target_points or 0), product, regime, trend, entry_reason,
+                      entry_order_id, trade_date))
                 await conn.commit()
                 return cur.lastrowid or 0
         except Exception as e:
             logger.warning(f"record_trade_entry failed for {symbol}: {e}")
             return 0
+
+    @staticmethod
+    async def record_trade_trail(symbol: str, new_sl_price: float, user_id: int = None) -> bool:
+        """Record a TSL move: update the OPEN row's final_sl_price and bump sl_trail_count. Called by
+        the trailing monitor each time it trails the stop toward the winning side. Best-effort."""
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                where_user = "AND user_id = ?" if user_id is not None else ""
+                params = [symbol] + ([user_id] if user_id is not None else [])
+                async with conn.execute(
+                    f"SELECT id FROM executed_trades WHERE symbol = ? AND status = 'OPEN' {where_user} "
+                    f"ORDER BY id DESC LIMIT 1", params) as cur:
+                    row = await cur.fetchone()
+                if not row:
+                    return False
+                await conn.execute(
+                    "UPDATE executed_trades SET final_sl_price=?, sl_trail_count=COALESCE(sl_trail_count,0)+1 "
+                    "WHERE id=?", (round(float(new_sl_price or 0), 2), row[0]))
+                await conn.commit()
+                return True
+        except Exception as e:
+            logger.warning(f"record_trade_trail failed for {symbol}: {e}")
+            return False
 
     @staticmethod
     async def record_trade_exit(symbol: str, exit_price: float, pnl: float, exit_reason: str = "",

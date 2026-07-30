@@ -871,6 +871,11 @@ async def trailing_monitor():
                                                 if state.webhook_url:
                                                     trigger_webhook_background(state.webhook_url, f"🚀 *{trail_msg} Updated*\n\n📈 *Symbol:* {sym}\n🛡️ *New SL Price:* ₹{new_sl_price}\n🔥 *Swing Low:* {lowest_low}", title="Trailing SL")
                                                 state.update_trade_sl_price(t["sl_order_id"], new_sl_price)
+                                                try:
+                                                    from models import Database
+                                                    await Database.record_trade_trail(sym, new_sl_price, user_id=u_id)
+                                                except Exception as _te:
+                                                    logger.warning(f"ledger trail-record skipped for {sym}: {_te}")
                                             else:
                                                 logger.error(f"❌ Failed to trail SL to ₹{new_sl_price} for {sym}: {mod_res.get('message')}")
                                         else:
@@ -902,6 +907,11 @@ async def trailing_monitor():
                                                 logger.info(f"🛡️ [SELL] Trailed SL to ₹{new_sl_price} for {sym}")
                                                 await broadcast_log(f"🛡️ SL trailed to ₹{new_sl_price} (3-Candle High)", "success")
                                                 state.update_trade_sl_price(t["sl_order_id"], new_sl_price)
+                                                try:
+                                                    from models import Database
+                                                    await Database.record_trade_trail(sym, new_sl_price, user_id=u_id)
+                                                except Exception as _te:
+                                                    logger.warning(f"ledger trail-record skipped for {sym}: {_te}")
                                             else:
                                                 logger.error(f"❌ [SELL] Failed to trail SL to ₹{new_sl_price} for {sym}: {mod_res.get('message')}")
                                         else:
@@ -1103,10 +1113,10 @@ def _passes_quality_gate(strike_symbol, entry_price, sl_points, qty, state):
 
 async def _record_entry_to_ledger(client, underlying, strike_symbol, side, qty, entry_price,
                                   sl_points, sl_method, target_points, product, regime, trend,
-                                  order_id, strategy_name):
+                                  order_id, strategy_name, entry_reason=""):
     """Best-effort: write the OPEN row to the executed-trades ledger the moment an order is placed.
-    Recording at ENTRY (not close) is what makes trade tracking reliable — the strategy/entry context
-    is captured here where it is always known. NEVER raises into the trade path."""
+    Recording at ENTRY (not close) is what makes trade tracking reliable — the strategy, SL and entry
+    reason are captured here where they are always known. NEVER raises into the trade path."""
     try:
         from models import Database
         now = datetime.now(IST)
@@ -1115,7 +1125,8 @@ async def _record_entry_to_ledger(client, underlying, strike_symbol, side, qty, 
             underlying=underlying, side=side, qty=qty, entry_price=entry_price,
             entry_time=now.strftime("%Y-%m-%d %H:%M:%S"), sl_points=sl_points, sl_method=sl_method,
             target_points=target_points, product=product, regime=regime, trend=trend,
-            entry_order_id=str(order_id or ""), trade_date=now.strftime("%Y-%m-%d"))
+            entry_order_id=str(order_id or ""), trade_date=now.strftime("%Y-%m-%d"),
+            entry_reason=str(entry_reason or ""))
     except Exception as e:
         logger.warning(f"ledger entry-record skipped for {strike_symbol}: {e}")
 
@@ -1341,7 +1352,8 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                     client, symbol, strike_symbol, side, qty, entry_price, sl_points,
                     ("orb_checklist" if is_orb else "strategy_926_fixed"), target_points,
                     product_type, getattr(state, "market_regime", "NEUTRAL"), current_trend,
-                    result.get("order_id"), strategy_name)
+                    result.get("order_id"), strategy_name,
+                    entry_reason=sig.get("reason", "") or sig.get("signal_reason", ""))
                 log_trade({
                     "symbol": strike_symbol, "side": side, "qty": qty,
                     "price": entry_price, "signal_type": f"{strategy_name}_{sig['type']}",
@@ -1771,7 +1783,8 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             await _record_entry_to_ledger(
                 client, symbol, strike_symbol, "BUY", qty, entry_price, sl_points, sl_method,
                 target_points, product_type, getattr(state, "market_regime", "NEUTRAL"),
-                current_trend, result.get("order_id"), sig.get("strategy", "Strategy 1: OB + FVG"))
+                current_trend, result.get("order_id"), sig.get("strategy", "Strategy 1: OB + FVG"),
+                entry_reason=sig.get("reason", "") or sig.get("signal_reason", ""))
 
             log_trade({
                 "symbol": strike_symbol,
