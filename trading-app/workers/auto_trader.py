@@ -925,14 +925,16 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
     Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from the
     buy price — but NEVER tighter than a floor, so a quiet minute can't produce an instant stop-out.
 
-    Rule (per owner directive 24/25-07-26, floor restored 30-07-26 after a regression stripped it):
-      1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles). This
-         remains the PRIMARY stop.
-      2. Floor it so a quiet minute can't produce an instant stop-out (the live bug: 1.2–5.6 pt stops
-         hit within a minute). Floor = the WIDER of 1.5× the option's avg 1-min range and 12% of the
-         entry premium, min 2.0. The swing low is used whenever it is wider than this floor; the floor
-         only kicks in when the swing is dangerously tight. NO AI in the order path.
-      3. PREMIUM RISK CAP: never wider than 45% of premium (bounds a single trade's loss, keeps the
+    Rule (per owner directive 24/25-07-26; floor restored + progressive lookback added 30-07-26):
+      1. Start with the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
+      2. If that is TOO TIGHT (below the floor), WIDEN the lookback to 4 then 5 candles — each wider
+         window gives a lower prior low = a naturally wider stop that is still a REAL chart level.
+         Stop as soon as a window clears the floor. This keeps the stop a genuine swing low (owner
+         preference) instead of an abstract number.
+      3. Floor (the "too tight" threshold) = the WIDER of 1.5× the option's avg 1-min range and 12%
+         of the entry premium, min 2.0. Only used as the stop if even the 5-candle low is tighter.
+         NO AI in the order path.
+      4. PREMIUM RISK CAP: never wider than 45% of premium (bounds a single trade's loss, keeps the
          stop above zero).
       Per-trade RUPEE risk is bounded separately by the caller (execute_auto_trade skips a trade whose
       sl_points × qty exceeds the per-trade risk budget).
@@ -956,45 +958,58 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
     try:
-        # ── 3-candle swing low on the 1-min OPTION chart (PRIMARY — owner directive) ──
+        # ── Swing low on the 1-min OPTION chart (PRIMARY — owner directive) ──
         # 2 days of history so a freshly-ATM / thin strike still yields >=3 candles.
-        swing = 0.0
         atr = 0.0
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
         if candles and len(candles) >= 3:
-            lowest_low = min(c["low"] for c in candles[-3:])
-            d = round(entry_ltp - lowest_low, 2)  # subtracted from the buy price
-            if d > 0:
-                swing = d
             # Volatility gauge = average 1-min high-low range of the last 5 candles. Used ONLY
             # as a floor so a quiet-minute swing low can't produce an instant stop-out.
             recent = candles[-5:]
             if recent:
                 atr = sum((c["high"] - c["low"]) for c in recent) / len(recent)
 
-        # VOLATILITY / PREMIUM FLOOR (the fix for instant stop-outs). The stop must be at least
-        # wide enough to survive one noisy minute. Floor = the WIDER of:
+        # VOLATILITY / PREMIUM FLOOR (the "too tight" threshold). The stop must be at least wide
+        # enough to survive one noisy minute. Floor = the WIDER of:
         #   • 1.5× the option's own average 1-min range (adapts to real volatility), and
         #   • 12% of the entry premium (scales with price: big for a ₹365 option, small for a ₹15 one),
-        # never below 2.0 absolute. Without this floor a 1.2–5.6 pt swing-low stop was getting hit on
-        # normal noise within a minute — the primary cause of the daily bleed.
+        # never below 2.0 absolute.
         vol_floor = max(round(atr * 1.5, 2), round(entry_ltp * 0.12, 2), 2.0)
 
-        # Keep the 3-candle swing low as the PRIMARY stop, but NEVER tighter than the floor.
-        if swing > 0:
-            sl = max(swing, vol_floor)
-            method = "strict_3_candle_low" if sl == swing else "swing_low_vol_floored"
+        # PROGRESSIVE SWING-LOW LOOKBACK (owner directive 30-07-26): use the 3-candle swing low; if
+        # that distance is TOO TIGHT (below the floor), widen the lookback to 4 then 5 candles. Each
+        # wider window picks a LOWER prior low = a naturally wider stop that is still a REAL chart
+        # level (an actual candle low), which is preferred over an abstract % floor. Stop widening as
+        # soon as a window clears the floor; only fall back to the floor if even the 5-candle low is
+        # still too tight.
+        swing = 0.0
+        swing_n = 0
+        if candles and len(candles) >= 3:
+            for n in (3, 4, 5):
+                if len(candles) < n:
+                    break
+                ll = min(c["low"] for c in candles[-n:])
+                d = round(entry_ltp - ll, 2)  # distance subtracted from the buy price
+                if d > 0:
+                    swing, swing_n = d, n
+                if d >= vol_floor:
+                    break  # wide enough — this window's swing low is the stop
+
+        if swing >= vol_floor:
+            sl, method = swing, f"{swing_n}_candle_swing_low"
+        elif swing > 0:
+            # Even the 5-candle low is tighter than the floor -> use the floor (last resort).
+            sl, method = vol_floor, f"{swing_n}_candle_low_vol_floored"
         else:
-            sl = vol_floor
-            method = "vol_floor_no_swing"
+            sl, method = vol_floor, "vol_floor_no_swing"
 
         # PREMIUM RISK CAP: never risk more than 45% of the premium on one option (bounds the loss
         # and keeps the stop above zero). Only binds when the floor/swing is unusually wide.
         if entry_ltp > 0:
             sl = min(sl, round(entry_ltp * 0.45, 2))
 
-        logger.info(f"📊 SL {strike_symbol}: swing={swing} atr={atr:.1f} floor={vol_floor:.1f} → {sl:.1f} pts "
-                    f"(entry {entry_ltp}) [{method}]")
+        logger.info(f"📊 SL {strike_symbol}: swing={swing}({swing_n}c) atr={atr:.1f} floor={vol_floor:.1f} → "
+                    f"{sl:.1f} pts (entry {entry_ltp}) [{method}]")
         return _pkg(sl, method)
 
     except Exception as e:
