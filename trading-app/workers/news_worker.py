@@ -186,10 +186,54 @@ class NewsWorker:
             # Stop at 22:00 so a fresh scrip still has runway before the 23:20 MCX hard-exit.
             _commodity_ok = 9 <= _now_ist.hour < 22
 
+            # ── Telegram Concise Global Intelligence Dispatcher ──
+            try:
+                from engine.notifier import send_webhook_alert
+                import os
+                wh_url = os.getenv("TELEGRAM_WEBHOOK", "")
+                if wh_url:
+                    today_str = _now_ist.strftime("%Y-%m-%d")
+                    current_hour = _now_ist.hour
+                    current_minute = _now_ist.minute
+
+                    is_pre_market = (8 <= current_hour < 9 and current_minute >= 40)
+                    is_market_hours = (9 <= current_hour <= 22)
+
+                    last_hourly = getattr(self, "_last_hourly_hour", -1)
+                    last_pre_date = getattr(self, "_last_pre_market_date", "")
+
+                    should_send = False
+                    title_prefix = "🌐 Global News Brief"
+
+                    if is_pre_market and last_pre_date != today_str:
+                        should_send = True
+                        self._last_pre_market_date = today_str
+                        title_prefix = "🌅 Pre-Market Global Briefing"
+                    elif is_market_hours and last_hourly != current_hour:
+                        should_send = True
+                        self._last_hourly_hour = current_hour
+                        title_prefix = f"📊 Market Briefing ({_now_ist.strftime('%H:00 IST')})"
+
+                    if should_send:
+                        bullets = result.get("telegram_bullets") or [
+                            f"• 📌 Global Summary: {result.get('summary', 'No summary')}",
+                            f"• 🎯 Indian Equities: {result.get('equities_trend', 'NEUTRAL')}",
+                            f"• 🛢️ Commodities: {result.get('commodities_trend', 'NEUTRAL')}"
+                        ]
+                        bullet_text = "\n".join(bullets)
+                        msg = (
+                            f"<b>{title_prefix}</b>\n\n"
+                            f"{bullet_text}\n\n"
+                            f"<b>Biases:</b> EQ: <code>{self.last_summary['equities_trend']}</code> | "
+                            f"MCX: <code>{self.last_summary['commodities_trend']}</code> | "
+                            f"FX: <code>{self.last_summary['currency_trend']}</code>"
+                        )
+                        await send_webhook_alert(wh_url, msg, title=title_prefix)
+                        logger.info(f"📲 Sent Telegram Global Intelligence Update ({title_prefix})")
+            except Exception as tg_err:
+                logger.warning(f"Telegram news dispatch warning: {tg_err}")
+
             self._inject_asset(result.get("high_conviction_asset", "NONE"), _equity_ok, "equity")
-            # DEDICATED commodity slot. Previously commodities had to beat every NSE stock for the
-            # single high_conviction_asset slot and never won (COM=NEUTRAL on every cycle, 0 MCX
-            # injections ever). They now compete only with each other.
             self._inject_asset(result.get("commodity_pick", "NONE"), _commodity_ok, "commodity")
                                 
         except Exception as e:
