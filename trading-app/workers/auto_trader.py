@@ -2082,16 +2082,14 @@ async def automation_loop():
                 # Check if any user has active MCX/CDS symbols that are still open. MCX and CDS keep
                 # DIFFERENT hours (MCX crude to 23:30; NSE currency to 17:00), so each must be tested
                 # against its own asset-class session — not both against COMMODITY_OPTIONS.
-                for u_id in list(USER_CONTEXTS.keys()):
-                    state = get_user_state(u_id)
-                    for symbol in state.active_symbols:
-                        if symbol.startswith("MCX:") and is_market_open("COMMODITY_OPTIONS"):
-                            any_market_open = True
-                            break
-                        if symbol.startswith("CDS:") and is_market_open("CURRENCY_OPTIONS"):
-                            any_market_open = True
-                            break
-                    if any_market_open: break
+                if is_market_open("COMMODITY_OPTIONS"):
+                    any_market_open = True
+                    for u_id in list(USER_CONTEXTS.keys()):
+                        state = get_user_state(u_id)
+                        if "MCX:CRUDEOIL" not in state.active_symbols:
+                            state.add_symbol("MCX:CRUDEOIL", enable=True, by_agent=True)
+                elif is_market_open("CURRENCY_OPTIONS"):
+                    any_market_open = True
 
             if not any_market_open:
                 from datetime import datetime

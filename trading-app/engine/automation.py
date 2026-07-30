@@ -74,6 +74,7 @@ class TradingState:
         self.traded_strikes_today = []
         self.skipped_signals = [] # List of sig_id strings
         self.active_symbols = ["NSE:NIFTY50-INDEX"]
+        self.enabled_symbols = ["NSE:NIFTY50-INDEX"]
         self.hard_exit_triggered = False
         # Per-session (asset-aware) EOD square-off tracking: session keys ("NSE"/"MCX"/"CDS")
         # that have hit their hard-exit time today. Lets NSE stop at 15:14 while MCX trades to 23:20.
