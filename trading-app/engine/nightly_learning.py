@@ -25,37 +25,68 @@ AUTO_APPLY_MINOR = False
 MIN_TRADES_FOR_LEARNING = 10
 
 
-async def _build_prev_day_candle_context(user_id, days=5):
-    """Summarize the previous few days' DAILY candles for each underlying actually traded, so the
-    nightly AI critiques each strategy against real market structure (owner directive: 'check
-    previous days candlestick data to analyse the strategies'). Best-effort; never raises."""
+async def _build_market_context(user_id, days=90, lookback_trades_days=30):
+    """Summarize ~3 MONTHS of 5-MINUTE candles per traded underlying for the nightly strategy
+    analysis (owner directive 30-07-26: 'check the 5 min charts for past 3 months for analysing
+    the strategies'). 3 months of 5-min bars is ~4.7k per symbol — far too much to feed an LLM raw —
+    so this computes compact per-symbol stats: 3-month trend, volatility (5-min + daily range),
+    up/down/flat day mix, and where price sits in the 3-month range. Best-effort; never raises."""
+    import datetime as _dt
     lines = []
     try:
-        rows = await Database.get_executed_trades(days=days)
+        rows = await Database.get_executed_trades(days=lookback_trades_days)
         unders = []
         for r in rows:
             u = r.get("underlying") or r.get("symbol")
             if u and u not in unders:
                 unders.append(u)
-        unders = unders[:8]  # cap the number of history calls
+        unders = unders[:6]  # cap: each symbol pulls 3 months of 5-min in ~3 chunked calls
         if not unders:
-            return "No underlyings traded in the lookback window."
+            return "No underlyings traded in the lookback window to analyse."
         from fyers_client import FyersClient
         fc = FyersClient(user_id=user_id)
         for u in unders:
             try:
-                candles = await asyncio.to_thread(fc.get_historical, u, "D", days)
-                if candles and len(candles) >= 1:
-                    prev = candles[-1]
-                    o, h, l, c = prev.get("open"), prev.get("high"), prev.get("low"), prev.get("close")
-                    rng = round((h - l), 2) if (h is not None and l is not None) else 0
-                    dirn = "UP" if (c and o and c > o) else ("DOWN" if (c and o and c < o) else "FLAT")
-                    lines.append(f"{u}: prev-day O={o} H={h} L={l} C={c} range={rng} ({dirn})")
+                candles = await asyncio.to_thread(fc.get_history_range, u, "5", days)
+                if not candles or len(candles) < 20:
+                    lines.append(f"{u}: insufficient 5-min history ({len(candles) if candles else 0} bars).")
+                    continue
+                # 5-min volatility (whole window vs most-recent ~5 sessions ≈ 390 bars)
+                rngs = [c["high"] - c["low"] for c in candles]
+                avg5 = sum(rngs) / len(rngs)
+                tail = rngs[-390:] or rngs
+                recent5 = sum(tail) / len(tail)
+                vol_trend = "rising" if recent5 > avg5 * 1.15 else ("falling" if recent5 < avg5 * 0.85 else "stable")
+                # Aggregate 5-min bars into daily O/H/L/C
+                by_day = {}
+                for c in candles:
+                    d = _dt.datetime.fromtimestamp(c["timestamp"], IST).strftime("%Y-%m-%d")
+                    dd = by_day.get(d)
+                    if dd is None:
+                        by_day[d] = {"o": c["open"], "h": c["high"], "l": c["low"], "c": c["close"]}
+                    else:
+                        dd["h"] = max(dd["h"], c["high"]); dd["l"] = min(dd["l"], c["low"]); dd["c"] = c["close"]
+                dl = [by_day[k] for k in sorted(by_day)]
+                up = sum(1 for d in dl if d["c"] > d["o"])
+                down = sum(1 for d in dl if d["c"] < d["o"])
+                flat = len(dl) - up - down
+                avg_dr = sum(d["h"] - d["l"] for d in dl) / len(dl)
+                hi = max(d["h"] for d in dl); lo = min(d["l"] for d in dl)
+                last_c = dl[-1]["c"]
+                pos = round((last_c - lo) / (hi - lo) * 100) if hi > lo else 50
+                closes = [d["c"] for d in dl]
+                first_avg = sum(closes[:20]) / len(closes[:20])
+                last_avg = sum(closes[-20:]) / len(closes[-20:])
+                trend = "UP" if last_avg > first_avg * 1.01 else ("DOWN" if last_avg < first_avg * 0.99 else "SIDEWAYS")
+                lines.append(
+                    f"{u}: {len(dl)}d/{len(candles)} 5m-bars | 3mo trend {trend} | "
+                    f"avg daily range {avg_dr:.1f} | avg 5m range {avg5:.2f} (recent {vol_trend}) | "
+                    f"up/down/flat days {up}/{down}/{flat} | 3mo hi {hi:.1f} lo {lo:.1f}, now {pos}% of range")
             except Exception:
                 continue
     except Exception as e:
-        logger.warning(f"prev-day candle context failed: {e}")
-    return "\n".join(lines) if lines else "No candle context available."
+        logger.warning(f"3-month 5-min market context failed: {e}")
+    return "\n".join(lines) if lines else "No market context available."
 
 async def run_nightly_learning(state, user_id: int):
     """
@@ -167,9 +198,9 @@ async def run_nightly_learning(state, user_id: int):
         # REAL per-strategy performance from the executed-trades ledger (authoritative), not the
         # legacy swarm_agent_configs counters the old broken recorder left at 0.
         perf = await Database.get_strategy_performance(days=30)
-        # Previous-day candlestick context for the underlyings actually traded (shared across strats).
-        candle_context = await _build_prev_day_candle_context(user_id, days=5)
-        logger.info(f"🌙 Nightly learning: real perf for {len(perf)} strategies; candle context:\n{candle_context}")
+        # 3-month 5-minute chart context (stats) for the underlyings actually traded (shared).
+        candle_context = await _build_market_context(user_id, days=90)
+        logger.info(f"🌙 Nightly learning: real perf for {len(perf)} strategies; 3mo 5-min context:\n{candle_context}")
 
         for cfg in all_strategies:
             strat = cfg['strategy_name']
@@ -220,10 +251,11 @@ async def run_nightly_learning(state, user_id: int):
             Strategy: '{strat}', recent market regime: '{market_regime}'.
             Real performance over the last 30 days (from the executed-trades ledger):
               - trades: {total}, win rate: {win_rate}%, total P&L: ₹{total_pnl:.0f}, avg P&L/trade: ₹{avg_pnl:.0f}.
-            Previous days' DAILY candles for the underlyings this strategy traded:
+            3-MONTH 5-MINUTE chart statistics for the underlyings this strategy traded (trend,
+            volatility, daily range, up/down day mix, position in range):
             {candle_context}
 
-            Using the win rate, the P&L, and the candlestick structure above, suggest optimized
+            Using the win rate, the P&L, and the 3-month 5-minute market structure above, suggest optimized
             hyperparameters for tomorrow to improve profitability (fewer losses is preferred over more
             wins). Return ONLY a valid JSON object with parameters like 'ema_period',
             'breakout_threshold', 'stop_loss_pct'. Example: {{"ema_period": 10, "stop_loss_pct": 0.5}}

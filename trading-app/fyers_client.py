@@ -907,6 +907,68 @@ class FyersClient:
             print(f"Historical data error: {e}")
             return _stale()
 
+    def get_history_range(self, symbol: str, resolution: str, days_back: int = 90) -> List[Dict]:
+        """Fetch a LONG span of history (e.g. 3 months of 5-min) for offline/nightly analysis.
+        Differs from get_historical in two deliberate ways:
+          1. It does NOT share the live-analysis _hist_cache (whose key ignores days_back and only
+             ever holds the recent short span) — so a 90-day pull isn't silently served the 4-day
+             cached data.
+          2. It CHUNKS the range into <=30-day windows, because Fyers truncates/limits intraday
+             history spans; concatenating windows yields the full 3 months.
+        Cached ~6h under a span-specific key (nightly job may touch several symbols). Best-effort:
+        returns whatever it gathered (sorted, de-duplicated by timestamp)."""
+        import time as _t
+        _now = _t.time()
+        _ck = f"{symbol}:{resolution}:range{days_back}"
+        if not hasattr(self, '_hist_range_cache'):
+            self._hist_range_cache = {}
+        _c = self._hist_range_cache.get(_ck)
+        if _c and (_now - _c['ts'] < 6 * 3600) and _c['data']:
+            return _c['data']
+        if self._check_cooldown():
+            return _c['data'] if _c else []
+        client = self._get_active_client()
+        if not client:
+            return _c['data'] if _c else []
+        out, seen = [], set()
+        try:
+            cursor_end = datetime.now(IST)
+            remaining = days_back
+            while remaining > 0:
+                span = min(30, remaining)
+                start = cursor_end - timedelta(days=span)
+                data = {
+                    "symbol": symbol, "resolution": resolution, "date_format": "1",
+                    "range_from": start.strftime("%Y-%m-%d"),
+                    "range_to": cursor_end.strftime("%Y-%m-%d"),
+                }
+                if "-FUT" in symbol:
+                    data["cont_flag"] = "1"
+                try:
+                    resp = client.history(data)
+                except Exception as _e:
+                    logger.warning(f"get_history_range chunk error {symbol}: {_e}")
+                    break
+                if isinstance(resp, dict) and resp.get("code") == 200:
+                    for c in resp.get("candles", []):
+                        ts = int(c[0])
+                        if ts in seen:
+                            continue
+                        seen.add(ts)
+                        out.append({"timestamp": ts, "open": float(c[1]), "high": float(c[2]),
+                                    "low": float(c[3]), "close": float(c[4]), "volume": int(c[5])})
+                elif isinstance(resp, dict) and resp.get("code") in (-429, 429):
+                    self._trigger_cooldown()
+                    break
+                cursor_end = start
+                remaining -= span
+            out.sort(key=lambda x: x["timestamp"])
+            if out:
+                self._hist_range_cache[_ck] = {'data': out, 'ts': _now}
+        except Exception as e:
+            logger.warning(f"get_history_range failed for {symbol}: {e}")
+        return out
+
     def resolve_active_commodity_contract(self, prefix: str, max_months_ahead: int = 4) -> str:
         """Nearest TRADEABLE MCX/CDS future for a commodity prefix (e.g. 'MCX:CRUDEOIL'),
         validated against the history API and cached ~2h.
