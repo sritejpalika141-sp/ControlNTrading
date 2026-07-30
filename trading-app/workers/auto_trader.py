@@ -1985,7 +1985,7 @@ async def automation_loop():
             async def run_strat_11():
                 if _strat_enabled_for(state, "Strategy 11: FRVP LVN Vacuum", symbol) and spot and candles_5m:
                     from engine.strategy_11_frvp import evaluate_frvp_strategy
-                    sig = await evaluate_frvp_strategy(client, state, symbol, candles_5m, vix=15.0)
+                    sig = await evaluate_frvp_strategy(client, state, symbol, candles_5m, candles_1m=candles_1m, vix=15.0)
                     if sig and state.can_trade("Strategy 11: FRVP LVN Vacuum", signal_type=sig.get("type", "CALL"), symbol=symbol)[0]:
                         await risk_orchestrator.propose_trade("Strategy 11: FRVP LVN Vacuum", symbol, sig, {"trend": sig.get("direction", "NEUTRAL")}, client, state)
 
