@@ -333,6 +333,41 @@ class Database:
             pnl_losers TEXT
         )''')
 
+        # Executed-trade ledger (added 30-07-26). The AUTHORITATIVE record of EVERY executed trade,
+        # win or loss. A row is written at ENTRY (status OPEN) with full context (strategy, entry
+        # price, SL, regime/trend) and UPDATED at EXIT (status CLOSED) with exit price, pnl and
+        # WIN/LOSS outcome. Recording at entry is what makes this reliable — the old close-time-only
+        # recorder dropped trades whose strategy context was already gone by close (0 rows / 0 pnl).
+        # This is the table the self-improvement / nightly-learning reads real win-rates from.
+        c.execute('''CREATE TABLE IF NOT EXISTS executed_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            strategy_name TEXT,
+            symbol TEXT NOT NULL,
+            underlying TEXT,
+            side TEXT,
+            qty INTEGER,
+            entry_price REAL,
+            entry_time TEXT,
+            sl_points REAL,
+            sl_method TEXT,
+            target_points REAL,
+            product TEXT,
+            regime TEXT,
+            trend TEXT,
+            entry_order_id TEXT,
+            status TEXT DEFAULT 'OPEN',
+            exit_price REAL,
+            exit_time TEXT,
+            pnl REAL,
+            outcome TEXT,
+            exit_reason TEXT,
+            trade_date TEXT
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_date ON executed_trades(trade_date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_openkey ON executed_trades(symbol, status)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_exec_trades_strat ON executed_trades(strategy_name, trade_date)")
+
         # First-run admin setup — NO hardcoded default credential (Phase 1 Item C1).
         # Only create the admin from an explicit INITIAL_ADMIN_PASSWORD env var; never fall
         # back to a guessable default. On the existing live DB this is a no-op (admin exists).
@@ -902,6 +937,118 @@ class Database:
             pending_config_json=pending_config_json, is_paper_trading=is_paper_trading,
             continuous_losses=continuous_losses, asset_class=asset_class
         )
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Executed-trade ledger (authoritative, entry+exit). Reliable because a row is
+    # written at ENTRY with full context, then completed at EXIT. Win-rates are
+    # computed on-demand FROM this ledger (get_strategy_performance), so there is no
+    # incremental counter to drift or double-count.
+    # ─────────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    async def record_trade_entry(user_id: int, strategy_name: str, symbol: str, underlying: str,
+                                 side: str, qty: int, entry_price: float, entry_time: str,
+                                 sl_points: float, sl_method: str, target_points: float,
+                                 product: str, regime: str, trend: str, entry_order_id: str,
+                                 trade_date: str) -> int:
+        """Write an OPEN row the moment an order is placed. Best-effort — callers must wrap so a DB
+        failure never affects execution. Returns the new row id (0 on failure)."""
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                cur = await conn.execute("""
+                    INSERT INTO executed_trades
+                      (user_id, strategy_name, symbol, underlying, side, qty, entry_price, entry_time,
+                       sl_points, sl_method, target_points, product, regime, trend, entry_order_id,
+                       status, trade_date)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'OPEN', ?)
+                """, (user_id, strategy_name, symbol, underlying, side, int(qty or 0),
+                      float(entry_price or 0), entry_time, float(sl_points or 0), sl_method,
+                      float(target_points or 0), product, regime, trend, entry_order_id, trade_date))
+                await conn.commit()
+                return cur.lastrowid or 0
+        except Exception as e:
+            logger.warning(f"record_trade_entry failed for {symbol}: {e}")
+            return 0
+
+    @staticmethod
+    async def record_trade_exit(symbol: str, exit_price: float, pnl: float, exit_reason: str = "",
+                                user_id: int = None) -> bool:
+        """Complete the most-recent OPEN row for `symbol` (win or loss). Matches by symbol (+user_id
+        if given). Outcome = WIN if pnl>0, LOSS if pnl<0, else BREAKEVEN. Idempotent-ish: only OPEN
+        rows are updated, so a duplicate exit call is a no-op. Best-effort."""
+        try:
+            outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+            exit_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                where_user = "AND user_id = ?" if user_id is not None else ""
+                params = [symbol] + ([user_id] if user_id is not None else [])
+                async with conn.execute(
+                    f"SELECT id FROM executed_trades WHERE symbol = ? AND status = 'OPEN' {where_user} "
+                    f"ORDER BY id DESC LIMIT 1", params) as cur:
+                    row = await cur.fetchone()
+                if not row:
+                    return False
+                await conn.execute("""
+                    UPDATE executed_trades
+                       SET status='CLOSED', exit_price=?, exit_time=?, pnl=?, outcome=?, exit_reason=?
+                     WHERE id=?
+                """, (float(exit_price or 0), exit_time, float(pnl or 0), outcome, exit_reason, row[0]))
+                await conn.commit()
+                return True
+        except Exception as e:
+            logger.warning(f"record_trade_exit failed for {symbol}: {e}")
+            return False
+
+    @staticmethod
+    async def get_strategy_performance(days: int = 30):
+        """Real per-strategy stats computed FROM the executed-trade ledger (CLOSED rows only).
+        Returns {strategy_name: {trades, wins, losses, win_rate, total_pnl, avg_pnl}}."""
+        import datetime as _dt
+        cutoff = (datetime.now(IST) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        out = {}
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                async with conn.execute("""
+                    SELECT strategy_name,
+                           COUNT(*) AS trades,
+                           SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses,
+                           COALESCE(SUM(pnl), 0) AS total_pnl
+                      FROM executed_trades
+                     WHERE status='CLOSED' AND trade_date >= ?
+                     GROUP BY strategy_name
+                """, (cutoff,)) as cur:
+                    async for r in cur:
+                        strat, trades, wins, losses, total_pnl = r
+                        trades = int(trades or 0); wins = int(wins or 0)
+                        out[strat] = {
+                            "trades": trades, "wins": wins, "losses": int(losses or 0),
+                            "win_rate": round(wins / trades * 100, 1) if trades else 0.0,
+                            "total_pnl": round(float(total_pnl or 0), 2),
+                            "avg_pnl": round(float(total_pnl or 0) / trades, 2) if trades else 0.0,
+                        }
+        except Exception as e:
+            logger.warning(f"get_strategy_performance failed: {e}")
+        return out
+
+    @staticmethod
+    async def get_executed_trades(days: int = 7, strategy_name: str = None, limit: int = 500):
+        """Raw executed-trade rows (newest first) for analysis / dashboards."""
+        import datetime as _dt
+        cutoff = (datetime.now(IST) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = []
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                conn.row_factory = aiosqlite.Row
+                q = "SELECT * FROM executed_trades WHERE trade_date >= ?"
+                params = [cutoff]
+                if strategy_name:
+                    q += " AND strategy_name = ?"; params.append(strategy_name)
+                q += " ORDER BY id DESC LIMIT ?"; params.append(limit)
+                async with conn.execute(q, params) as cur:
+                    rows = [dict(r) async for r in cur]
+        except Exception as e:
+            logger.warning(f"get_executed_trades failed: {e}")
+        return rows
 
     @staticmethod
     async def get_strategy_trade_records(strategy_name: str, limit: int = 100):

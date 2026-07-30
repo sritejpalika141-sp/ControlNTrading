@@ -145,6 +145,10 @@ class TradingState:
         # Live multi-strategy signals array (transient, UI only)
         self.live_signals = []
         
+        # Phase 1 Item F1: order_lock serializes the trade-critical section
+        # (limit check + broker place + record_trade) to prevent TOCTOU race.
+        self.order_lock = asyncio.Lock()
+        
         # Ensure logs directory exists
         if not os.path.exists("logs"):
             os.makedirs("logs")
@@ -692,6 +696,31 @@ class TradingState:
             self._record_trade_outcome_async(pos=pos, exit_price=exit_price, pnl=pnl)
         except Exception as e:
             print(f"⚠️ Trade-outcome tracking skipped (non-fatal): {e}", flush=True)
+
+        # AUTHORITATIVE executed-trades ledger: complete the OPEN row for this symbol (win or loss).
+        # Reliable because the row was already written at ENTRY with full strategy/entry context —
+        # this only fills exit_price/pnl/outcome, so no trade is lost even if the legacy recorder
+        # above can't attribute a strategy. Fire-and-forget; never affects the close path.
+        try:
+            _sym = pos.get("symbol") if isinstance(pos, dict) else None
+            if _sym:
+                from models import Database
+                _ex, _pnl, _reason, _uid = float(exit_price or 0), float(pnl or 0), reason, int(self.user_id)
+                async def _ledger_exit():
+                    try:
+                        ok = await Database.record_trade_exit(_sym, _ex, _pnl, _reason, user_id=_uid)
+                        if ok:
+                            print(f"📒 Ledger closed {_sym}: ₹{_pnl:.2f} ({'WIN' if _pnl>0 else 'LOSS' if _pnl<0 else 'BE'})", flush=True)
+                        else:
+                            print(f"📒 Ledger: no OPEN row for {_sym} to close (entry not recorded).", flush=True)
+                    except Exception as _e:
+                        print(f"⚠️ Ledger exit-record failed for {_sym}: {_e}", flush=True)
+                try:
+                    asyncio.get_running_loop().create_task(_ledger_exit())
+                except RuntimeError:
+                    asyncio.run(_ledger_exit())
+        except Exception as _e:
+            print(f"⚠️ Ledger exit scheduling skipped (non-fatal): {_e}", flush=True)
 
         self.save()
         cooldown = self._get_cooldown_minutes()

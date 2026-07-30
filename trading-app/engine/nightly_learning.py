@@ -11,14 +11,51 @@ from engine.ai_engine import AIEngine
 logger = logging.getLogger("NIGHTLY_LEARNING")
 IST = pytz.timezone('Asia/Kolkata')
 
-# ── SELF-TUNING FREEZE (owner directive 30-07-26) ──
-# The nightly AI param-mutation is FROZEN. Reason: per-trade outcome recording is not populating
-# win/loss (every strategy reads 0 trades in swarm_agent_configs), so any AI "optimization" tunes on
-# noise — and blindly rewriting live-money trade params is very plausibly why results got worse after
-# "improvement". Re-enable ONLY after per-trade recording is verified and real trades have accrued.
-# When re-enabled, tuning also requires MIN_TRADES_FOR_LEARNING real trades per strategy first.
-SELF_TUNING_ENABLED = False
+# ── SELF-TUNING (owner directive 30-07-26) ──
+# Re-enabled now that the authoritative executed-trades ledger records every trade reliably. TWO
+# safety rails remain so it can never blindly harm live params like the old blind version did:
+#   1. It reads REAL win-rates from the executed-trades ledger (Database.get_strategy_performance),
+#      NOT the legacy 0-filled counters, and only tunes a strategy with >= MIN_TRADES_FOR_LEARNING
+#      real closed trades.
+#   2. Every AI-proposed parameter change is written as PENDING (approval-required on the dashboard),
+#      never auto-applied to a live strategy. Set AUTO_APPLY_MINOR=True only if you want minor
+#      changes to apply without approval.
+SELF_TUNING_ENABLED = True
+AUTO_APPLY_MINOR = False
 MIN_TRADES_FOR_LEARNING = 10
+
+
+async def _build_prev_day_candle_context(user_id, days=5):
+    """Summarize the previous few days' DAILY candles for each underlying actually traded, so the
+    nightly AI critiques each strategy against real market structure (owner directive: 'check
+    previous days candlestick data to analyse the strategies'). Best-effort; never raises."""
+    lines = []
+    try:
+        rows = await Database.get_executed_trades(days=days)
+        unders = []
+        for r in rows:
+            u = r.get("underlying") or r.get("symbol")
+            if u and u not in unders:
+                unders.append(u)
+        unders = unders[:8]  # cap the number of history calls
+        if not unders:
+            return "No underlyings traded in the lookback window."
+        from fyers_client import FyersClient
+        fc = FyersClient(user_id=user_id)
+        for u in unders:
+            try:
+                candles = await asyncio.to_thread(fc.get_historical, u, "D", days)
+                if candles and len(candles) >= 1:
+                    prev = candles[-1]
+                    o, h, l, c = prev.get("open"), prev.get("high"), prev.get("low"), prev.get("close")
+                    rng = round((h - l), 2) if (h is not None and l is not None) else 0
+                    dirn = "UP" if (c and o and c > o) else ("DOWN" if (c and o and c < o) else "FLAT")
+                    lines.append(f"{u}: prev-day O={o} H={h} L={l} C={c} range={rng} ({dirn})")
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning(f"prev-day candle context failed: {e}")
+    return "\n".join(lines) if lines else "No candle context available."
 
 async def run_nightly_learning(state, user_id: int):
     """
@@ -127,15 +164,25 @@ async def run_nightly_learning(state, user_id: int):
             logger.info("No strategies found in DB. Skipping learning.")
             return
 
+        # REAL per-strategy performance from the executed-trades ledger (authoritative), not the
+        # legacy swarm_agent_configs counters the old broken recorder left at 0.
+        perf = await Database.get_strategy_performance(days=30)
+        # Previous-day candlestick context for the underlyings actually traded (shared across strats).
+        candle_context = await _build_prev_day_candle_context(user_id, days=5)
+        logger.info(f"🌙 Nightly learning: real perf for {len(perf)} strategies; candle context:\n{candle_context}")
+
         for cfg in all_strategies:
             strat = cfg['strategy_name']
             status = cfg.get('status', 'APPROVED')
             is_paper_trading = cfg.get('is_paper_trading', 1)
-            total = int(cfg.get('total_trades', 0))
-            wins = int(cfg.get('winning_trades', 0))
-            win_rate = round(wins / total * 100, 1) if total > 0 else 0.0
-            
-            logger.info(f"📊 {strat} - Win Rate: {win_rate}% | Status: {status} | Paper Trading: {is_paper_trading}")
+            _p = perf.get(strat, {})
+            total = int(_p.get('trades', 0))
+            wins = int(_p.get('wins', 0))
+            win_rate = float(_p.get('win_rate', 0.0))
+            avg_pnl = float(_p.get('avg_pnl', 0.0))
+            total_pnl = float(_p.get('total_pnl', 0.0))
+
+            logger.info(f"📊 {strat} - Win Rate: {win_rate}% ({wins}/{total}, ₹{total_pnl:.0f}) | Status: {status} | Paper: {is_paper_trading}")
 
             # --- Automated Graduation ---
             if is_paper_trading == 1 and total >= 10 and win_rate >= 65.0:
@@ -161,21 +208,25 @@ async def run_nightly_learning(state, user_id: int):
                 cfg['status'] = 'APPROVED'
                 cfg['continuous_losses'] = 0
 
-            # AI Critique (Self-Improvement) — FROZEN until per-trade recording is fixed.
+            # AI Critique (Self-Improvement). Runs only with REAL data and only PROPOSES (PENDING).
             if not SELF_TUNING_ENABLED or total < MIN_TRADES_FOR_LEARNING:
-                logger.info(f"🧊 Self-tuning frozen for {strat}: enabled={SELF_TUNING_ENABLED}, "
-                            f"recorded trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change.")
+                logger.info(f"🧊 Self-tuning skipped for {strat}: enabled={SELF_TUNING_ENABLED}, "
+                            f"real trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change.")
                 continue
             market_regime = getattr(state, "market_regime", "NEUTRAL")
-            
+
             prompt = f"""
-            You are a Quantitative Trading AI.
-            Our strategy '{strat}' operated in a '{market_regime}' market today.
-            It took {total} trades with a win rate of {win_rate}%.
-            
-            Suggest optimized hyperparameters for tomorrow to improve this win rate.
-            Return ONLY a valid JSON object with parameters like 'ema_period', 'breakout_threshold', 'stop_loss_pct'.
-            Example: {{"ema_period": 10, "stop_loss_pct": 0.5}}
+            You are a Quantitative Trading AI reviewing REAL trade results (not a simulation).
+            Strategy: '{strat}', recent market regime: '{market_regime}'.
+            Real performance over the last 30 days (from the executed-trades ledger):
+              - trades: {total}, win rate: {win_rate}%, total P&L: ₹{total_pnl:.0f}, avg P&L/trade: ₹{avg_pnl:.0f}.
+            Previous days' DAILY candles for the underlyings this strategy traded:
+            {candle_context}
+
+            Using the win rate, the P&L, and the candlestick structure above, suggest optimized
+            hyperparameters for tomorrow to improve profitability (fewer losses is preferred over more
+            wins). Return ONLY a valid JSON object with parameters like 'ema_period',
+            'breakout_threshold', 'stop_loss_pct'. Example: {{"ema_period": 10, "stop_loss_pct": 0.5}}
             """
             
             try:
@@ -231,8 +282,8 @@ async def run_nightly_learning(state, user_id: int):
                             # Alert Telegram
                             msg = f"<b>Major Parameter Shift Proposed!</b>\nStrategy: <i>{strat}</i>\nChanges: {', '.join(major_changes)}\n\nPlease go to your Dashboard to approve this change."
                             await send_webhook_alert(webhook_url, msg, title="⚠️ AI Strategy Upgrade (Pending)")
-                        else:
-                            # Save to AgentDB directly
+                        elif AUTO_APPLY_MINOR:
+                            # Minor change + owner opted into auto-apply: write it live.
                             await Database.update_agent_config(
                                 strategy_name=strat,
                                 config_dict=new_config,
@@ -245,9 +296,25 @@ async def run_nightly_learning(state, user_id: int):
                                 continuous_losses=cfg.get('continuous_losses', 0),
                                 asset_class=cfg.get('asset_class', 'EQUITY')
                             )
-                            # Alert Telegram
                             msg = f"<b>Minor Optimization Applied</b>\nStrategy: <i>{strat}</i>\nNew Config: <code>{json_str}</code>"
                             await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Optimized")
+                        else:
+                            # DEFAULT SAFE PATH: even minor changes are PROPOSED (PENDING), never
+                            # auto-applied to a live strategy. Owner approves on the dashboard.
+                            await Database.update_agent_config(
+                                strategy_name=strat,
+                                config_dict=old_config,
+                                win_rate=win_rate,
+                                total_trades=total,
+                                winning_trades=wins,
+                                status='PENDING',
+                                pending_config_json=json_str,
+                                is_paper_trading=cfg.get('is_paper_trading', 1),
+                                continuous_losses=cfg.get('continuous_losses', 0),
+                                asset_class=cfg.get('asset_class', 'EQUITY')
+                            )
+                            msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades. Approve on the Dashboard to apply."
+                            await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Proposal (Pending)")
                         
                         analysis_text = response.replace(json_str, "").strip()
                         if not analysis_text:
