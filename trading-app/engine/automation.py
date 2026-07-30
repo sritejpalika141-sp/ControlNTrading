@@ -101,7 +101,7 @@ class TradingState:
         self.paper_positions = []
         self.paper_orders = []
         self.paper_funds = {"availableBalance": 1000000.0, "realizedPnl": 0.0}
-        self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper"]
+        self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"]
         # SEPARATE commodity strategy family (MCX only) — AI-tuned for commodity behaviour (higher
         # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
         # independent of the equity strategies above, so tuning one never affects the other.
@@ -209,7 +209,7 @@ class TradingState:
                         self.paper_positions = data.get("paper_positions", [])
                         self.paper_orders = data.get("paper_orders", [])
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
-                        self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper"])
+                        self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"])
                         self.commodity_strategies = data.get("commodity_strategies", ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"])
                         self.commodity_params = data.get("commodity_params", {"sl_multiplier": 1.75, "target_multiplier": 1.75, "breakout_buffer_mult": 1.5})
                         self.strat_orb_triggered = data.get("strat_orb_triggered", False)

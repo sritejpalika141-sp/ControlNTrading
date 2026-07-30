@@ -199,6 +199,16 @@ async def lifespan(app):
     asyncio.create_task(ai_oracle_scheduler())
     asyncio.create_task(ws_connection_monitor())
 
+    # ── Specialist AI Swarm Subagents ──
+    from workers.microstructure_worker import microstructure_worker
+    from workers.mtf_aligner_worker import mtf_aligner_worker
+    from workers.drawdown_sentinel_worker import drawdown_sentinel_worker
+    from workers.hindsight_optimizer_worker import hindsight_optimizer_worker
+    asyncio.create_task(microstructure_worker.run())
+    asyncio.create_task(mtf_aligner_worker.run())
+    asyncio.create_task(drawdown_sentinel_worker.run())
+    asyncio.create_task(hindsight_optimizer_worker.run())
+
     from engine.symbol_master import symbol_master
     asyncio.create_task(symbol_master.initialize())
 
@@ -3232,21 +3242,27 @@ async def get_all_strategies(request: Request):
     """Fetch all strategies dynamically for UI selection."""
     from models import Database
     configs = await Database.get_all_agent_configs()
-    # If empty, return defaults
+    default_strats = [
+        "Strategy 1: OB + FVG",
+        "Strategy 2: 9:26 - 180 Buy",
+        "Strategy 3: 5-Minute ORB",
+        "Strategy 4: Wisdom-Aligned Pullback",
+        "Strategy 5: Optimized Aerospace Mean Reversion",
+        "Strategy 6: Gap Fill Reversal",
+        "Strategy 7: Swing-Pivot Breakout",
+        "Strategy 8: Smart Money Concepts",
+        "Strategy 9: 9-EMA Momentum Scalper",
+        "Strategy 10: Adaptive ADX Engine",
+        "Strategy 11: FRVP LVN Vacuum"
+    ]
     if not configs:
-        return [
-            "Strategy 1: OB + FVG",
-            "Strategy 2: 9:26 - 180 Buy",
-            "Strategy 3: 5-Minute ORB",
-            "Strategy 4: Wisdom-Aligned Pullback",
-            "Strategy 5: Optimized Aerospace Mean Reversion",
-            "Strategy 6: Gap Fill Reversal",
-            "Strategy 7: Swing-Pivot Breakout",
-            "Strategy 8: Smart Money Concepts",
-            "Strategy 9: 9-EMA Momentum Scalper",
-            "Strategy 10: Adaptive ADX Engine"
-        ]
-    return [c['strategy_name'] for c in configs]
+        return default_strats
+    
+    db_strats = [c['strategy_name'] for c in configs]
+    for s in default_strats:
+        if s not in db_strats:
+            db_strats.append(s)
+    return db_strats
 
 @app.post("/api/trading-config")
 async def update_trading_config(request: Request):
