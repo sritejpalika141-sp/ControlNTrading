@@ -925,17 +925,17 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
     Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from the
     buy price — but NEVER tighter than a floor, so a quiet minute can't produce an instant stop-out.
 
-    Rule (per owner directive 24/25-07-26):
-      1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
-      2. If that distance is comfortably wide (>= 10 pts), use it as-is (strict_3_candle_low).
-      3. Otherwise the swing low is too tight (a real problem seen live: a ₹4 stop on a ₹371 option
-         that was hit 2 seconds after entry) — floor it: take the WIDER of the swing low and a
-         DETERMINISTIC volatility floor = the ATR (average high-low range) of the option's last few
-         1-min candles, clamped to [10, 20]. NO AI in the order path — free-tier AI is chronically
-         rate-limited and an AI call would stall order placement; the ATR floor is instant and
-         adapts to the option's own noise, so it achieves the same "no instant stop-out" goal.
-      HARD CAP: the stop is NEVER wider than 20 points (and never wider than 40% of premium for a
-      very cheap option, to stay inside the Fyers CO SL band). So max risk per trade = 20 pts.
+    Rule (per owner directive 24/25-07-26, floor restored 30-07-26 after a regression stripped it):
+      1. Compute the 3-candle swing-low distance = entry - min(low of last 3 one-min candles). This
+         remains the PRIMARY stop.
+      2. Floor it so a quiet minute can't produce an instant stop-out (the live bug: 1.2–5.6 pt stops
+         hit within a minute). Floor = the WIDER of 1.5× the option's avg 1-min range and 12% of the
+         entry premium, min 2.0. The swing low is used whenever it is wider than this floor; the floor
+         only kicks in when the swing is dangerously tight. NO AI in the order path.
+      3. PREMIUM RISK CAP: never wider than 45% of premium (bounds a single trade's loss, keeps the
+         stop above zero).
+      Per-trade RUPEE risk is bounded separately by the caller (execute_auto_trade skips a trade whose
+      sl_points × qty exceeds the per-trade risk budget).
       In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
       absolute price, never a stop at/above entry.
     """
@@ -956,26 +956,51 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
     try:
-        # ── 3-candle swing low on the 1-min OPTION chart ──
+        # ── 3-candle swing low on the 1-min OPTION chart (PRIMARY — owner directive) ──
         # 2 days of history so a freshly-ATM / thin strike still yields >=3 candles.
         swing = 0.0
+        atr = 0.0
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
         if candles and len(candles) >= 3:
             lowest_low = min(c["low"] for c in candles[-3:])
             d = round(entry_ltp - lowest_low, 2)  # subtracted from the buy price
             if d > 0:
                 swing = d
+            # Volatility gauge = average 1-min high-low range of the last 5 candles. Used ONLY
+            # as a floor so a quiet-minute swing low can't produce an instant stop-out.
+            recent = candles[-5:]
+            if recent:
+                atr = sum((c["high"] - c["low"]) for c in recent) / len(recent)
 
+        # VOLATILITY / PREMIUM FLOOR (the fix for instant stop-outs). The stop must be at least
+        # wide enough to survive one noisy minute. Floor = the WIDER of:
+        #   • 1.5× the option's own average 1-min range (adapts to real volatility), and
+        #   • 12% of the entry premium (scales with price: big for a ₹365 option, small for a ₹15 one),
+        # never below 2.0 absolute. Without this floor a 1.2–5.6 pt swing-low stop was getting hit on
+        # normal noise within a minute — the primary cause of the daily bleed.
+        vol_floor = max(round(atr * 1.5, 2), round(entry_ltp * 0.12, 2), 2.0)
+
+        # Keep the 3-candle swing low as the PRIMARY stop, but NEVER tighter than the floor.
         if swing > 0:
-            logger.info(f"📊 3-CANDLE OPTION SL: distance={swing} (stop = entry {entry_ltp} - {swing})")
-            return _pkg(swing, "strict_3_candle_low")
+            sl = max(swing, vol_floor)
+            method = "strict_3_candle_low" if sl == swing else "swing_low_vol_floored"
         else:
-            logger.warning(f"⚠️ Swing low distance <= 0 ({swing}), falling back to 5.0 pt default.")
-            return _pkg(5.0, "fallback_flat_swing")
+            sl = vol_floor
+            method = "vol_floor_no_swing"
+
+        # PREMIUM RISK CAP: never risk more than 45% of the premium on one option (bounds the loss
+        # and keeps the stop above zero). Only binds when the floor/swing is unusually wide.
+        if entry_ltp > 0:
+            sl = min(sl, round(entry_ltp * 0.45, 2))
+
+        logger.info(f"📊 SL {strike_symbol}: swing={swing} atr={atr:.1f} floor={vol_floor:.1f} → {sl:.1f} pts "
+                    f"(entry {entry_ltp}) [{method}]")
+        return _pkg(sl, method)
 
     except Exception as e:
         logger.error(f"Smart SL calculation error: {e}")
-        return _pkg(5.0, "error_fallback")
+        # Even the error path must not be instant-stopout tight: floor at 12% of premium.
+        return _pkg(max(round(entry_ltp * 0.12, 2), 5.0), "error_fallback")
 
 
 async def _recover_closed_pnl(client, sym):
@@ -1034,6 +1059,31 @@ async def _affordable_to_place(client, strike_symbol, qty, side, product_type, e
     except Exception as e:
         logger.warning(f"Final affordability check failed for {strike_symbol}: {e}")
         return True, 0.0, 0.0
+
+
+def _passes_quality_gate(strike_symbol, entry_price, sl_points, qty, state):
+    """Pre-trade quality/risk gate (owner directive 30-07-26 — stop the daily bleed). Returns
+    (ok: bool, reason: str). Two checks:
+      1. JUNK FILTER — reject near-worthless deep-OTM options (premium < ₹5). These decay straight
+         to zero and were being over-traded (e.g. ICICIBANK ₹0.05 lottery tickets, 11 in 11 min).
+      2. PER-TRADE RUPEE RISK CAP — sl_points × qty must fit the budget (half the daily max-loss,
+         floor ₹500). A single stop-out can't blow a big hole, and trades whose safe stop is
+         unaffordable (big-lot crude) are SKIPPED rather than taken with a whipsaw-tight stop."""
+    try:
+        ep = float(entry_price or 0)
+    except (TypeError, ValueError):
+        ep = 0.0
+    if ep < 5.0:
+        return False, f"premium ₹{ep} < ₹5 floor (junk/deep-OTM)"
+    # Per-trade cap = 60% of the daily max-loss budget (floor ₹1000). One bad trade can't burn more
+    # than ~60% of the day, and instruments whose noise-surviving stop is unaffordable (big-lot crude)
+    # are skipped rather than taken with a whipsaw-tight stop. Scales with the user's max-loss setting,
+    # so raising that setting is the knob to allow larger-risk trades (e.g. crude).
+    max_risk = max(1000.0, float(getattr(state, "max_loss_per_day", 2500.0) or 2500.0) * 0.6)
+    risk = float(sl_points or 0) * float(qty or 0)
+    if risk > max_risk:
+        return False, f"risk ₹{risk:.0f} (SL {sl_points}pts × {qty}) > per-trade cap ₹{max_risk:.0f}"
+    return True, ""
 
 
 async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
@@ -1198,6 +1248,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             if side != "BUY":
                 logger.warning(f"⚠️ Options-buy-only guard: forced side to BUY (signal said {side}) for {strike_symbol}.")
                 side = "BUY"
+
+            # QUALITY / RISK GATE — block junk cheap options and cap per-trade rupee risk.
+            _qok, _qreason = _passes_quality_gate(strike_symbol, entry_price, sl_points, qty, state)
+            if not _qok:
+                logger.info(f"⏭️ Quality gate: skip {strike_symbol} — {_qreason}.")
+                await broadcast_log(f"⏭️ Skipped {strike_symbol}: {_qreason}.", "info", user_id=client.user_id)
+                return
 
             # FINAL BALANCE GATE — do not send if the broker can't afford this exact order.
             _ok, _req, _av = await _affordable_to_place(client, strike_symbol, qty, side, product_type, entry_price, sl_points)
@@ -1611,6 +1668,13 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
 
 
 
+        # QUALITY / RISK GATE — block junk cheap options and cap per-trade rupee risk.
+        _qok, _qreason = _passes_quality_gate(strike_symbol, entry_price, sl_points, qty, state)
+        if not _qok:
+            logger.info(f"⏭️ Quality gate: skip {strike_symbol} — {_qreason}.")
+            await broadcast_log(f"⏭️ Skipped {strike_symbol}: {_qreason}.", "info", user_id=client.user_id)
+            return
+
         # FINAL BALANCE GATE — do not send if the broker can't afford this exact order.
         _ok, _req, _av = await _affordable_to_place(client, strike_symbol, qty, "BUY", product_type, entry_price, sl_points)
         if not _ok:
@@ -1693,12 +1757,16 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 state.traded_strikes_today.append(strike_symbol)
                 state.save()
 
-            # CRITICAL: Warn if SL was not placed (margin shortfall, API error, etc.)
+            # CRITICAL: Warn if SL was not placed (margin shortfall, API error, etc.). Push to
+            # Telegram so the owner is pinged immediately to square off / attach a stop by hand —
+            # the catastrophic-loss seatbelt in trailing_monitor is the only automatic backstop for
+            # a naked trade, and it only fires at a large loss. (A safe automatic square-off needs an
+            # orderbook re-check first to avoid orphaning a real-but-uncaptured CO SL leg into a short.)
             if not result.get("sl_order_id"):
                 logger.error(f"🚨 CRITICAL: Trade placed WITHOUT Stop Loss! SL order failed for {strike_symbol}")
                 await broadcast_log(
-                    f"🚨 CRITICAL: Trade {strike_symbol} has NO STOP LOSS! Place SL manually immediately. Msg: {result.get('message', '')}",
-                    "error", user_id=client.user_id
+                    f"🚨 CRITICAL: Trade {strike_symbol} has NO STOP LOSS! Square off or place SL manually NOW. Msg: {result.get('message', '')}",
+                    "error", user_id=client.user_id, telegram_alert=True
                 )
         else:
             fail_msg = result.get('message', 'Unknown error')

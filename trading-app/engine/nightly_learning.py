@@ -11,6 +11,15 @@ from engine.ai_engine import AIEngine
 logger = logging.getLogger("NIGHTLY_LEARNING")
 IST = pytz.timezone('Asia/Kolkata')
 
+# ── SELF-TUNING FREEZE (owner directive 30-07-26) ──
+# The nightly AI param-mutation is FROZEN. Reason: per-trade outcome recording is not populating
+# win/loss (every strategy reads 0 trades in swarm_agent_configs), so any AI "optimization" tunes on
+# noise — and blindly rewriting live-money trade params is very plausibly why results got worse after
+# "improvement". Re-enable ONLY after per-trade recording is verified and real trades have accrued.
+# When re-enabled, tuning also requires MIN_TRADES_FOR_LEARNING real trades per strategy first.
+SELF_TUNING_ENABLED = False
+MIN_TRADES_FOR_LEARNING = 10
+
 async def run_nightly_learning(state, user_id: int):
     """
     Runs after market close.
@@ -152,7 +161,11 @@ async def run_nightly_learning(state, user_id: int):
                 cfg['status'] = 'APPROVED'
                 cfg['continuous_losses'] = 0
 
-            # AI Critique (Self-Improvement)
+            # AI Critique (Self-Improvement) — FROZEN until per-trade recording is fixed.
+            if not SELF_TUNING_ENABLED or total < MIN_TRADES_FOR_LEARNING:
+                logger.info(f"🧊 Self-tuning frozen for {strat}: enabled={SELF_TUNING_ENABLED}, "
+                            f"recorded trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change.")
+                continue
             market_regime = getattr(state, "market_regime", "NEUTRAL")
             
             prompt = f"""
@@ -261,7 +274,7 @@ async def run_nightly_learning(state, user_id: int):
         try:
             closed = getattr(state, "closed_trades_today", []) or []
             com_trades = [t for t in closed if str(t.get("symbol", "")).startswith(("MCX:", "CDS:"))]
-            if com_trades:
+            if com_trades and SELF_TUNING_ENABLED:
                 cur_params = getattr(state, "commodity_params", {})
                 wins = sum(1 for t in com_trades if t.get("result") == "profit" or (t.get("pnl", 0) or 0) > 0)
                 wr = round(wins / len(com_trades) * 100, 1)
