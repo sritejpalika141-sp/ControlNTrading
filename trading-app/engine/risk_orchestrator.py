@@ -137,7 +137,21 @@ class RiskOrchestrator:
                 logger.error(f"Failed to log orchestrator memory: {mem_err}")
         # ----------------------------------------
         
-        logger.info(f"🏆 Orchestrator selected {winning_sig['strategy_name']} (Win Rate: {winning_sig['win_rate']:.1f}%, Trades: {winning_sig.get('total_trades', 0)}) instantly out of {len(valid_signals)} signals.")
+        # Dynamic Fractional Kelly Position Sizing Multiplier
+        def _calculate_kelly_multiplier(w_rate: float, t_trades: int) -> float:
+            if t_trades < 5 or w_rate <= 0:
+                return 1.0  # Base size during warm-up
+            w = w_rate / 100.0
+            r_ratio = 1.5  # Typical 1:1.5 Risk:Reward target
+            kelly = w - ((1.0 - w) / r_ratio)
+            # Half-Kelly multiplier for risk safety, clamped between 0.5x and 1.5x
+            half_kelly = 0.5 * max(0.2, kelly)
+            multiplier = max(0.5, min(1.5, round(half_kelly * 2.0, 2)))
+            return multiplier
+
+        winning_sig['lot_multiplier'] = _calculate_kelly_multiplier(winning_sig['win_rate'], winning_sig.get('total_trades', 0))
+
+        logger.info(f"🏆 Orchestrator selected {winning_sig['strategy_name']} (Win Rate: {winning_sig['win_rate']:.1f}%, Kelly Lot Multiplier: {winning_sig['lot_multiplier']}x) out of {len(valid_signals)} signals.")
         
         # Execute the winning trade
         try:

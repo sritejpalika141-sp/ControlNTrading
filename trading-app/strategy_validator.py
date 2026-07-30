@@ -152,7 +152,10 @@ async def _replay(fn, c5, c1):
     return sigs, errors
 
 
-def _simulate(sigs, c1):
+DEFAULT_SLIPPAGE_PTS = 2.0  # Slippage & impact cost penalty per trade
+
+
+def _simulate(sigs, c1, slippage_pts=DEFAULT_SLIPPAGE_PTS):
     out, busy = [], -1
     for s in sigs:
         if s["i"] <= busy:
@@ -174,12 +177,14 @@ def _simulate(sigs, c1):
                 pnl = -risk
                 break
         if pnl is not None:
-            out.append(pnl)
+            # Deduct slippage / impact cost penalty from trade PnL
+            adjusted_pnl = pnl - slippage_pts
+            out.append(adjusted_pnl)
     return out
 
 
-def validate_strategy(path):
-    """Backtest a candidate and return {verdict, metrics, reasons}."""
+def validate_strategy(path, slippage_pts=DEFAULT_SLIPPAGE_PTS):
+    """Backtest a candidate with 70/30 Walk-Forward OOS split & Slippage Stress Test."""
     result = {"file": os.path.basename(path), "verdict": "FAIL", "reasons": [], "metrics": {}}
     if not os.path.exists(DATA_FILE):
         result["reasons"].append("no bt_data.json history available")
@@ -195,9 +200,22 @@ def validate_strategy(path):
     c1 = sorted(d["c1"], key=lambda x: x["timestamp"])
 
     sigs, errors = asyncio.run(_replay(fn, c5, c1))
-    pnls = _simulate(sigs, c1)
+    pnls = _simulate(sigs, c1, slippage_pts=slippage_pts)
     n = len(pnls)
-    days = len({_ist(b["timestamp"]).strftime("%Y-%m-%d") for b in c1})
+    unique_days = sorted(list({_ist(b["timestamp"]).strftime("%Y-%m-%d") for b in c1}))
+    days = len(unique_days)
+
+    # ── Walk-Forward 70/30 In-Sample / Out-of-Sample Split ──
+    split_idx = int(len(sigs) * 0.7)
+    in_sample_sigs = sigs[:split_idx]
+    oos_sigs = sigs[split_idx:]
+
+    in_sample_pnls = _simulate(in_sample_sigs, c1, slippage_pts=slippage_pts)
+    oos_pnls = _simulate(oos_sigs, c1, slippage_pts=slippage_pts)
+
+    exp_is = (sum(in_sample_pnls) / len(in_sample_pnls)) if in_sample_pnls else 0.0
+    exp_oos = (sum(oos_pnls) / len(oos_pnls)) if oos_pnls else 0.0
+
     wins = sum(1 for p in pnls if p > 0)
     total = sum(pnls)
     exp = (total / n) if n else 0.0
@@ -213,14 +231,17 @@ def validate_strategy(path):
         "function": fname, "days": days, "signals": len(sigs), "trades": n,
         "win_rate": round(win_rate, 1), "total_pts": round(total, 1),
         "expectancy_pts": round(exp, 2), "max_drawdown_pts": round(dd, 1),
-        "errors": errors, "largest_single_win": round(biggest, 1),
+        "in_sample_exp": round(exp_is, 2), "out_of_sample_exp": round(exp_oos, 2),
+        "slippage_pts": slippage_pts, "errors": errors, "largest_single_win": round(biggest, 1),
     }
 
     r = result["reasons"]
     if n < MIN_TRADES:
         r.append(f"only {n} trades (need >= {MIN_TRADES}); any win rate is noise")
     if exp <= MIN_EXPECTANCY_PTS:
-        r.append(f"expectancy {exp:+.2f} pts/trade is not positive")
+        r.append(f"overall expectancy {exp:+.2f} pts/trade (post-slippage) is not positive")
+    if len(oos_pnls) > 3 and exp_oos <= 0:
+        r.append(f"failed Walk-Forward Out-of-Sample test: OOS expectancy is {exp_oos:+.2f} pts")
     if dd < 0 and total < abs(dd) * MIN_PROFIT_TO_DD:
         r.append(f"profit {total:+.1f} does not exceed max drawdown {dd:.1f}")
     if win_rate > MAX_PLAUSIBLE_WIN:
@@ -232,6 +253,7 @@ def validate_strategy(path):
 
     result["verdict"] = "PASS" if not r else "FAIL"
     return result
+
 
 
 def format_report(res):

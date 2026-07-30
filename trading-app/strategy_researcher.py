@@ -106,14 +106,14 @@ async def translate_to_controln(repo_name, repo_code):
     ```
     
     Translate this strategy logic into a single async Python function compatible with my framework.
-    CRITICAL RULE: We do STRICTLY Options Buying. Your translated strategy must ONLY generate BUY signals (long positions) for Call or Put options. It must NEVER generate SELL short signals.
+    CRITICAL RULE: We do STRICTLY Options & Futures Buying. Your translated strategy must generate signals suitable for NIFTY, BANKNIFTY, FINNIFTY, SENSEX, or MCX Commodities (CRUDEOIL, GOLD).
     
     The function signature must be:
     `async def evaluate_auto_{repo_name.replace('-','_').replace('.','')}_strategy(client, state, symbol: str, candles_5m: list, candles_daily: list = None, vix: float = 15.0) -> Optional[dict]:`
     
     The function must return a dictionary if a signal is found:
     {{
-        "signal": "BUY",  # ONLY BUY is allowed!
+        "signal": "BUY" | "SELL",
         "entry_price": float,
         "stop_loss": float,
         "target": float,
@@ -122,7 +122,7 @@ async def translate_to_controln(repo_name, repo_code):
     }}
     or `None` if no signal.
     
-    Return ONLY the RAW python code block (do not wrap in markdown ```). Do not include any imports unless absolutely necessary (like datetime or math). 
+    Return ONLY the RAW python code block (do not wrap in markdown ```). Do not include any imports unless necessary.
     """
     
     

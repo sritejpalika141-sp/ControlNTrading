@@ -311,6 +311,14 @@ async def run_nightly_learning(state, user_id: int):
                                 continuous_losses=cfg.get('continuous_losses', 0),
                                 asset_class=cfg.get('asset_class', 'EQUITY')
                             )
+                            await Database.insert_pending_tuning(
+                                strategy_name=strat,
+                                param_name="major_config",
+                                old_val=json.dumps(old_config),
+                                proposed_val=json_str,
+                                expectancy_delta=0.0,
+                                reason=f"Major parameter shift: {', '.join(major_changes)}"
+                            )
                             # Alert Telegram
                             msg = f"<b>Major Parameter Shift Proposed!</b>\nStrategy: <i>{strat}</i>\nChanges: {', '.join(major_changes)}\n\nPlease go to your Dashboard to approve this change."
                             await send_webhook_alert(webhook_url, msg, title="⚠️ AI Strategy Upgrade (Pending)")
@@ -344,6 +352,14 @@ async def run_nightly_learning(state, user_id: int):
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
                                 continuous_losses=cfg.get('continuous_losses', 0),
                                 asset_class=cfg.get('asset_class', 'EQUITY')
+                            )
+                            await Database.insert_pending_tuning(
+                                strategy_name=strat,
+                                param_name="minor_config",
+                                old_val=json.dumps(old_config),
+                                proposed_val=json_str,
+                                expectancy_delta=0.0,
+                                reason="Minor optimization proposed by Nightly Learning"
                             )
                             msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades. Approve on the Dashboard to apply."
                             await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Proposal (Pending)")

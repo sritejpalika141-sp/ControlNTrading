@@ -75,10 +75,8 @@ def generate_signals(candles_1h: List[Dict], candles_5m: List[Dict],
     active_fvgs = get_active_fvg(candles_5m, spot)
 
     # 5. Confluences
-    confluences = find_ob_fvg_confluence(active_obs, active_fvgs)
-
-    # 6. Generate trade signals
-    signals = _evaluate_signals(trend, key_levels, active_obs, active_fvgs, confluences, spot, past_entry_time, vix, gap_points, candles_1m if candles_1m else candles_5m, unfilled_gap_dir)
+    confluences = find_ob_fvg_confluence(active_obs, active_fvgs)    # 6. Generate trade signals
+    signals = _evaluate_signals(trend, key_levels, active_obs, active_fvgs, confluences, spot, past_entry_time, vix, gap_points, candles_1m if candles_1m else candles_5m, unfilled_gap_dir, symbol=symbol)
 
     # 7. Break of Structure (BOS) from 5M
     from .key_levels import detect_recent_bos
@@ -98,6 +96,7 @@ def generate_signals(candles_1h: List[Dict], candles_5m: List[Dict],
         "gap_type": gap_type,
         "unfilled_gap_dir": unfilled_gap_dir
     }
+
 
 def detect_retest_and_rejection(candles: List[Dict], zone: Dict, direction: str) -> Dict:
     """
@@ -151,15 +150,28 @@ def detect_retest_and_rejection(candles: List[Dict], zone: Dict, direction: str)
 def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
                       fvgs: List[Dict], confluences: List[Dict], spot: float,
                       past_entry_time: bool, vix: float, gap_points: float,
-                      candles_eval: List[Dict] = [], unfilled_gap_dir: str = "NONE") -> List[Dict]:
-    """Evaluate and generate actionable trade signals with Retest & Rejection logic."""
+                      candles_eval: List[Dict] = [], unfilled_gap_dir: str = "NONE",
+                      symbol: str = "NSE:NIFTY50-INDEX") -> List[Dict]:
+    """Evaluate and generate actionable trade signals with Retest & Rejection logic and Regime Gatekeeping."""
     signals = []
 
-    # 0. Time Filter check
+    # Check symbol-specific market regime
+    import state
+    regime, regime_reason = state.get_symbol_regime(symbol)
+
+    # 0. Time & Regime Filter check
     if past_entry_time:
         signals.append({
             "type": "NO TRADE", "direction": "NEUTRAL",
             "reason": "Outside Trading Window (9:15 AM - 3:00 PM IST)",
+            "confidence": 0, "advisory_only": True
+        })
+        return signals
+
+    if regime == "EVENT_RISK_AVOID":
+        signals.append({
+            "type": "NO TRADE", "direction": "NEUTRAL",
+            "reason": f"Regime Gatekeeper blocked trades for {symbol}: {regime_reason}",
             "confidence": 0, "advisory_only": True
         })
         return signals

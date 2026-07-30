@@ -333,6 +333,19 @@ class Database:
             pnl_losers TEXT
         )''')
 
+        # Pending Strategy Tunings (Approval Queue for Self-Improvement)
+        c.execute('''CREATE TABLE IF NOT EXISTS pending_strategy_tunings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            strategy_name TEXT NOT NULL,
+            param_name TEXT NOT NULL,
+            old_value TEXT NOT NULL,
+            proposed_value TEXT NOT NULL,
+            expectancy_delta REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'PENDING',
+            reason TEXT
+        )''')
+
         # Executed-trade ledger (added 30-07-26). The AUTHORITATIVE record of EVERY executed trade,
         # win or loss. A row is written at ENTRY (status OPEN) with full context (strategy, entry
         # price, SL, regime/trend) and UPDATED at EXIT (status CLOSED) with exit price, pnl and
@@ -1166,6 +1179,38 @@ class Database:
             """, (f"{date_str}%",)) as c:
                 rows = await c.fetchall()
         return [dict(r) for r in rows]
+
+    @staticmethod
+    async def insert_pending_tuning(strategy_name: str, param_name: str, old_val: str, proposed_val: str, expectancy_delta: float = 0.0, reason: str = ""):
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            await conn.execute("""
+                INSERT INTO pending_strategy_tunings (timestamp, strategy_name, param_name, old_value, proposed_value, expectancy_delta, status, reason)
+                VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)
+            """, (timestamp, strategy_name, param_name, str(old_val), str(proposed_val), expectancy_delta, reason))
+            await conn.commit()
+
+    @staticmethod
+    async def get_pending_tunings(status: str = "PENDING"):
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute("""
+                SELECT * FROM pending_strategy_tunings
+                WHERE status = ?
+                ORDER BY id DESC
+            """, (status,)) as c:
+                rows = await c.fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    async def update_tuning_status(tuning_id: int, new_status: str):
+        async with aiosqlite.connect(Database.DB_NAME) as conn:
+            await conn.execute("""
+                UPDATE pending_strategy_tunings
+                SET status = ?
+                WHERE id = ?
+            """, (new_status, tuning_id))
+            await conn.commit()
 
 # Initialize on import
 Database.init_db()

@@ -93,12 +93,9 @@ async def regime_evaluator():
             seconds_to_wait = (minutes_to_next * 60) - now.second + 5
         await asyncio.sleep(seconds_to_wait)
 
-        # ── 1. NSE / Indian equity regime (NIFTY) ──
+        # ── 1. NSE / BSE Indian equity regimes (NIFTY, BANKNIFTY, FINNIFTY, SENSEX) ──
         try:
             if state.is_market_open():
-                # Find the best spot/VIX data from any authenticated user cache (the guest
-                # cache "0" may be empty if no unauthenticated sessions exist). Spot and VIX
-                # are market-wide, so any user's cache is valid.
                 spot, vix = 0, 0
                 for _uid_key, _cache in state.USER_CACHES.items():
                     if not _cache.get("is_auth"):
@@ -113,35 +110,73 @@ async def regime_evaluator():
                         vix = _v
                     if spot > 0 and vix > 0:
                         break
+
+                # Primary NIFTY regime
                 r, reason = await _compute_regime_for("NSE:NIFTY50-INDEX", ai_engine, vix=vix, spot=spot)
                 state.market_regime, state.regime_reason = r, reason
-                logger.info(f"🟢 NSE Regime: {r} - {reason}")
+                state.asset_regimes["NSE:NIFTY50-INDEX"] = r
+                state.asset_regime_reasons["NSE:NIFTY50-INDEX"] = reason
+                logger.info(f"🟢 NSE NIFTY Regime: {r} - {reason}")
+
+                # Additional Indices: BANKNIFTY, FINNIFTY, SENSEX
+                for idx_sym in ["NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX", "BSE:SENSEX-INDEX"]:
+                    try:
+                        idx_r, idx_reason = await _compute_regime_for(idx_sym, ai_engine, vix=vix)
+                        state.asset_regimes[idx_sym] = idx_r
+                        state.asset_regime_reasons[idx_sym] = idx_reason
+                        logger.info(f"🟢 {idx_sym} Regime: {idx_r} - {idx_reason}")
+                    except Exception as ex:
+                        state.asset_regimes[idx_sym] = r
+                        state.asset_regime_reasons[idx_sym] = f"Fallback to NIFTY: {ex}"
             else:
                 state.market_regime = "CLOSED"
                 state.regime_reason = "Indian equity market is closed."
+                for idx_sym in ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX", "BSE:SENSEX-INDEX"]:
+                    state.asset_regimes[idx_sym] = "CLOSED"
+                    state.asset_regime_reasons[idx_sym] = "Equity market closed."
         except Exception as e:
             logger.error(f"❌ NSE regime error: {e}")
             state.market_regime, state.regime_reason = "NEUTRAL", f"Error: {str(e)[:40]}"
 
-        # ── 2. MCX / commodities regime (current crude FUT as the proxy) ──
+        # ── 2. MCX / Commodities regimes (CRUDEOIL & GOLD) ──
         try:
             if state.is_market_open("COMMODITY_OPTIONS"):
                 from engine.strikes import resolve_current_commodity_expiry
                 from fyers_client import FyersClient
-                # Pass a client so the LIVE contract is used (history-validated, rolls past an
-                # expired month); the result is cached ~2h so this does not hammer the API.
-                crude_fut = resolve_current_commodity_expiry("MCX:CRUDEOIL", client=FyersClient(user_id=1))
-                r, reason = await _compute_regime_for(crude_fut, ai_engine)
-                state.mcx_regime, state.mcx_regime_reason = r, reason
-                logger.info(f"🟠 MCX Regime ({crude_fut}): {r} - {reason}")
+                fc_stub = FyersClient(user_id=1)
+
+                # Crudeoil
+                try:
+                    crude_fut = resolve_current_commodity_expiry("MCX:CRUDEOIL", client=fc_stub)
+                    r_crude, reason_crude = await _compute_regime_for(crude_fut, ai_engine)
+                    state.mcx_regime, state.mcx_regime_reason = r_crude, reason_crude
+                    state.asset_regimes["MCX:CRUDEOIL"] = r_crude
+                    state.asset_regimes[crude_fut] = r_crude
+                    state.asset_regime_reasons["MCX:CRUDEOIL"] = reason_crude
+                    logger.info(f"🟠 MCX Crude Regime ({crude_fut}): {r_crude} - {reason_crude}")
+                except Exception as ex_c:
+                    logger.warning(f"MCX Crude regime eval failed: {ex_c}")
+
+                # Gold
+                try:
+                    gold_fut = resolve_current_commodity_expiry("MCX:GOLD", client=fc_stub)
+                    r_gold, reason_gold = await _compute_regime_for(gold_fut, ai_engine)
+                    state.asset_regimes["MCX:GOLD"] = r_gold
+                    state.asset_regimes[gold_fut] = r_gold
+                    state.asset_regime_reasons["MCX:GOLD"] = reason_gold
+                    logger.info(f"🟠 MCX Gold Regime ({gold_fut}): {r_gold} - {reason_gold}")
+                except Exception as ex_g:
+                    logger.warning(f"MCX Gold regime eval failed: {ex_g}")
             else:
                 state.mcx_regime = "CLOSED"
                 state.mcx_regime_reason = "MCX commodities market is closed."
+                state.asset_regimes["MCX:CRUDEOIL"] = "CLOSED"
+                state.asset_regimes["MCX:GOLD"] = "CLOSED"
         except Exception as e:
             logger.error(f"❌ MCX regime error: {e}")
             state.mcx_regime, state.mcx_regime_reason = "NEUTRAL", f"Error: {str(e)[:40]}"
 
-        # ── 3. Currency regime (news-derived trend; USDINR FUT candle feed is deferred) ──
+        # ── 3. Currency regime (news-derived trend) ──
         try:
             if state.is_market_open("CURRENCY_OPTIONS"):
                 try:
@@ -149,14 +184,16 @@ async def regime_evaluator():
                     fx_trend = (news_worker.last_summary or {}).get("currency_trend", "NEUTRAL")
                 except Exception:
                     fx_trend = "NEUTRAL"
-                # Map the news trend to the regime vocabulary for a consistent display.
                 fx_map = {"BULLISH": "TRENDING_UP", "BEARISH": "TRENDING_DOWN",
                           "NEUTRAL": "CHOPPY_SIDEWAYS", "VOLATILE": "EVENT_RISK_AVOID"}
                 state.currency_regime = fx_map.get(str(fx_trend).upper(), "NEUTRAL")
                 state.currency_regime_reason = f"News-derived USD/INR trend: {fx_trend}."
+                state.asset_regimes["NSE:USDINR-FUT"] = state.currency_regime
             else:
                 state.currency_regime = "CLOSED"
                 state.currency_regime_reason = "Currency market is closed."
+                state.asset_regimes["NSE:USDINR-FUT"] = "CLOSED"
         except Exception as e:
             logger.error(f"❌ Currency regime error: {e}")
             state.currency_regime, state.currency_regime_reason = "NEUTRAL", f"Error: {str(e)[:40]}"
+

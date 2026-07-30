@@ -8,7 +8,10 @@ without introducing circular imports.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Set
@@ -64,6 +67,25 @@ mcx_regime: str = "NEUTRAL"
 mcx_regime_reason: str = "Awaiting MCX session."
 currency_regime: str = "NEUTRAL"
 currency_regime_reason: str = "Awaiting currency session."
+
+# Multi-asset regime map (symbol -> regime string, reason string)
+asset_regimes: Dict[str, str] = {}
+asset_regime_reasons: Dict[str, str] = {}
+
+
+def get_symbol_regime(symbol: str) -> tuple[str, str]:
+    """Retrieve current regime & reason for a specific symbol or asset class."""
+    sym_upper = symbol.upper()
+    if sym_upper in asset_regimes:
+        return asset_regimes[sym_upper], asset_regime_reasons.get(sym_upper, "")
+    if "NIFTY50" in sym_upper or sym_upper == "NSE:NIFTY50-INDEX":
+        return market_regime, regime_reason
+    if "CRUDE" in sym_upper or "MCX" in sym_upper:
+        return mcx_regime, mcx_regime_reason
+    if "USDINR" in sym_upper or "CURRENCY" in sym_upper:
+        return currency_regime, currency_regime_reason
+    return asset_regimes.get(sym_upper, "NEUTRAL"), asset_regime_reasons.get(sym_upper, "Default neutral regime")
+
 
 # Token readiness gate: blocks market-dependent operations until the first
 # Fyers token refresh completes on startup.  Set by fyers_token_refresh_scheduler
@@ -139,9 +161,6 @@ def get_current_client(request: Request) -> FyersClient:
     return USER_CONTEXTS[u_id]
 
 
-import json
-import os
-
 _lot_sizes_dict = None
 
 def get_lot_size(symbol: str) -> int:
@@ -180,7 +199,6 @@ def get_lot_size(symbol: str) -> int:
     # 3. Try extracting base symbol from option format (e.g., NSE:RELIANCE2670731300CE → RELIANCE,
     #    NSE:USDINR26717101CE → USDINR, MCX:CRUDEOIL26JUL7700CE → CRUDEOIL). Covers NSE equity/currency
     #    AND MCX commodity options.
-    import re
     m = re.match(r"(?:NSE|MCX|CDS):([A-Z]+)\d", s)
     if m:
         base = m.group(1)
@@ -222,9 +240,20 @@ def calculate_position_size(user_id: int, entry_price: float, sl_points: float, 
         if not user:
             return 1
         
-        # Use a reasonable default capital estimate.
-        # TODO: source from broker API or user config when available
-        capital = 500000  # Default ₹5L capital
+        # Source capital from the user's cached funds (Fyers availableBalance) or
+        # paper_funds when in paper-trading mode. Falls back to ₹5L default only
+        # when fund data is unavailable (e.g. before first sync completes).
+        DEFAULT_CAPITAL = 500000
+        capital = DEFAULT_CAPITAL
+        try:
+            u_state = get_user_state(user_id)
+            if getattr(u_state, "paper_trading", False):
+                capital = float(getattr(u_state, "paper_funds", {}).get("availableBalance", DEFAULT_CAPITAL))
+            else:
+                cache = get_user_cache(user_id)
+                capital = float(cache.get("funds", {}).get("availableBalance", DEFAULT_CAPITAL))
+        except Exception:
+            pass  # Use DEFAULT_CAPITAL
         
         # Calculate risk amount
         risk_amount = capital * (RISK_PER_TRADE_PCT / 100)
