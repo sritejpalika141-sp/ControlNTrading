@@ -1309,45 +1309,61 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 return
 
             logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Product: {product_type}")
+            shadow_exec = state.is_shadow_strategy(strategy_name) and not state.paper_trading
+            if shadow_exec:
+                await broadcast_log(
+                    f"👻 Shadow (paper): {strategy_name} {side} {strike_symbol} — live account unchanged.",
+                    "info",
+                    user_id=client.user_id,
+                )
             await broadcast_log(
                 f"🚀 {strategy_name}: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | Product: {product_type}",
                 "success"
             )
 
-            result = await asyncio.to_thread(
-                client.place_order,
-                symbol=strike_symbol,
-                qty=qty,
-                side=side,
-                order_type="MARKET",
-                product=product_type,
-                sl_points=sl_points,
-                target_points=target_points
-            )
+            prev_paper = state.paper_trading
+            if shadow_exec:
+                state.paper_trading = True
+            try:
+                result = await asyncio.to_thread(
+                    client.place_order,
+                    symbol=strike_symbol,
+                    qty=qty,
+                    side=side,
+                    order_type="MARKET",
+                    product=product_type,
+                    sl_points=sl_points,
+                    target_points=target_points
+                )
+
+                if result.get("success"):
+                    track_pending_order(
+                        result.get("order_id"),
+                        strike_symbol,
+                        client.user_id,
+                        sl_order_id=result.get("sl_order_id"),
+                        tgt_order_id=result.get("tgt_order_id")
+                    )
+                    state.record_trade()
+                    state.add_active_trade(
+                        symbol=strike_symbol,
+                        entry_price=entry_price,
+                        sl_points=sl_points,
+                        side=side,
+                        sl_order_id=result.get("sl_order_id", ""),
+                        tgt_order_id=result.get("tgt_order_id", ""),
+                        strategy=strategy_name,
+                        target_1=sig.get("target_1") if is_orb else None,
+                        target_2=sig.get("target_2") if is_orb else None,
+                        sl_order_type=result.get("sl_order_type", 4),
+                        qty=qty,
+                        entry_trend=current_trend
+                    )
+            finally:
+                if shadow_exec:
+                    state.paper_trading = prev_paper
 
             if result.get("success"):
-                track_pending_order(
-                    result.get("order_id"), 
-                    strike_symbol, 
-                    client.user_id,
-                    sl_order_id=result.get("sl_order_id"),
-                    tgt_order_id=result.get("tgt_order_id")
-                )
-                state.record_trade()
-                state.add_active_trade(
-                    symbol=strike_symbol,
-                    entry_price=entry_price,
-                    sl_points=sl_points,
-                    side=side,
-                    sl_order_id=result.get("sl_order_id", ""),
-                    tgt_order_id=result.get("tgt_order_id", ""),
-                    strategy=strategy_name,
-                    target_1=sig.get("target_1") if is_orb else None,
-                    target_2=sig.get("target_2") if is_orb else None,
-                    sl_order_type=result.get("sl_order_type", 4),
-                    qty=qty,
-                    entry_trend=current_trend
-                )
                 await _record_entry_to_ledger(
                     client, symbol, strike_symbol, side, qty, entry_price, sl_points,
                     ("orb_checklist" if is_orb else "strategy_926_fixed"), target_points,

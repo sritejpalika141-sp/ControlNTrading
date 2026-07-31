@@ -102,6 +102,9 @@ class TradingState:
         self.paper_positions = []
         self.paper_orders = []
         self.paper_funds = {"availableBalance": 1000000.0, "realizedPnl": 0.0}
+        # Per-strategy paper execution while account stays live (shadow week).
+        self.shadow_strategies: list[str] = []
+        self.shadow_week_until: str = ""
         self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"]
         # SEPARATE commodity strategy family (MCX only) — AI-tuned for commodity behaviour (higher
         # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
@@ -259,6 +262,8 @@ class TradingState:
                     self.active_symbols = data.get("active_symbols", ["NSE:NIFTY50-INDEX"])
                     self.enabled_symbols = data.get("enabled_symbols", ["NSE:NIFTY50-INDEX"])
                     self.agent_added_symbols = data.get("agent_added_symbols", [])
+                    self.shadow_strategies = data.get("shadow_strategies", [])
+                    self.shadow_week_until = data.get("shadow_week_until", "")
                     _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
                     if _orphans:
                         self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
@@ -345,6 +350,8 @@ class TradingState:
             ),
             "use_ai_oracle": getattr(self, "use_ai_oracle", False),
             "ai_daily_bias": getattr(self, "ai_daily_bias", ""),
+            "shadow_strategies": getattr(self, "shadow_strategies", []),
+            "shadow_week_until": getattr(self, "shadow_week_until", ""),
             "last_trade_close_time": self.last_trade_close_time,
             "last_trade_result": self.last_trade_result
         }
@@ -679,6 +686,19 @@ class TradingState:
             return False, f"⏳ Failure backoff: {int(60 - (now - _last_fail))}s remaining"
             
         return True, "OK"
+
+    def is_shadow_strategy(self, strategy_name: str) -> bool:
+        """True when strategy should paper-trade even if account is live."""
+        until = getattr(self, "shadow_week_until", "") or ""
+        if until:
+            today = datetime.now(IST).date().isoformat()
+            if today > until:
+                return False
+        shadow_list = getattr(self, "shadow_strategies", None) or []
+        if not shadow_list:
+            return False
+        name = strategy_name or ""
+        return any(s in name for s in shadow_list)
 
     def _get_cooldown_minutes(self):
         """Dynamic cooldown based on last trade result."""

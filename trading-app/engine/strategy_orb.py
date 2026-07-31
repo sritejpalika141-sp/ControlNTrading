@@ -19,6 +19,7 @@ from engine.orb_filters import (
     orb_range_ok,
     trend_15m_confirms,
     volume_multiplier,
+    passes_volume_check,
 )
 
 logger = logging.getLogger("STRATEGY_ORB")
@@ -163,7 +164,6 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     # trigger_volume already set for vix<=15 path above
 
     # 4. ENTRY CHECKLIST
-    vol_mult = volume_multiplier(vix)
     prev_920_volumes = []
     for c in candles_5m:
         c_dt = datetime.fromtimestamp(c["timestamp"], tz=pytz.utc).astimezone(IST)
@@ -177,10 +177,12 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
         all_vols = [c["volume"] for c in candles_5m if c["volume"] > 0]
         avg_volume = sum(all_vols) / len(all_vols) if all_vols else 1.0
 
-    if trigger_volume < vol_mult * avg_volume:
+    if not passes_volume_check(
+        trigger_volume, avg_volume, vix, symbol=symbol, candles_5m=candles_5m
+    ):
         logger.info(
             f"⏭️ Strategy 3: Volume check failed for {symbol}. "
-            f"Volume {trigger_volume} < {vol_mult}x Avg ({avg_volume:.1f})"
+            f"Volume {trigger_volume} < {volume_multiplier(vix)}x Avg ({avg_volume:.1f})"
         )
         return None
 

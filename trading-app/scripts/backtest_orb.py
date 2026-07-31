@@ -28,7 +28,7 @@ sys.path.insert(0, APP_DIR)
 IST = pytz.timezone("Asia/Kolkata")
 
 from engine.economic_calendar import check_no_economic_events
-from engine.orb_filters import orb_range_ok, trend_15m_confirms, volume_multiplier
+from engine.orb_filters import orb_range_ok, trend_15m_confirms, passes_volume_check
 
 
 def fetch_candles(symbol: str, days: int) -> Tuple[List[Dict], List[Dict]]:
@@ -112,6 +112,7 @@ def backtest_orb(
     vix_assumption: float = 16.0,
     sl_pts: float = 20.0,
     tp_pts: float = 40.0,
+    symbol: str = "",
 ) -> Dict:
     days = group_by_session_day(candles_5m)
     trades: List[Dict] = []
@@ -195,8 +196,9 @@ def backtest_orb(
                 all_v = [x["volume"] for x in candles_5m if x["volume"] > 0]
                 avg_vol = sum(all_v) / len(all_v) if all_v else 1.0
 
-            vol_mult = volume_multiplier(vix_assumption)
-            if trigger_vol < vol_mult * avg_vol:
+            if not passes_volume_check(
+                trigger_vol, avg_vol, vix_assumption, symbol=symbol, candles_5m=candles_5m
+            ):
                 skips["volume"] += 1
                 continue
 

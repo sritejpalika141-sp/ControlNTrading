@@ -88,7 +88,7 @@ def main():
         print("❌ No Fyers 5m history returned")
         sys.exit(1)
 
-    report = backtest_orb(candles_5m, candles_daily, vix_assumption=16.0)
+    report = backtest_orb(candles_5m, candles_daily, vix_assumption=16.0, symbol=IST_SYMBOL)
     report["data_source"] = "fyers"
     report["symbol"] = IST_SYMBOL
 
