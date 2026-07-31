@@ -17,6 +17,11 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  GCP_PROJECT: sritej-trading-algo-2026
+  GCP_INSTANCE: sritej-trading
+  GCP_ZONE: asia-south1-c
+
 jobs:
   prod-analysis:
     runs-on: ubuntu-latest
@@ -36,30 +41,11 @@ jobs:
         run: gcloud compute config-ssh --quiet
 
       - name: Pull production backup
+        id: pull
         run: bash scripts/pull_production_backup.sh
 
-      - name: Sync backtest script to production VM
-        run: |
-          gcloud compute ssh "${{ env.GCP_INSTANCE || 'sritej-trading' }}" \
-            --zone="${{ env.GCP_ZONE || 'asia-south1-c' }}" \
-            --project="${{ env.GCP_PROJECT || 'sritej-trading-algo-2026' }}" --quiet \
-            --command="mkdir -p /home/sritejpalika/trading-app/scripts"
-          gcloud compute scp \
-            trading-app/scripts/backtest_orb_fyers.py \
-            trading-app/scripts/backtest_orb.py \
-            trading-app/engine/orb_filters.py \
-            sritej-trading:/home/sritejpalika/trading-app/scripts/ \
-            --zone=asia-south1-c --project=sritej-trading-algo-2026 --quiet
-          gcloud compute scp trading-app/engine/orb_filters.py \
-            sritej-trading:/home/sritejpalika/trading-app/engine/ \
-            --zone=asia-south1-c --project=sritej-trading-algo-2026 --quiet
-
-      - name: Run ORB Fyers backtest on production VM
-        id: fyers_backtest
-        continue-on-error: true
-        run: bash scripts/run_orb_fyers_on_prod.sh "${{ inputs.backtest_days }}" "${{ inputs.user_id }}"
-
       - name: Package artifacts
+        if: steps.pull.outcome == 'success'
         run: |
           mkdir -p artifact-bundle
           LATEST="$(ls -td backups/production/*/ 2>/dev/null | head -1)"
@@ -73,6 +59,7 @@ jobs:
           echo "Bundle contents:" && find artifact-bundle -type f | head -50
 
       - name: Upload analysis artifacts
+        if: steps.pull.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: prod-analysis
@@ -80,8 +67,40 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Backtest step result
-        if: steps.fyers_backtest.outcome == 'failure'
+      - name: Sync scripts to production VM
+        continue-on-error: true
         run: |
-          echo "::warning::Fyers backtest failed (often missing Fyers login on prod). DB backup artifact should still be attached."
-          exit 0
+          # Same pattern as deploy.sh (avoids permission errors on single-file scp)
+          gcloud compute scp --recurse trading-app/scripts \
+            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/" \
+            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
+          gcloud compute scp trading-app/engine/orb_filters.py \
+            trading-app/engine/economic_calendar.py \
+            "${{ env.GCP_INSTANCE }}:/tmp/" \
+            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
+          gcloud compute ssh "${{ env.GCP_INSTANCE }}" \
+            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet \
+            --command="cp /tmp/orb_filters.py /tmp/economic_calendar.py /home/sritejpalika/trading-app/engine/ 2>/dev/null || sudo cp /tmp/orb_filters.py /tmp/economic_calendar.py /home/sritejpalika/trading-app/engine/"
+
+      - name: Run ORB Fyers backtest on production VM
+        id: fyers_backtest
+        continue-on-error: true
+        run: bash scripts/run_orb_fyers_on_prod.sh "${{ inputs.backtest_days }}" "${{ inputs.user_id }}"
+
+      - name: Upload backtest report (if produced)
+        if: steps.fyers_backtest.outcome == 'success' && hashFiles('trading-app/reports/orb_fyers_backtest.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-analysis-backtest
+          path: trading-app/reports/orb_fyers_backtest.json
+          retention-days: 7
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [ "${{ steps.pull.outcome }}" = "success" ]; then
+            echo "✅ Production DB backup uploaded as artifact: prod-analysis"
+          fi
+          if [ "${{ steps.fyers_backtest.outcome }}" != "success" ]; then
+            echo "::warning::Fyers backtest did not complete. Log in to prod Fyers if needed, then re-run."
+          fi
