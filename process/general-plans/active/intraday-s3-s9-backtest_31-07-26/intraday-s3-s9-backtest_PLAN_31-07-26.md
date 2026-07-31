@@ -136,3 +136,15 @@ cd trading-app
 ```
 
 Gate: smoke PASS, P0 tests PASS, ORB backtest report committed to task folder.
+
+## Execution status (2026-07-31)
+
+| Phase | Status | Artifact |
+|-------|--------|----------|
+| A — P0 fixes | **MERGED** (PR #2) | Deployed via GitHub Actions |
+| B — Production pull | **Blocked** (no GCP auth in cloud VM) | `scripts/pull_production_backup.sh` |
+| C1 — ORB backtest | **Done** | `scripts/backtest_orb.py`, `reports/orb_backtest_90d.json` |
+| C2 — Economic calendar | **Done** | `engine/economic_calendar.py` |
+| C3 — S9 persistence | **Done** | `strat_9_trades_today` in `automation.py` |
+| C4 — S9 rules replay | **Done** | `scripts/backtest_strategy9_rules.py` |
+| C5 — Reports | **Done** | `orb_backtest_REPORT_31-07-26.md`, `strategy9_rules_REPORT_31-07-26.md` |

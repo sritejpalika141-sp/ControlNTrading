@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytz
 from typing import List, Dict, Optional
 from engine.strikes import get_strike_recommendations, get_dynamic_lot_size
+from engine.economic_calendar import check_no_economic_events
 
 logger = logging.getLogger("STRATEGY_ORB")
 IST = pytz.timezone('Asia/Kolkata')
@@ -28,14 +29,6 @@ LOT_SIZES = {
     "MIDCPNIFTY": 120
 }
 
-def check_no_economic_events() -> bool:
-    """
-    Placeholder/mock helper to check for major economic events in the next 30 minutes.
-    Can be updated to query a calendar API/feed.
-    """
-    # Pre-defined major event dates could be added here.
-    # Defaulting to True (safe to trade).
-    return True
 
 async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dict], candles_daily: List[Dict] = None, vix: float = 15.0) -> Optional[Dict]:
     """

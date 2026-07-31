@@ -139,6 +139,9 @@ class TradingState:
         self.strat_7_was_stopout = False
         self.strat_7_awaiting_confirmation = None
         self.strat_10_trades_today = 0
+        self.strat_9_trades_today = 0
+        self.strat_9_consec_sl = 0
+        self.strat_9_last_call = None
         
         # Pre-Market AI Oracle State
         self.use_ai_oracle = False
@@ -228,6 +231,10 @@ class TradingState:
                         self.strat_6_confirmation_data = data.get("strat_6_confirmation_data", None)
                         self.strat_7_trades_today = data.get("strat_7_trades_today", 0)
                         self.strat_10_trades_today = data.get("strat_10_trades_today", 0)
+                        self.strat_9_trades_today = data.get("strat_9_trades_today", 0)
+                        self.strat_9_consec_sl = data.get("strat_9_consec_sl", 0)
+                        lc = data.get("strat_9_last_call")
+                        self.strat_9_last_call = datetime.fromisoformat(lc) if lc else None
                         self.strat_7_pending_order = data.get("strat_7_pending_order", None)
                         self.strat_7_was_stopout = data.get("strat_7_was_stopout", False)
                         self.strat_7_awaiting_confirmation = data.get("strat_7_awaiting_confirmation", None)
@@ -330,6 +337,12 @@ class TradingState:
             "strat_7_was_stopout": getattr(self, "strat_7_was_stopout", False),
             "strat_7_awaiting_confirmation": getattr(self, "strat_7_awaiting_confirmation", None),
             "strat_10_trades_today": getattr(self, "strat_10_trades_today", 0),
+            "strat_9_trades_today": getattr(self, "strat_9_trades_today", 0),
+            "strat_9_consec_sl": getattr(self, "strat_9_consec_sl", 0),
+            "strat_9_last_call": (
+                self.strat_9_last_call.isoformat()
+                if getattr(self, "strat_9_last_call", None) else None
+            ),
             "use_ai_oracle": getattr(self, "use_ai_oracle", False),
             "ai_daily_bias": getattr(self, "ai_daily_bias", ""),
             "last_trade_close_time": self.last_trade_close_time,
@@ -448,6 +461,9 @@ class TradingState:
         self.strat_7_was_stopout = False
         self.strat_7_awaiting_confirmation = None
         self.strat_10_trades_today = 0
+        self.strat_9_trades_today = 0
+        self.strat_9_consec_sl = 0
+        self.strat_9_last_call = None
         # Reset AI Bias
         self.ai_daily_bias = ""
         # Preserve automation_enabled and active_symbols across resets

@@ -1,0 +1,389 @@
+{
+  "strategy": "Strategy 3: 5-Minute ORB",
+  "sessions": 57,
+  "trades": 46,
+  "wins": 14,
+  "losses": 32,
+  "win_rate_pct": 30.4,
+  "profit_factor": 0.88,
+  "total_pnl_pts": -80.0,
+  "pass_gate": false,
+  "skips": {
+    "blackout": 0,
+    "window": 0,
+    "volume": 15,
+    "gap": 3,
+    "range": 3,
+    "no_breakout": 5
+  },
+  "trade_log": [
+    {
+      "date": "2026-05-14",
+      "direction": "LONG",
+      "entry": 23581.3,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.276
+    },
+    {
+      "date": "2026-05-15",
+      "direction": "LONG",
+      "entry": 23789.3,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.433
+    },
+    {
+      "date": "2026-05-18",
+      "direction": "SHORT",
+      "entry": 23358.4,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.481
+    },
+    {
+      "date": "2026-05-19",
+      "direction": "LONG",
+      "entry": 23748.85,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.272
+    },
+    {
+      "date": "2026-05-20",
+      "direction": "LONG",
+      "entry": 23477.55,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.27
+    },
+    {
+      "date": "2026-05-21",
+      "direction": "SHORT",
+      "entry": 23757.35,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.392
+    },
+    {
+      "date": "2026-05-22",
+      "direction": "LONG",
+      "entry": 23752.85,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.142
+    },
+    {
+      "date": "2026-05-26",
+      "direction": "LONG",
+      "entry": 24020.6,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.215
+    },
+    {
+      "date": "2026-05-27",
+      "direction": "LONG",
+      "entry": 23943.25,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.28
+    },
+    {
+      "date": "2026-05-29",
+      "direction": "SHORT",
+      "entry": 23893.4,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.399
+    },
+    {
+      "date": "2026-06-01",
+      "direction": "SHORT",
+      "entry": 23598.9,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.476
+    },
+    {
+      "date": "2026-06-02",
+      "direction": "LONG",
+      "entry": 23295.65,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.235
+    },
+    {
+      "date": "2026-06-04",
+      "direction": "LONG",
+      "entry": 23388.35,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.485
+    },
+    {
+      "date": "2026-06-05",
+      "direction": "SHORT",
+      "entry": 23445.9,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.284
+    },
+    {
+      "date": "2026-06-09",
+      "direction": "SHORT",
+      "entry": 23196.4,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.258
+    },
+    {
+      "date": "2026-06-11",
+      "direction": "LONG",
+      "entry": 23132.35,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.221
+    },
+    {
+      "date": "2026-06-16",
+      "direction": "LONG",
+      "entry": 23943.25,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.214
+    },
+    {
+      "date": "2026-06-17",
+      "direction": "LONG",
+      "entry": 24050.9,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.315
+    },
+    {
+      "date": "2026-06-18",
+      "direction": "LONG",
+      "entry": 24135.15,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.291
+    },
+    {
+      "date": "2026-06-19",
+      "direction": "LONG",
+      "entry": 23991.55,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.212
+    },
+    {
+      "date": "2026-06-22",
+      "direction": "LONG",
+      "entry": 24141.15,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.262
+    },
+    {
+      "date": "2026-06-23",
+      "direction": "LONG",
+      "entry": 24087.0,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.168
+    },
+    {
+      "date": "2026-06-24",
+      "direction": "LONG",
+      "entry": 23879.4,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.335
+    },
+    {
+      "date": "2026-06-25",
+      "direction": "LONG",
+      "entry": 24156.35,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.181
+    },
+    {
+      "date": "2026-06-29",
+      "direction": "SHORT",
+      "entry": 24017.1,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.32
+    },
+    {
+      "date": "2026-06-30",
+      "direction": "SHORT",
+      "entry": 23901.5,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.405
+    },
+    {
+      "date": "2026-07-01",
+      "direction": "LONG",
+      "entry": 23940.05,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.161
+    },
+    {
+      "date": "2026-07-02",
+      "direction": "LONG",
+      "entry": 24122.9,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.145
+    },
+    {
+      "date": "2026-07-06",
+      "direction": "LONG",
+      "entry": 24369.1,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.284
+    },
+    {
+      "date": "2026-07-07",
+      "direction": "SHORT",
+      "entry": 24427.05,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.191
+    },
+    {
+      "date": "2026-07-08",
+      "direction": "SHORT",
+      "entry": 24219.6,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.229
+    },
+    {
+      "date": "2026-07-09",
+      "direction": "LONG",
+      "entry": 24024.3,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.299
+    },
+    {
+      "date": "2026-07-10",
+      "direction": "LONG",
+      "entry": 24192.25,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.258
+    },
+    {
+      "date": "2026-07-13",
+      "direction": "LONG",
+      "entry": 24068.3,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.179
+    },
+    {
+      "date": "2026-07-14",
+      "direction": "LONG",
+      "entry": 24144.75,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.283
+    },
+    {
+      "date": "2026-07-15",
+      "direction": "LONG",
+      "entry": 24190.6,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.306
+    },
+    {
+      "date": "2026-07-16",
+      "direction": "SHORT",
+      "entry": 24110.45,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.197
+    },
+    {
+      "date": "2026-07-17",
+      "direction": "LONG",
+      "entry": 24211.3,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.389
+    },
+    {
+      "date": "2026-07-20",
+      "direction": "SHORT",
+      "entry": 24162.75,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.375
+    },
+    {
+      "date": "2026-07-21",
+      "direction": "SHORT",
+      "entry": 24192.4,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.229
+    },
+    {
+      "date": "2026-07-22",
+      "direction": "SHORT",
+      "entry": 24048.9,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.363
+    },
+    {
+      "date": "2026-07-23",
+      "direction": "LONG",
+      "entry": 23948.65,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.163
+    },
+    {
+      "date": "2026-07-24",
+      "direction": "SHORT",
+      "entry": 23649.0,
+      "outcome": "WIN",
+      "pnl_pts": 40.0,
+      "orb_range_pct": 0.43
+    },
+    {
+      "date": "2026-07-29",
+      "direction": "LONG",
+      "entry": 24208.3,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.222
+    },
+    {
+      "date": "2026-07-30",
+      "direction": "LONG",
+      "entry": 24273.0,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.316
+    },
+    {
+      "date": "2026-07-31",
+      "direction": "SHORT",
+      "entry": 24312.25,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
+      "orb_range_pct": 0.203
+    }
+  ]
+}
