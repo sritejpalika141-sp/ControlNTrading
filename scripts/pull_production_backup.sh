@@ -15,6 +15,10 @@ REMOTE_APP="/home/$REMOTE_USER/trading-app"
 
 mkdir -p "$BACKUP_DIR"
 
+# Authenticate gcloud (GCP_CREDENTIALS secret, GOOGLE_APPLICATION_CREDENTIALS, or existing login)
+# shellcheck source=gcloud_auth_from_env.sh
+source "$SCRIPT_DIR/gcloud_auth_from_env.sh"
+
 if ! command -v gcloud >/dev/null 2>&1; then
   echo "❌ gcloud not found. Install: https://cloud.google.com/sdk/docs/install"
   exit 1

@@ -60,6 +60,7 @@ def main():
         sys.exit(2)
 
     from backtest_orb import backtest_orb
+    from fyers_client import FyersClient
 
     client = FyersClient(user_id=args.user_id)
     candles_5m = client.get_history_range(IST_SYMBOL, "5", days_back=args.days)

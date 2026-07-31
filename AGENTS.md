@@ -739,9 +739,64 @@ No separate linter is configured; `smoke_test.py` is the pre-deploy gate.
 
 | Service | Needed for |
 |---------|------------|
-| Fyers (`FYERS_*` or DB token) | Live quotes, option chain, `scripts/backtest_orb_fyers.py` |
-| GCP (`gcloud` / `GCP_CREDENTIALS`) | `scripts/pull_production_backup.sh` — optional; cloud VM works without it |
+| Fyers (`FYERS_*` or DB token) | Live quotes, option chain, local `backtest_orb_fyers.py` |
+| GCP (`GCP_CREDENTIALS`) | `pull_production_backup.sh`, `run_orb_fyers_on_prod.sh` |
 | AI keys | Optional; Ollama/local fallback exists |
+
+### Cloud Agent secrets (step-by-step)
+
+Add these in **Cursor → Settings → Cloud Agents → Secrets** (or the secrets panel when starting an agent). Start a **new** agent run after saving — secrets are injected at session start.
+
+#### 1. `GCP_CREDENTIALS` (recommended — unlocks DB pull + prod backtest)
+
+| Field | Value |
+|-------|--------|
+| **Name** | `GCP_CREDENTIALS` |
+| **Value** | Full JSON from your GCP service account key |
+
+**Where to get the JSON:**
+
+1. **Easiest:** GitHub repo → **Settings → Secrets and variables → Actions** → copy existing **`GCP_CREDENTIALS`** (same secret the deploy workflow uses).
+2. **Or GCP Console:** Project `sritej-trading-algo-2026` → IAM → Service accounts → Keys → Add key → JSON.
+
+The value must be the entire file, starting with `{"type":"service_account",...}`.
+
+**After adding, run:**
+
+```bash
+bash scripts/pull_production_backup.sh
+bash scripts/run_orb_fyers_on_prod.sh 30 1
+```
+
+Auth is handled by `scripts/gcloud_auth_from_env.sh` (auto-sourced by the scripts above).
+
+#### 2. Fyers secrets (optional — only for local `backtest_orb_fyers.py`)
+
+If you do **not** want to SSH to prod, add:
+
+| Secret | Description |
+|--------|-------------|
+| `FYERS_CLIENT_ID` | Fyers app ID (e.g. `ABC123-100`) |
+| `FYERS_ACCESS_TOKEN` | Valid access token (expires — refresh via prod login) |
+
+Optional: `FYERS_SECRET_KEY` for token refresh flows.
+
+**Easier path:** skip Fyers secrets and use `run_orb_fyers_on_prod.sh` — it runs on the VM where tokens already exist.
+
+#### 3. What NOT to add
+
+- Do not commit `trading_app.db`, service account JSON, or `ENCRYPTION_KEY` to git.
+- Pulling prod DB does **not** copy `ENCRYPTION_KEY`; encrypted Fyers tokens in a pulled DB only work if you also copy prod `.env` (not recommended). Use prod SSH for Fyers instead.
+
+### Production ops quick reference
+
+```bash
+# Pull live code + SQLite to backups/production/<timestamp>/
+bash scripts/pull_production_backup.sh
+
+# ORB backtest on prod VM (Fyers historical) + copy report locally
+bash scripts/run_orb_fyers_on_prod.sh [days] [user_id] [local_report_path]
+```
 
 The RIPER-5 harness (`process/`, `.claude/`) is dev tooling only — not required to run the trading app.
 
