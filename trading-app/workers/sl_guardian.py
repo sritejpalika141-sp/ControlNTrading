@@ -65,9 +65,8 @@ async def _compute_stop(client, symbol, entry, ltp, side_long):
 
 
 async def sl_guardian():
-    # print(flush=True) so the loop is visible in journalctl (logger output isn't captured here).
-    print("🛡️ SL Guardian started — guarantees every open position always has a stop-loss.", flush=True)
-    logger.info("🛡️ SL Guardian started.")
+    # Use logger (writes to logs/dashboard.log with the rest of the app) for all events.
+    logger.info("🛡️ SL Guardian started — guarantees every open position always has a stop-loss.")
     _tick = 0
     while True:
         try:
@@ -107,13 +106,13 @@ async def sl_guardian():
                         stop, sl_pts = await _compute_stop(client, sym, entry, ltp, side_long)
                         _recent_attempts[sym] = now
                         exit_side = -1 if side_long else 1
-                        print(f"🛡️ Guardian: NAKED position {sym} (entry {entry}, ltp {ltp}) — "
-                              f"placing protective SL-M @ {stop} ({sl_pts}pts).", flush=True)
+                        logger.warning(f"🛡️ Guardian: NAKED position {sym} (entry {entry}, ltp {ltp}) — "
+                                       f"placing protective SL-M @ {stop} ({sl_pts}pts).")
                         res = await asyncio.to_thread(client.place_stop_loss, sym, qty, stop, exit_side)
                         ok = isinstance(res, dict) and (res.get("s") == "ok" or res.get("id"))
                         oid = (res or {}).get("id", "")
                         if ok:
-                            print(f"🛡️ Guardian placed protective SL for {sym} @ {stop} (id {oid}).", flush=True)
+                            logger.warning(f"🛡️ Guardian placed protective SL for {sym} @ {stop} (id {oid}).")
                             # Register the SL id on the tracked trade so trailing_monitor trails it.
                             try:
                                 t = next((x for x in getattr(st, "active_auto_trades", [])
@@ -129,17 +128,17 @@ async def sl_guardian():
                             await _alert(st, f"🛡️ SL Guardian placed a protective stop for {sym} at ₹{stop} "
                                              f"(entry ₹{entry}) — the CO stop had failed, position was naked.")
                         else:
-                            print(f"🛡️ Guardian FAILED to place SL for {sym}: {res}", flush=True)
+                            logger.error(f"🛡️ Guardian FAILED to place SL for {sym}: {res}")
                             await _alert(st, f"🚨 SL Guardian could NOT place a stop for naked {sym} "
                                              f"(entry ₹{entry}). SQUARE OFF MANUALLY NOW. Broker said: "
                                              f"{(res or {}).get('message', res)}")
                 except Exception as ue:
-                    print(f"🛡️ SL Guardian user {u_id} error: {ue}", flush=True)
+                    logger.error(f"🛡️ SL Guardian user {u_id} error: {ue}")
             # Heartbeat every ~6 ticks (~60s) so the loop is visibly alive even when nothing is naked.
             if _tick % 6 == 1:
-                print(f"🛡️ Guardian scan: {_scanned} open position(s), {_naked} naked this tick.", flush=True)
+                logger.info(f"🛡️ Guardian scan: {_scanned} open position(s), {_naked} naked this tick.")
         except Exception as e:
-            print(f"🛡️ SL Guardian loop error: {e}", flush=True)
+            logger.error(f"🛡️ SL Guardian loop error: {e}")
         await asyncio.sleep(GUARDIAN_INTERVAL)
 
 
