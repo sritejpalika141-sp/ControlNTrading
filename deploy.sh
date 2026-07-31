@@ -64,9 +64,22 @@ if [ $VALIDATION_FAILED -ne 0 ]; then
 fi
 echo "✅ All Python files validated."
 
+# ─── Step 2.5: Fix VM ownership (root-owned files block scp) ───
+echo ""
+echo "🔧 Step 2.5: Preparing VM for file upload..."
+# shellcheck source=scripts/gcloud_remote_prep.sh
+source "$SCRIPT_DIR/scripts/gcloud_remote_prep.sh"
+
 # ─── Step 3: Upload files ───
 echo ""
 echo "📤 Step 3: Uploading files to cloud..."
+
+_scp_or_fail() {
+    if ! gcloud compute scp "$@" --zone="$ZONE" --project="$PROJECT" --quiet; then
+        echo "❌ scp failed: $*"
+        exit 1
+    fi
+}
 
 # Generate git info file from local repo
 echo "  📝 Generating git info..."
@@ -79,7 +92,7 @@ GIT_INFO_FILE="$LOCAL_APP/git_info.txt"
 } > "$GIT_INFO_FILE"
 
 echo "  📂 Core files..."
-gcloud compute scp \
+_scp_or_fail \
     "$LOCAL_APP/app.py" \
     "$LOCAL_APP/auth_utils.py" \
     "$LOCAL_APP/fyers_client.py" \
@@ -90,31 +103,31 @@ gcloud compute scp \
     "$LOCAL_APP/git_info.txt" \
     "$SCRIPT_DIR/vm_orchestrator.py" \
     "$LOCAL_APP/strategy_researcher.py" \
-    "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+    "$INSTANCE:$REMOTE_APP/"
 
 echo "  📂 Engine modules..."
-gcloud compute scp --recurse "$LOCAL_APP/engine" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$LOCAL_APP/engine" "$INSTANCE:$REMOTE_APP/"
 
 echo "  📂 Worker modules..."
-gcloud compute scp --recurse "$LOCAL_APP/workers" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$LOCAL_APP/workers" "$INSTANCE:$REMOTE_APP/"
 
 echo "  📂 Data files..."
-gcloud compute scp --recurse "$LOCAL_APP/data" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$LOCAL_APP/data" "$INSTANCE:$REMOTE_APP/"
 
 echo "  📂 Static assets..."
-gcloud compute scp --recurse "$LOCAL_APP/static" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$LOCAL_APP/static" "$INSTANCE:$REMOTE_APP/"
 
 echo "  📂 Scripts (migrations)..."
-gcloud compute scp --recurse "$LOCAL_APP/scripts" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$LOCAL_APP/scripts" "$INSTANCE:$REMOTE_APP/"
 
 echo "  ⚡ C++ HFT Core files..."
-gcloud compute scp --recurse "$SCRIPT_DIR/cpp_core" "$INSTANCE:$REMOTE_BASE/" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail --recurse "$SCRIPT_DIR/cpp_core" "$INSTANCE:$REMOTE_BASE/"
 
 echo "  📂 Fyers credentials..."
-gcloud compute scp "$LOCAL_FYERS/.env" "$INSTANCE:$REMOTE_FYERS/.env" --zone="$ZONE" --project="$PROJECT" --quiet
+_scp_or_fail "$LOCAL_FYERS/.env" "$INSTANCE:$REMOTE_FYERS/.env"
 
 if [ -f "$LOCAL_APP/.env" ]; then
-    gcloud compute scp "$LOCAL_APP/.env" "$INSTANCE:$REMOTE_APP/.env" --zone="$ZONE" --project="$PROJECT" --quiet
+    _scp_or_fail "$LOCAL_APP/.env" "$INSTANCE:$REMOTE_APP/.env"
 fi
 
 # ─── Step 3.5: Create & upload a remote restart script ───

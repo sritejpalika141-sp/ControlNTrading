@@ -785,12 +785,19 @@ Optional: `FYERS_SECRET_KEY` for token refresh flows.
 ### Production ops quick reference
 
 ```bash
+# Fix VM ownership before scp (deploy.sh runs this automatically)
+bash scripts/gcloud_remote_prep.sh
+
 # Pull live code + SQLite to backups/production/<timestamp>/
 bash scripts/pull_production_backup.sh
 
 # ORB backtest on prod VM (Fyers historical) + copy report locally
 bash scripts/run_orb_fyers_on_prod.sh [days] [user_id] [local_report_path]
 ```
+
+**Deploy note:** If GCP deploy logs show `Permission denied` on scp, the VM `trading-app/` tree is likely root-owned. `gcloud_remote_prep.sh` fixes this; `deploy.sh` fails fast if scp still fails after prep.
+
+**Production Analysis** auto-runs after a successful **Deploy to Google Cloud VM** on `main` (plus manual workflow_dispatch).
 
 The RIPER-5 harness (`process/`, `.claude/`) is dev tooling only — not required to run the trading app.
 

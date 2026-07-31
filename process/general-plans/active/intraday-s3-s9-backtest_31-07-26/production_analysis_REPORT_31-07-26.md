@@ -1,7 +1,14 @@
 # Production Analysis Report — 2026-07-31
 
-**Source:** GitHub Actions run [#30623696918](https://github.com/sritejpalika141-sp/ControlNTrading/actions/runs/30623696918)  
-**Artifact:** `backups/ci-download/production-backup/` (also downloadable from Actions → `prod-analysis`)
+**Latest pull:** GitHub Actions [#30624355503](https://github.com/sritejpalika141-sp/ControlNTrading/actions/runs/30624355503)  
+**Latest deploy:** [#30625060122](https://github.com/sritejpalika141-sp/ControlNTrading/actions/runs/30625060122) (PR #13 merge)  
+**Artifact:** `backups/ci-download/production-backup/` (Actions → `prod-analysis`)
+
+## Critical finding (2026-07-31)
+
+**Deploy SCP was failing silently** — VM `trading-app/` files were root-owned, so `gcloud compute scp` returned “Permission denied” for `app.py`, `backtest_orb_fyers.py`, etc. The workflow still reported green because `deploy.sh` did not fail on scp errors.
+
+**Fix in progress:** `scripts/gcloud_remote_prep.sh` runs `sudo chown` before uploads; `deploy.sh` now fails fast on scp errors. After merge + deploy, re-run **Production Analysis** (or wait for auto-trigger post-deploy).
 
 ## Pull summary
 
@@ -14,13 +21,13 @@
 
 ## Users (production DB)
 
-| id | username | active | Fyers client ID | Fyers access token |
-|----|----------|--------|-----------------|-------------------|
-| 1 | admin | yes | **yes** | **no** |
-| 3 | naveen | yes | no | no |
-| 5 | controln | yes | no | no |
+| id | username | active | Fyers client ID | Fyers refresh | Fyers access |
+|----|----------|--------|-----------------|---------------|--------------|
+| 1 | admin | yes | **yes** | **yes** (~972 chars enc.) | **no** (refresh-only OAuth) |
+| 3 | naveen | yes | no | no | no |
+| 5 | controln | yes | no | no | no |
 
-**Fyers backtest failed** because user `admin` (id=1) has no `fyers_access_token` in the DB. Fix: log in on prod → complete Fyers OAuth → re-run **Production Analysis**.
+**Fyers backtest (run #30624355503)** failed with old script message (“Set up FYERS credentials”) — VM never received PR #13 `backtest_orb_fyers.py` due to deploy scp failures. Health API reports `token_valid: true` (runtime refresh works).
 
 ## Live trades today (2026-07-31)
 
@@ -43,14 +50,15 @@ Spot-proxy only — Fyers historical backtest still pending OAuth on prod.
 
 ## Recommended next steps
 
-1. **Prod Fyers login** — `http://35.234.213.226:8000/login` as `admin` → link Fyers → re-run Production Analysis.
-2. **Paper/shadow week** — ORB + S9 with tuned filters before sizing up.
-3. **Reconcile open trades** — 5 OPEN rows; confirm SL guardian and automation state on prod dashboard.
+1. ~~**Prod Fyers login**~~ — Done (refresh token in DB; `token_valid: true` on health API).
+2. **Merge deploy fix** (`gcloud_remote_prep.sh` + fail-fast scp) → confirm deploy logs show no “Permission denied”.
+3. **Production Analysis** after successful deploy — PR #13 backtest script + refresh token path; expect **`prod-analysis-backtest`** artifact. Auto-runs after deploy once `workflow_run` trigger is merged.
+4. **Paper/shadow week** — ORB + S9 with tuned filters before sizing up.
+5. **Reconcile open trades** — check OPEN rows in `executed_trades` on prod dashboard.
 
 ## Re-run production pull
 
 ```bash
 # GitHub UI: Actions → Production Analysis → Run workflow
-# Or locally with gcloud auth:
-bash scripts/pull_production_backup.sh
+# Direct link: https://github.com/sritejpalika141-sp/ControlNTrading/actions/workflows/prod-analysis.yml
 ```
