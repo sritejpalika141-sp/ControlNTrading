@@ -104,7 +104,7 @@ jobs:
         run: bash scripts/run_orb_fyers_on_prod.sh "$BACKTEST_DAYS" "$BACKTEST_USER"
 
       - name: Upload backtest report (if produced)
-        if: steps.fyers_backtest.outcome == 'success' && hashFiles('trading-app/reports/orb_fyers_backtest.json') != ''
+        if: hashFiles('trading-app/reports/orb_fyers_backtest.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: prod-analysis-backtest
