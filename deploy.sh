@@ -85,11 +85,19 @@ upload_trading_app_bundle "$LOCAL_APP" "$SCRIPT_DIR/vm_orchestrator.py" \
   "$INSTANCE" "$ZONE" "$PROJECT" "$REMOTE_USER"
 
 echo "  ⚡ C++ HFT Core files..."
-upload_cpp_core_bundle "$SCRIPT_DIR/cpp_core" "$INSTANCE" "$ZONE" "$PROJECT" "$REMOTE_USER"
+if [ -d "$SCRIPT_DIR/cpp_core" ]; then
+    upload_cpp_core_bundle "$SCRIPT_DIR/cpp_core" "$INSTANCE" "$ZONE" "$PROJECT" "$REMOTE_USER"
+else
+    echo "  ⚠️  Skipping cpp_core (not in repository)"
+fi
 
 echo "  📂 Fyers credentials..."
-upload_file_to_remote_path "$LOCAL_FYERS/.env" "$INSTANCE" "$REMOTE_FYERS/.env" \
-  "$ZONE" "$PROJECT" "$REMOTE_USER"
+if [ -f "$LOCAL_FYERS/.env" ]; then
+    upload_file_to_remote_path "$LOCAL_FYERS/.env" "$INSTANCE" "$REMOTE_FYERS/.env" \
+      "$ZONE" "$PROJECT" "$REMOTE_USER"
+else
+    echo "  ⚠️  Skipping fyers-mcp-server/.env (not present locally)"
+fi
 
 if [ -f "$LOCAL_APP/.env" ]; then
     upload_file_to_remote_path "$LOCAL_APP/.env" "$INSTANCE" "$REMOTE_APP/.env" \
