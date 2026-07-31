@@ -22,17 +22,17 @@ sys.path.insert(0, APP_DIR)
 
 IST = pytz.timezone("Asia/Kolkata")
 
-try:
-    import yfinance as yf
-except ImportError:
-    print("❌ pip install yfinance")
-    sys.exit(1)
-
 from engine.technical_indicators import calculate_adx, calculate_ema
 from engine.strategy9_filters import MIN_ADX_15M, adx_gate_passes, session_allows_entry
 
 
 def fetch_5m(symbol: str, days: int) -> List[Dict]:
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("❌ pip install yfinance")
+        sys.exit(1)
+
     df = yf.Ticker(symbol).history(period=f"{days}d", interval="5m")
     if df.empty:
         return []

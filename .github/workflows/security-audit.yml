@@ -1,0 +1,32 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install trading-app dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r trading-app/requirements.txt
+          pip install pip-audit
+
+      - name: Audit dependencies (informational)
+        run: |
+          echo "Note: fyers-apiv3 pins aiohttp==3.9.3 and requests==2.31.0; upgrades blocked until Fyers SDK releases."
+          pip-audit -r trading-app/requirements.txt || true

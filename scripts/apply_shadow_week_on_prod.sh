@@ -16,5 +16,5 @@ DAYS="${2:-7}"
 echo "👻 Enabling ORB+S9 shadow week on $INSTANCE (user $USER_ID, ${DAYS}d)..."
 gcloud compute ssh "$INSTANCE" \
   --zone="$ZONE" --project="$PROJECT" --quiet \
-  --command="sudo -u $REMOTE_USER bash -lc 'cd /home/$REMOTE_USER/trading-app && .venv/bin/python scripts/enable_orb_s9_shadow_week.py --user-id $USER_ID --days $DAYS'"
-echo "✅ Shadow week applied on production"
+  --command="sudo -u $REMOTE_USER bash -lc 'cd /home/$REMOTE_USER/trading-app && .venv/bin/python scripts/enable_orb_s9_shadow_week.py --user-id $USER_ID --days $DAYS && .venv/bin/python scripts/enforce_backtest_shadow_gates.py --user-id $USER_ID --days 14 --app-dir . --state-dir logs'"
+echo "✅ Shadow week + backtest gate enforcement applied on production"

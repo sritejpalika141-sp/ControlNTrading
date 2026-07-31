@@ -282,6 +282,9 @@ async def lifespan(app):
 
 app = FastAPI(title="ControlN Trading Dashboard", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+from engine.security_middleware import SecurityHeadersMiddleware
+
+app.add_middleware(SecurityHeadersMiddleware)
 from state import VERSION
 SERVER_START_TIME = datetime.now(pytz.timezone('Asia/Kolkata'))
 
