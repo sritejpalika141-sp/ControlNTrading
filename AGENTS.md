@@ -689,6 +689,62 @@ Cross-agent issues: Claude Code and Codex must use the same `process/` folder st
 - Features: `process/features/`
 - Context: `process/context/all-context.md` router plus relevant `process/context/` files/groups
 
+## Cursor Cloud specific instructions
+
+### Product runtime (ControlN / Sritej Trading)
+
+The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn** process on port **8000** with embedded **SQLite** (`trading-app/trading_app.db`). Static UI is served from `trading-app/static/` (no separate frontend build).
+
+**Production (read-only checks):** `http://35.234.213.226:8000` — deploy via GitHub Actions on push to `main`.
+
+### First-time VM prerequisites
+
+If `python3 -m venv` fails, install once (not in the update script):
+
+```bash
+sudo apt-get install -y python3.12-venv curl
+```
+
+### Dev `.env` (gitignored)
+
+Create `trading-app/.env` before first run:
+
+```
+INITIAL_ADMIN_PASSWORD=<strong-password>
+```
+
+`SECRET_KEY` / `ENCRYPTION_KEY` auto-generate on first start. `FYERS_*` and `GCP_CREDENTIALS` are **optional** in the cloud dev VM — login, smoke tests, and yfinance backtests work without them.
+
+### Start / stop the app
+
+| Action | Command |
+|--------|---------|
+| Start (recommended) | `./start_local.sh` from repo root |
+| Start (manual) | `cd trading-app && .venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload` |
+| Background (tmux) | `tmux -f /exec-daemon/tmux.portal.conf new-session -d -s trading-app-dev -c /workspace/trading-app -- '.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload'` |
+
+Login: `http://localhost:8000/login` — user `admin` (seeded from `INITIAL_ADMIN_PASSWORD` on empty DB).
+
+### Lint / test / smoke
+
+| Check | Command (from `trading-app/`) |
+|-------|-------------------------------|
+| Startup gate | `.venv/bin/python smoke_test.py` |
+| Fast unit tests | `.venv/bin/pytest -q tests/test_p0_fixes.py tests/test_orb_filters.py tests/test_strategy9_filters.py -k "not test_regime_guard"` |
+| ORB / S9 backtests (offline) | `.venv/bin/python scripts/backtest_orb.py --days 59` and `scripts/backtest_strategy9_rules.py --days 59` |
+
+No separate linter is configured; `smoke_test.py` is the pre-deploy gate.
+
+### Optional external services
+
+| Service | Needed for |
+|---------|------------|
+| Fyers (`FYERS_*` or DB token) | Live quotes, option chain, `scripts/backtest_orb_fyers.py` |
+| GCP (`gcloud` / `GCP_CREDENTIALS`) | `scripts/pull_production_backup.sh` — optional; cloud VM works without it |
+| AI keys | Optional; Ollama/local fallback exists |
+
+The RIPER-5 harness (`process/`, `.claude/`) is dev tooling only — not required to run the trading app.
+
 ## Porting Notes
 
 This file intentionally preserves the original `CLAUDE.md` workflow while adapting it
