@@ -13,6 +13,13 @@ import pytz
 from typing import List, Dict, Optional
 from engine.strikes import get_strike_recommendations, get_dynamic_lot_size
 from engine.economic_calendar import check_no_economic_events
+from engine.orb_filters import (
+    MIN_ORB_RANGE_PCT,
+    MAX_ORB_RANGE_PCT,
+    orb_range_ok,
+    trend_15m_confirms,
+    volume_multiplier,
+)
 
 logger = logging.getLogger("STRATEGY_ORB")
 IST = pytz.timezone('Asia/Kolkata')
@@ -134,8 +141,15 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     if not (long_breakout or short_breakout):
         return None
 
+    # Breakout candle volume (VIX>15 path used to incorrectly use ORB candle volume)
+    breakout_candle = None
+    if vix > 15.0:
+        breakout_candle = today_candles[-1][1] if today_candles else first_candle
+        trigger_volume = breakout_candle.get("volume", 0) or first_candle.get("volume", 0)
+    # trigger_volume already set for vix<=15 path above
+
     # 4. ENTRY CHECKLIST
-    # Checklist 1: Volume Check (Breakout candle volume >= 2x historical average of 9:20 candle)
+    vol_mult = volume_multiplier(vix)
     prev_920_volumes = []
     for c in candles_5m:
         c_dt = datetime.fromtimestamp(c["timestamp"], tz=pytz.utc).astimezone(IST)
@@ -149,8 +163,17 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
         all_vols = [c["volume"] for c in candles_5m if c["volume"] > 0]
         avg_volume = sum(all_vols) / len(all_vols) if all_vols else 1.0
 
-    if trigger_volume < 2 * avg_volume:
-        logger.info(f"⏭️ Strategy 3: Volume check failed for {symbol}. Volume {trigger_volume} < 2x Avg ({avg_volume:.1f})")
+    if trigger_volume < vol_mult * avg_volume:
+        logger.info(
+            f"⏭️ Strategy 3: Volume check failed for {symbol}. "
+            f"Volume {trigger_volume} < {vol_mult}x Avg ({avg_volume:.1f})"
+        )
+        return None
+
+    # Checklist 1b: 15m trend alignment (backtest-tuned filter)
+    today_5m_only = [c for _, c in today_candles]
+    if not trend_15m_confirms(today_5m_only, bullish=bool(long_breakout)):
+        logger.info(f"⏭️ Strategy 3: 15m trend filter failed for {symbol}")
         return None
 
     # Checklist 2: Pre-market Gap Check (< 1%)
@@ -176,12 +199,13 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     except Exception as e:
         logger.error(f"Strategy 3: Gap check error: {e}")
 
-    # Checklist 3: Range Width Check (< 0.5% of instrument price)
-    if orb_open <= 0:
-        return None
-    range_pct = (orb_high - orb_low) / orb_open * 100
-    if range_pct >= 0.5:
-        logger.info(f"⏭️ Strategy 3: Range check failed for {symbol}. Width {range_pct:.2f}% >= 0.5%")
+    # Checklist 3: Range width (0.08% min, 0.5% max)
+    ok_range, range_pct = orb_range_ok(orb_high, orb_low, orb_open)
+    if not ok_range:
+        if range_pct < MIN_ORB_RANGE_PCT:
+            logger.info(f"⏭️ Strategy 3: ORB too narrow for {symbol}. Width {range_pct:.3f}% < {MIN_ORB_RANGE_PCT}%")
+        else:
+            logger.info(f"⏭️ Strategy 3: Range check failed for {symbol}. Width {range_pct:.2f}% >= {MAX_ORB_RANGE_PCT}%")
         return None
 
     # Checklist 4: Economic event check
