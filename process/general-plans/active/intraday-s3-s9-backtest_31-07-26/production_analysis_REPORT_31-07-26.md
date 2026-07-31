@@ -8,7 +8,7 @@
 
 **Deploy SCP was failing silently** — VM `trading-app/` files were root-owned, so `gcloud compute scp` returned “Permission denied” for `app.py`, `backtest_orb_fyers.py`, etc. The workflow still reported green because `deploy.sh` did not fail on scp errors.
 
-**Fix in progress:** `scripts/gcloud_remote_prep.sh` runs `sudo chown` before uploads; `deploy.sh` now fails fast on scp errors. After merge + deploy, re-run **Production Analysis** (or wait for auto-trigger post-deploy).
+**Fix:** PR #14 added chown prep (insufficient — CI SSH user ≠ `sritejpalika`). **PR #15** uploads via `/tmp` tarball + `sudo rsync` (`scripts/gcloud_deploy_upload.sh`).
 
 ## Pull summary
 

@@ -78,17 +78,25 @@ jobs:
       - name: Sync scripts to production VM
         continue-on-error: true
         run: |
-          bash scripts/gcloud_remote_prep.sh
-          gcloud compute scp --recurse trading-app/scripts \
-            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/" \
-            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
+          # shellcheck source=scripts/gcloud_deploy_upload.sh
+          source scripts/gcloud_deploy_upload.sh
+          upload_dir_to_remote_app_subpath trading-app/scripts \
+            "${{ env.GCP_INSTANCE }}" scripts \
+            "${{ env.GCP_ZONE }}" "${{ env.GCP_PROJECT }}" sritejpalika
           gcloud compute scp trading-app/fyers_client.py \
-            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/" \
+            "${{ env.GCP_INSTANCE }}:/tmp/fyers_client.py" \
             --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
           gcloud compute scp trading-app/engine/orb_filters.py \
             trading-app/engine/economic_calendar.py \
-            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/engine/" \
+            "${{ env.GCP_INSTANCE }}:/tmp/" \
             --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
+          gcloud compute ssh "${{ env.GCP_INSTANCE }}" \
+            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet \
+            --command="sudo cp /tmp/fyers_client.py /home/sritejpalika/trading-app/ && \
+              sudo cp /tmp/orb_filters.py /tmp/economic_calendar.py /home/sritejpalika/trading-app/engine/ && \
+              sudo chown sritejpalika:sritejpalika /home/sritejpalika/trading-app/fyers_client.py \
+                /home/sritejpalika/trading-app/engine/orb_filters.py \
+                /home/sritejpalika/trading-app/engine/economic_calendar.py"
 
       - name: Run ORB Fyers backtest on production VM
         id: fyers_backtest

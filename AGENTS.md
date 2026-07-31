@@ -795,7 +795,7 @@ bash scripts/pull_production_backup.sh
 bash scripts/run_orb_fyers_on_prod.sh [days] [user_id] [local_report_path]
 ```
 
-**Deploy note:** If GCP deploy logs show `Permission denied` on scp, the VM `trading-app/` tree is likely root-owned. `gcloud_remote_prep.sh` fixes this; `deploy.sh` fails fast if scp still fails after prep.
+**Deploy note:** VM uploads use `/tmp` staging + `sudo rsync` (`scripts/gcloud_deploy_upload.sh`). Direct `scp` to `/home/sritejpalika/trading-app/` fails when the CI SSH user is not the file owner.
 
 **Production Analysis** auto-runs after a successful **Deploy to Google Cloud VM** on `main` (plus manual workflow_dispatch).
 
