@@ -23,7 +23,7 @@ source "$SCRIPT_DIR/gcloud_remote_prep.sh"
 
 gcloud compute ssh "$INSTANCE" \
   --zone="$ZONE" --project="$PROJECT" --quiet \
-  --command="cd /home/$REMOTE_USER/trading-app && .venv/bin/python scripts/backtest_orb_fyers.py --days $DAYS --user-id $USER_ID --output reports/orb_fyers_backtest.json"
+  --command="sudo -u $REMOTE_USER bash -lc 'cd /home/$REMOTE_USER/trading-app && .venv/bin/python scripts/backtest_orb_fyers.py --days $DAYS --user-id $USER_ID --output reports/orb_fyers_backtest.json'"
 
 mkdir -p "$(dirname "$LOCAL_REPORT")"
 gcloud compute scp \
