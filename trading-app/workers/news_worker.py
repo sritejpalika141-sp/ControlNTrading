@@ -189,8 +189,10 @@ class NewsWorker:
             # ── Telegram Concise Global Intelligence Dispatcher ──
             try:
                 from engine.notifier import send_webhook_alert
+                from state import get_user_state
                 import os
-                wh_url = os.getenv("TELEGRAM_WEBHOOK", "")
+                st = get_user_state(1)
+                wh_url = os.getenv("TELEGRAM_WEBHOOK", "") or os.getenv("WEBHOOK_URL", "") or getattr(st, "webhook_url", "")
                 if wh_url:
                     today_str = _now_ist.strftime("%Y-%m-%d")
                     current_hour = _now_ist.hour
@@ -201,18 +203,20 @@ class NewsWorker:
 
                     last_hourly = getattr(self, "_last_hourly_hour", -1)
                     last_pre_date = getattr(self, "_last_pre_market_date", "")
+                    last_init_date = getattr(self, "_last_init_date", "")
 
                     should_send = False
-                    title_prefix = "🌐 Global News Brief"
+                    title_prefix = "🌐 Global Market Briefing"
 
                     if is_pre_market and last_pre_date != today_str:
                         should_send = True
                         self._last_pre_market_date = today_str
                         title_prefix = "🌅 Pre-Market Global Briefing"
-                    elif is_market_hours and last_hourly != current_hour:
+                    elif is_market_hours and (last_hourly != current_hour or last_init_date != today_str):
                         should_send = True
                         self._last_hourly_hour = current_hour
-                        title_prefix = f"📊 Market Briefing ({_now_ist.strftime('%H:00 IST')})"
+                        self._last_init_date = today_str
+                        title_prefix = f"📊 Market Briefing ({_now_ist.strftime('%H:%M IST')})"
 
                     if should_send:
                         bullets = result.get("telegram_bullets") or [
