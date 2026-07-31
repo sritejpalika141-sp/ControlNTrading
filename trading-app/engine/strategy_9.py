@@ -60,9 +60,9 @@ MODULE 2 — TREND & MARKET STRUCTURE FILTERS (15M chart)
 
 RULE M2.1 — Non-Sideways Filter (MANDATORY):
   - Check ADX(14) on the 15-minute NIFTY chart
-  - ADX > 20          → TRENDING, proceed to 5M analysis
-  - ADX ≤ 20          → SIDEWAYS, discard ALL 5M signals for this window
-  - Re-evaluate ADX at each session window open: 09:30, 11:00, 13:00 IST
+  - ADX > 25          → TRENDING, proceed to 5M analysis
+  - ADX < 25          → SIDEWAYS, discard ALL 5M signals for this window
+  - Re-evaluate ADX at each session window open: 10:00, 12:00 IST
 
 RULE M2.2 — 9 EMA Slope (15M):
   - For CE setup: 15M 9 EMA must be sloping UP (current EMA value > EMA value 3 bars ago)
@@ -102,11 +102,9 @@ MODULE 4 — TIME WINDOW GATES (IST)
 ════════════════════════════════════════════════════════════
 
 RULE M4.1 — Session Windows:
-  - 09:15 – 09:29  → NO_ENTRY (opening noise, do not trade)
-  - 09:30 – 11:30  → PRIMARY WINDOW (best momentum, highest validity)
-  - 11:30 – 13:00  → NO_ENTRY (lunch consolidation, choppy)
-  - 13:00 – 14:15  → SECONDARY WINDOW (afternoon trend resumption)
-  - 14:15 – 15:30  → NO_ENTRY (hard cutoff, theta decay accelerates)
+  - 09:15 – 09:59  → NO_ENTRY (opening noise, do not trade)
+  - 10:00 – 14:00  → PRIMARY WINDOW (tuned for trend quality; highest validity)
+  - 14:00 – 15:30  → NO_ENTRY (hard cutoff, theta decay accelerates)
 
 RULE M4.2 — Intraday Hard Cutoff:
   - No new entries at or after 14:15 IST on normal days
@@ -131,7 +129,7 @@ CE ENTRY — All 5 conditions must be TRUE:
          Close is in the upper 40% of the candle's range
          Low of this candle is the SL anchor
 
-  [CE-4] 15M context: ADX > 20, 15M EMA sloping up, last 15M candle above 15M EMA
+  [CE-4] 15M context: ADX > 25, 15M EMA sloping up, last 15M candle above 15M EMA
 
   [CE-5] Time and VIX gates pass (Modules 1 and 4)
 
@@ -153,7 +151,7 @@ PE ENTRY — All 5 conditions must be TRUE:
          Close is in the lower 40% of the candle's range
          High of this candle is the SL anchor
 
-  [PE-4] 15M context: ADX > 20, 15M EMA sloping down, last 15M candle below 15M EMA
+  [PE-4] 15M context: ADX > 25, 15M EMA sloping down, last 15M candle below 15M EMA
 
   [PE-5] Time and VIX gates pass (Modules 1 and 4)
 
@@ -244,7 +242,7 @@ MODULE 9 — MANDATORY SKIP CONDITIONS
 
 AUTO-SKIP any setup if ANY of these are true:
   [SKIP-1]  VIX < 11 or VIX > 22
-  [SKIP-2]  ADX ≤ 20 on 15M
+  [SKIP-2]  ADX < 25 on 15M
   [SKIP-3]  Current time outside session windows (M4.1)
   [SKIP-4]  5M signal direction opposes 15M EMA trend direction
   [SKIP-5]  Option premium at entry < ₹25 or > ₹120
@@ -370,6 +368,7 @@ Then output your final JSON signal decision.
 """
 
 from engine.technical_indicators import calculate_adx, calculate_ema as _calculate_ema
+from engine.strategy9_filters import MIN_ADX_15M, adx_gate_passes, session_allows_entry
 
 async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analysis: dict, client, state) -> Tuple[bool, dict]:
     """
@@ -430,6 +429,9 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
                     "low": c["low"], "close": c["close"], "ema9": c_ema
                 })
         
+        if not is_commodity and not session_allows_entry(now):
+            return False, {}
+
         # Format 15M context
         candles_15m = analysis.get("candles_15m", [])
         adx_15 = 26.0
@@ -447,6 +449,12 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             highs_15 = [c["high"] for c in candles_15m]
             lows_15 = [c["low"] for c in candles_15m]
             adx_15 = calculate_adx(highs_15, lows_15, closes_15, 14)
+
+        if not is_commodity and not adx_gate_passes(adx_15):
+            logger.info(
+                f"Strategy 9: ADX gate failed for {symbol} (ADX={adx_15:.1f} < {MIN_ADX_15M})"
+            )
+            return False, {}
             
         # Get Option Chain
         oc = client.get_option_chain_strikes(spot, num_strikes=4, base_symbol=symbol)

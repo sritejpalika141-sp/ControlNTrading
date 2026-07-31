@@ -6,7 +6,7 @@ Artifacts pulled from the live GCP VM (`sritej-trading`, `asia-south1-c`) land h
 
 | Layer | Status |
 |-------|--------|
-| GitHub `main` @ `65acc22` | Matches local application code |
+| GitHub `main` @ `e1b983e`+ | ORB filters merged (PR #4); S9 tune pending deploy |
 | Production static assets (MD5) | Matches local `trading-app/static/` |
 | Production DB / secrets | **Not pulled** — requires GCP SSH credentials in this environment |
 

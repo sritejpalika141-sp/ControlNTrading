@@ -29,6 +29,7 @@ except ImportError:
     sys.exit(1)
 
 from engine.technical_indicators import calculate_adx, calculate_ema
+from engine.strategy9_filters import MIN_ADX_15M, adx_gate_passes, session_allows_entry
 
 
 def fetch_5m(symbol: str, days: int) -> List[Dict]:
@@ -53,7 +54,7 @@ def fetch_5m(symbol: str, days: int) -> List[Dict]:
 
 
 def rules_signal(candles_5m: List[Dict], i: int) -> Tuple[str, float]:
-    """Simplified Module 2+4: ADX>20 trend + EMA9 retest on 5m close."""
+    """Simplified Module 2+4: ADX≥25 trend + EMA9 retest on 5m close."""
     if i < 20:
         return "NONE", 0.0
     window = candles_5m[: i + 1]
@@ -61,7 +62,7 @@ def rules_signal(candles_5m: List[Dict], i: int) -> Tuple[str, float]:
     lows = [c["low"] for c in window]
     closes = [c["close"] for c in window]
     adx = calculate_adx(highs, lows, closes, 14)
-    if adx < 20:
+    if not adx_gate_passes(adx):
         return "NONE", adx
 
     ema9 = calculate_ema(closes, 9)
@@ -104,10 +105,8 @@ def run_backtest(candles: List[Dict], max_trades_per_day: int = 3) -> Dict:
             if count >= max_trades_per_day:
                 break
             cdt = datetime.fromtimestamp(bars[i]["timestamp"], IST)
-            if cdt.hour < 9 or (cdt.hour == 9 and cdt.minute < 30):
+            if not session_allows_entry(cdt):
                 continue
-            if cdt.hour > 14 or (cdt.hour == 14 and cdt.minute > 30):
-                break
             if cdt.minute % 5 != 0:
                 continue
 
@@ -128,7 +127,7 @@ def run_backtest(candles: List[Dict], max_trades_per_day: int = 3) -> Dict:
     pf = (pf_num / pf_den) if pf_den else 0
 
     return {
-        "strategy": "Strategy 9 rules-only (no LLM)",
+        "strategy": "Strategy 9 rules-only (ADX≥25, 10:00–14:00)",
         "trades": len(trades),
         "wins": wins,
         "losses": losses,
