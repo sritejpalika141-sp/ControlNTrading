@@ -38,7 +38,25 @@ jobs:
       - name: Pull production backup
         run: bash scripts/pull_production_backup.sh
 
+      - name: Sync backtest script to production VM
+        run: |
+          gcloud compute ssh "${{ env.GCP_INSTANCE || 'sritej-trading' }}" \
+            --zone="${{ env.GCP_ZONE || 'asia-south1-c' }}" \
+            --project="${{ env.GCP_PROJECT || 'sritej-trading-algo-2026' }}" --quiet \
+            --command="mkdir -p /home/sritejpalika/trading-app/scripts"
+          gcloud compute scp \
+            trading-app/scripts/backtest_orb_fyers.py \
+            trading-app/scripts/backtest_orb.py \
+            trading-app/engine/orb_filters.py \
+            sritej-trading:/home/sritejpalika/trading-app/scripts/ \
+            --zone=asia-south1-c --project=sritej-trading-algo-2026 --quiet
+          gcloud compute scp trading-app/engine/orb_filters.py \
+            sritej-trading:/home/sritejpalika/trading-app/engine/ \
+            --zone=asia-south1-c --project=sritej-trading-algo-2026 --quiet
+
       - name: Run ORB Fyers backtest on production VM
+        id: fyers_backtest
+        continue-on-error: true
         run: bash scripts/run_orb_fyers_on_prod.sh "${{ inputs.backtest_days }}" "${{ inputs.user_id }}"
 
       - name: Package artifacts
@@ -60,4 +78,10 @@ jobs:
           name: prod-analysis
           path: artifact-bundle/
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: warn
+
+      - name: Backtest step result
+        if: steps.fyers_backtest.outcome == 'failure'
+        run: |
+          echo "::warning::Fyers backtest failed (often missing Fyers login on prod). DB backup artifact should still be attached."
+          exit 0
