@@ -27,17 +27,16 @@ sys.path.insert(0, APP_DIR)
 
 IST = pytz.timezone("Asia/Kolkata")
 
-try:
-    import yfinance as yf
-except ImportError:
-    print("❌ yfinance required: pip install yfinance")
-    sys.exit(1)
-
 from engine.economic_calendar import check_no_economic_events
 from engine.orb_filters import orb_range_ok, trend_15m_confirms, volume_multiplier
 
 
 def fetch_candles(symbol: str, days: int) -> Tuple[List[Dict], List[Dict]]:
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("❌ yfinance required: pip install yfinance")
+        sys.exit(1)
     ticker = yf.Ticker(symbol)
     df_5m = ticker.history(period=f"{days}d", interval="5m")
     df_daily = ticker.history(period="1y", interval="1d")
