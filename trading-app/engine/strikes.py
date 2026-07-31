@@ -73,26 +73,39 @@ def select_strike(option_chain: Dict, signal_type: str, spot: float,
     return best
 
 
+# Strike-selection tuning (owner directive 31-07-26 — OI-change + IV + delta/theta, all segments).
+DELTA_FLOOR = 0.35        # skip strikes whose |delta| is below this (too far OTM — barely moves, decays)
+DELTA_IDEAL = 0.50        # reward peaks at ATM-ish delta
+OI_CHANGE_WEIGHT = 0.25   # scales the OI-change positioning score (oichp is a percent)
+
+
 def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float, dte: int = 5, exclude_symbols: List[str] = None, asset_class: str = None) -> List[Dict]:
     """
-    Quantitative Strike Selection (OI & DTE Optimized):
-    - DTE <= 1 (Expiry): Prefers ITM strikes to avoid theta decay.
-    - DTE > 1: Prefers high OI strikes around ATM for liquidity.
-
-    asset_class: multi-asset Phase 2 bridging — registry key for the strike interval used by the
-    ATM fallback and the expiry-day ITM offset. None -> INDEX_OPTIONS (interval 50), byte-identical.
+    Strike selection driven by OI CHANGE + IV + DELTA/THETA (owner directive 31-07-26), biased to
+    ATM/near-ATM. Composite score per strike:
+      • ATM proximity (stay ATM/near; expiry-day tilts one strike ITM),
+      • OI-CHANGE positioning — reward strikes backed by supportive option-writer positioning
+        (for a CALL: PUT-OI building below = support, CALL-OI building above = resistance to avoid;
+         mirrored for a PUT),
+      • DELTA — floor out far-OTM junk (|delta| < DELTA_FLOOR skipped) and reward near-ATM delta,
+      • IV guard — penalise strikes whose IV is rich vs the chain median (IV-crush protection),
+      • THETA guard — penalise fast time-decay, harsher on/near expiry,
+      • liquidity — OI level.
+    Greeks (IV/delta/theta) are computed via Black-Scholes (engine.greeks) since Fyers doesn't
+    provide them. Fully defensive: if greeks can't be computed for a strike it degrades to the
+    distance + OI + positioning score rather than dropping the strike. Returns the full score-ranked
+    list (best first); callers that read [0] are unchanged, margin-aware callers walk down.
     """
     if signal_type in ["NO TRADE", "WAITING"]:
         return []
 
     from engine.asset_classes import get_asset_class
+    from engine.greeks import compute_greeks
     _si = get_asset_class(asset_class).strike_interval
     atm_strike = option_chain.get("atm", round(spot / _si) * _si)
     calls = option_chain.get("calls", [])
     puts = option_chain.get("puts", [])
-    
-    # Only require the side relevant to the signal — a PUT signal should not be
-    # blocked just because calls is empty, and vice-versa.
+
     if signal_type == "CALL" and not calls:
         return []
     if signal_type == "PUT" and not puts:
@@ -100,59 +113,76 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
     if not calls and not puts:
         return []
 
-    # Function to score strikes based on OI and distance from ATM
-    def score_options(options: List[Dict], is_call: bool):
-        scored = []
-        # Determine target moneyness based on DTE
-        # If DTE <= 1 (Expiry), we want slightly ITM (one strike step ITM: -si for CE, +si for PE).
-        # _si comes from the asset-class registry (INDEX_OPTIONS == 50, byte-identical to the old -50/50).
-        target_offset = 0
-        if dte <= 1:
-            target_offset = -_si if is_call else _si
-        
-        target_price = atm_strike + target_offset
-        
-        max_oi = max((o.get("oi", 1) for o in options), default=1)
-        
-        for opt in options:
-            o = opt.copy()
-            strike = o["strike"]
-            symbol = o.get("symbol", "")
-            
-            # Skip previously traded strikes
-            if exclude_symbols and symbol in exclude_symbols:
-                continue
+    is_call = (signal_type == "CALL")
+    t_years = max(float(dte), 0.5) / 365.0    # floor at ~half a day so near-expiry greeks stay finite
 
-            dist_from_target = abs(strike - target_price)
-            
-            # Score Components
-            # 1. Proximity Score (Higher is better, max 50)
-            prox_score = max(0, 50 - (dist_from_target / 5))
-            
-            # 2. OI Score (Higher is better, max 50)
-            oi_val = o.get("oi", 0)
-            oi_score = (oi_val / max_oi) * 50 if max_oi > 0 else 0
-            
-            o["score"] = round(prox_score + oi_score, 1)
-            o["moneyness"] = "ITM" if (is_call and strike < spot) or (not is_call and strike > spot) else ("ATM" if strike == atm_strike else "OTM")
-            scored.append(o)
-            
-        return sorted(scored, key=lambda x: x["score"], reverse=True)
+    def _oichp(o):
+        try:
+            return float(o.get("oi_change_pct", 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
-    # Get ranked options
-    ranked_calls = score_options(calls, True)
-    ranked_puts = score_options(puts, False)
+    # OI-change positioning: support from PUT-OI building at/below a strike; resistance from CALL-OI
+    # building at/above it (within ~2 strikes). Bullish rewards support-minus-resistance; PUT mirrors.
+    band = 2 * _si
 
-    # Return the FULL score-ranked list (was: only [0], a single strike). results[0] is still the
-    # best pick, so every caller that reads recommendations[0] is unchanged — but margin-aware
-    # callers can now walk down to a cheaper affordable strike when the top pick exceeds available
-    # margin (a small account could otherwise NEVER trade an expensive underlying like crude).
-    ranked = ranked_calls if signal_type == "CALL" else (ranked_puts if signal_type == "PUT" else [])
-    results = []
-    for opt in ranked:
-        opt["type_label"] = f"{opt['moneyness']} {signal_type} (OI Optimized)"
-        results.append(opt)
-    return results
+    def positioning(strike):
+        support = max((_oichp(p) for p in puts if p["strike"] <= strike and (strike - p["strike"]) <= band), default=0.0)
+        resistance = max((_oichp(c) for c in calls if c["strike"] >= strike and (c["strike"] - strike) <= band), default=0.0)
+        support = max(-50.0, min(support, 100.0))
+        resistance = max(-50.0, min(resistance, 100.0))
+        return (support - resistance) if is_call else (resistance - support)
+
+    options = calls if is_call else puts
+    max_oi = max((o.get("oi", 1) for o in options), default=1) or 1
+    target_price = atm_strike + ((-_si if is_call else _si) if dte <= 1 else 0)
+
+    # Chain median IV (near-ATM) — a RELATIVE yardstick so the IV guard works across underlyings
+    # whose absolute IV levels differ (index vs stock vs crude).
+    near_ivs = []
+    for o in options:
+        if abs(o["strike"] - atm_strike) <= 3 * _si and float(o.get("ltp", 0) or 0) > 0:
+            g = compute_greeks(o["ltp"], spot, o["strike"], t_years, is_call)
+            if g.get("iv"):
+                near_ivs.append(g["iv"])
+    median_iv = sorted(near_ivs)[len(near_ivs) // 2] if near_ivs else None
+
+    scored = []
+    for opt in options:
+        o = opt.copy()
+        strike = o["strike"]
+        if exclude_symbols and o.get("symbol", "") in exclude_symbols:
+            continue
+        premium = float(o.get("ltp", 0) or 0)
+        g = compute_greeks(premium, spot, strike, t_years, is_call) if premium > 0 else {}
+        delta = abs(g.get("delta") or 0.0)
+        iv = g.get("iv") or 0.0
+        theta = g.get("theta_per_day") or 0.0
+
+        # DELTA FLOOR: with valid greeks, drop far-OTM junk that barely moves. Without greeks, keep.
+        if g and delta and delta < DELTA_FLOOR:
+            continue
+
+        prox_score = max(0.0, 40.0 - abs(strike - target_price) / _si * 8.0)          # max 40
+        oi_liq = (o.get("oi", 0) / max_oi) * 15.0                                       # max 15
+        posn = max(-25.0, min(positioning(strike) * OI_CHANGE_WEIGHT, 25.0))           # ±25
+        delta_score = max(0.0, 25.0 - abs(delta - DELTA_IDEAL) * 100.0) if g else 12.0  # max 25
+        iv_pen = 0.0
+        if g and median_iv and iv > median_iv * 1.15:
+            iv_pen = min(15.0, (iv / median_iv - 1.15) * 60.0)                          # rich-IV penalty
+        theta_pen = 0.0
+        if premium > 0 and theta:
+            theta_pen = min(20.0, (abs(theta) / premium) * 100.0 * (1.8 if dte <= 1 else 1.0))
+
+        o["score"] = round(prox_score + oi_liq + posn + delta_score - iv_pen - theta_pen, 1)
+        o["moneyness"] = "ITM" if (is_call and strike < spot) or (not is_call and strike > spot) else ("ATM" if strike == atm_strike else "OTM")
+        o["greeks"] = {"delta": g.get("delta"), "iv": iv, "theta": theta}
+        scored.append(o)
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    for opt in scored:
+        opt["type_label"] = f"{opt['moneyness']} {signal_type} (OIΔ/IV/Δ-optimized)"
+    return scored
 
 def resolve_current_commodity_expiry(prefix: str, client=None) -> str:
     """

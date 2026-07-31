@@ -1133,6 +1133,11 @@ class FyersClient:
                     "ask": item.get("ask", 0),
                     "volume": item.get("volume", 0),
                     "oi": item.get("oi", 0),
+                    # OI CHANGE (Fyers provides it) — how much OI built/unwound vs the prior snapshot.
+                    # Drives OI-change-based strike selection (support/resistance positioning).
+                    "oi_change": item.get("oich", 0),
+                    "oi_change_pct": item.get("oichp", 0),
+                    "prev_oi": item.get("prev_oi", 0),
                     "prev_close": item.get("ltp", 0) - item.get("ltpch", 0),
                     "change_pct": item.get("ltpchp", 0),
                 }
