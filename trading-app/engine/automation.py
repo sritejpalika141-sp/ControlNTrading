@@ -586,6 +586,39 @@ class TradingState:
                 return True
         return False
 
+    def reconcile_active_trades(self, open_symbols, grace_seconds=45):
+        """Drop STALE active_auto_trades entries whose position is no longer open at the broker.
+
+        Bug this fixes (31-07-26): when a position closed, its active_auto_trades entry was sometimes
+        NOT removed, leaving a phantom. The `has_active_trade_for_strategy` guard then thinks the
+        strategy is still in a trade and silently blocks it from EVER re-entering (Strategy 11 / 8 /
+        Crude were all frozen this way). This reconciler compares tracked trades against the broker's
+        actual open positions and removes any that have been missing beyond a grace period. The grace
+        (per-entry `_missing_since` stamp) prevents a transient feed blip from clearing a live trade.
+        Returns the list of removed symbols."""
+        import time as _t
+        now = _t.time()
+        open_set = set(open_symbols or [])
+        kept, removed = [], []
+        for t in self.active_auto_trades:
+            sym = t.get("symbol")
+            if sym in open_set:
+                t.pop("_missing_since", None)   # present at broker → clear any missing stamp
+                kept.append(t)
+            else:
+                first_missing = t.get("_missing_since")
+                if first_missing is None:
+                    t["_missing_since"] = now    # first time seen missing → start grace, keep
+                    kept.append(t)
+                elif now - first_missing >= grace_seconds:
+                    removed.append(sym)          # missing beyond grace → drop the phantom
+                else:
+                    kept.append(t)               # still within grace
+        if removed:
+            self.active_auto_trades = kept
+            self.save()
+        return removed
+
     def can_trade(self, strategy_name="", signal_type="", symbol=""):
         # Check for daily reset first
         self.check_daily_reset()

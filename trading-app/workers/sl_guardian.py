@@ -78,6 +78,13 @@ async def sl_guardian():
                     st = get_user_state(u_id)
                     positions = await api_queue.enqueue(1, client.get_positions) or []
                     open_pos = [p for p in positions if abs(int(p.get("qty", 0) or 0)) > 0]
+                    # RECONCILE tracked trades vs the broker's real open positions FIRST — this must
+                    # run even when there are zero open positions (that's exactly when every tracked
+                    # entry is a stale phantom blocking its strategy from re-entering). Grace period
+                    # guards against transient feed blips.
+                    _dropped = st.reconcile_active_trades({p.get("symbol") for p in open_pos})
+                    if _dropped:
+                        logger.warning(f"🧹 Guardian reconciled stale trades (position closed): {_dropped}")
                     if not open_pos:
                         continue
                     _scanned += len(open_pos)
