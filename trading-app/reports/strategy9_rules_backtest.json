@@ -1,10 +1,10 @@
 {
-  "strategy": "Strategy 9 rules-only (no LLM)",
-  "trades": 154,
-  "wins": 40,
-  "losses": 114,
-  "win_rate_pct": 26.0,
-  "profit_factor": 0.7,
+  "strategy": "Strategy 9 rules-only (ADX\u226525, 10:00\u201314:00)",
+  "trades": 124,
+  "wins": 41,
+  "losses": 83,
+  "win_rate_pct": 33.1,
+  "profit_factor": 0.99,
   "pass_gate": false,
   "sample_trades": [
     {
@@ -112,7 +112,7 @@
     {
       "date": "2026-05-21",
       "signal": "CALL",
-      "adx": 24.34,
+      "adx": 31.96,
       "outcome": "LOSS"
     },
     {
