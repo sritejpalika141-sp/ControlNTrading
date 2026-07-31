@@ -18,3 +18,5 @@ WebToApp_eval/
 credentials*.json
 gcp-credentials.json
 *.out
+backups/ci-download/
+backups/production/**/trading_app.db
