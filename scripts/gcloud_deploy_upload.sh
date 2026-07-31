@@ -55,6 +55,11 @@ upload_cpp_core_bundle() {
   local remote_user="$5"
   local remote_base="/home/${remote_user}"
 
+  if [ ! -d "${cpp_dir}" ]; then
+    echo "  ⚠️  Skipping cpp_core (directory not found: ${cpp_dir})"
+    return 0
+  fi
+
   local tarball
   tarball="$(mktemp /tmp/sritej-cpp-XXXXXX.tar.gz)"
   tar -czf "${tarball}" -C "$(dirname "${cpp_dir}")" "$(basename "${cpp_dir}")"
