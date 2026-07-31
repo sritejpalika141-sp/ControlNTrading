@@ -71,9 +71,9 @@ async def evaluate_frvp_strategy(
                 }
 
         elif is_red and spot < prev_candle["low"]:
-            # Bearish LVN Vacuum Acceleration (PUT BUY) -> SL = Lowest Low of last 3 1-min candles
-            sl = min([float(c["low"]) for c in sl_source[-3:]]) - 0.5
-            risk = spot - sl
+            # Bearish LVN Vacuum Acceleration (PUT BUY) -> SL above entry at 1m 3-candle high
+            sl = max([float(c["high"]) for c in sl_source[-3:]]) + 0.5
+            risk = sl - spot
             if risk > 1.0:
                 return {
                     "signal": "BUY",
@@ -87,7 +87,7 @@ async def evaluate_frvp_strategy(
                     "open_target": True,
                     "tsl_mode": "1M_3_CANDLE_LOW",
                     "confidence": 88,
-                    "reason": f"Price entered LVN vacuum at {spot:.1f}, SL at 1m 3-candle low ({sl:.1f}), open target for big trend"
+                    "reason": f"Price entered LVN vacuum at {spot:.1f}, SL at 1m 3-candle high ({sl:.1f}), open target for big trend"
                 }
 
     # 2. POC Rejection / Value Area Re-entry Trade
@@ -111,8 +111,8 @@ async def evaluate_frvp_strategy(
             }
 
     if prev_candle["high"] > vah and last_candle["close"] < vah and is_red:
-        sl = min([float(c["low"]) for c in sl_source[-3:]]) - 0.5
-        risk = spot - sl
+        sl = max([float(c["high"]) for c in sl_source[-3:]]) + 0.5
+        risk = sl - spot
         if risk > 1.0:
             return {
                 "signal": "BUY",
@@ -126,7 +126,7 @@ async def evaluate_frvp_strategy(
                 "open_target": True,
                 "tsl_mode": "1M_3_CANDLE_LOW",
                 "confidence": 82,
-                "reason": f"VAH rejection at {spot:.1f}, SL at 1m 3-candle low ({sl:.1f}), open target for big trend"
+                "reason": f"VAH rejection at {spot:.1f}, SL at 1m 3-candle high ({sl:.1f}), open target for big trend"
             }
 
     return None

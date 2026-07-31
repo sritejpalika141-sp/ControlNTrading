@@ -3,6 +3,8 @@ from datetime import datetime
 import pytz
 import logging
 
+from engine.technical_indicators import candle_ist_date
+
 logger = logging.getLogger(__name__)
 
 async def evaluate_gap_fill_strategy(spot: float, candles_5m: List[Dict], analysis: Dict, active_symbols: List[str] = None, client=None, state=None) -> Tuple[bool, Dict]:
@@ -64,11 +66,11 @@ async def evaluate_gap_fill_strategy(spot: float, candles_5m: List[Dict], analys
         "high_magnitude": high_magnitude
     }
 
-    # Extract today's 5-minute candles
-    today_date = now.strftime("%Y-%m-%d")
+    # Extract today's 5-minute candles (Fyers uses unix timestamps, not ISO strings)
+    today_date = now.date()
     todays_candles = []
     for c in candles_5m:
-        if c.get("timestamp") and c["timestamp"].startswith(today_date):
+        if candle_ist_date(c, ist) == today_date:
             todays_candles.append(c)
             
     if len(todays_candles) < 2:

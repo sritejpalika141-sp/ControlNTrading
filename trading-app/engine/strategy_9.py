@@ -369,18 +369,7 @@ Work through each module in order. For each module, state PASS or FAIL and why.
 Then output your final JSON signal decision.
 """
 
-def _calculate_ema(prices, period):
-    if not prices:
-        return 0
-    multiplier = 2 / (period + 1)
-    ema = prices[0]
-    for p in prices[1:]:
-        ema = (p - ema) * multiplier + ema
-    return round(ema, 2)
-
-def _calculate_adx(highs, lows, closes, period=14):
-    # Simplified ADX mock. If real TA is needed, integrate talib.
-    return 26.4 
+from engine.technical_indicators import calculate_adx, calculate_ema as _calculate_ema
 
 async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analysis: dict, client, state) -> Tuple[bool, dict]:
     """
@@ -457,7 +446,7 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             last_above = last_15m_close > ema9_15m_cur
             highs_15 = [c["high"] for c in candles_15m]
             lows_15 = [c["low"] for c in candles_15m]
-            adx_15 = _calculate_adx(highs_15, lows_15, closes_15, 14)
+            adx_15 = calculate_adx(highs_15, lows_15, closes_15, 14)
             
         # Get Option Chain
         oc = client.get_option_chain_strikes(spot, num_strikes=4, base_symbol=symbol)

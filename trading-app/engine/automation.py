@@ -138,6 +138,7 @@ class TradingState:
         self.strat_7_pending_order = None
         self.strat_7_was_stopout = False
         self.strat_7_awaiting_confirmation = None
+        self.strat_10_trades_today = 0
         
         # Pre-Market AI Oracle State
         self.use_ai_oracle = False
@@ -226,6 +227,7 @@ class TradingState:
                         self.strat_6_gap_data = data.get("strat_6_gap_data", None)
                         self.strat_6_confirmation_data = data.get("strat_6_confirmation_data", None)
                         self.strat_7_trades_today = data.get("strat_7_trades_today", 0)
+                        self.strat_10_trades_today = data.get("strat_10_trades_today", 0)
                         self.strat_7_pending_order = data.get("strat_7_pending_order", None)
                         self.strat_7_was_stopout = data.get("strat_7_was_stopout", False)
                         self.strat_7_awaiting_confirmation = data.get("strat_7_awaiting_confirmation", None)
@@ -327,6 +329,7 @@ class TradingState:
             "strat_7_pending_order": getattr(self, "strat_7_pending_order", None),
             "strat_7_was_stopout": getattr(self, "strat_7_was_stopout", False),
             "strat_7_awaiting_confirmation": getattr(self, "strat_7_awaiting_confirmation", None),
+            "strat_10_trades_today": getattr(self, "strat_10_trades_today", 0),
             "use_ai_oracle": getattr(self, "use_ai_oracle", False),
             "ai_daily_bias": getattr(self, "ai_daily_bias", ""),
             "last_trade_close_time": self.last_trade_close_time,
@@ -444,6 +447,7 @@ class TradingState:
         self.strat_7_pending_order = None
         self.strat_7_was_stopout = False
         self.strat_7_awaiting_confirmation = None
+        self.strat_10_trades_today = 0
         # Reset AI Bias
         self.ai_daily_bias = ""
         # Preserve automation_enabled and active_symbols across resets
