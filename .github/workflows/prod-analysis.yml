@@ -1,0 +1,63 @@
+# Runs on GitHub Actions using the repo's GCP_CREDENTIALS secret (no Cursor secret needed).
+name: Production Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      backtest_days:
+        description: ORB Fyers backtest lookback (days)
+        required: false
+        default: "30"
+      user_id:
+        description: Fyers user id on production VM
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  prod-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure gcloud SSH
+        run: gcloud compute config-ssh --quiet
+
+      - name: Pull production backup
+        run: bash scripts/pull_production_backup.sh
+
+      - name: Run ORB Fyers backtest on production VM
+        run: bash scripts/run_orb_fyers_on_prod.sh "${{ inputs.backtest_days }}" "${{ inputs.user_id }}"
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifact-bundle
+          LATEST="$(ls -td backups/production/*/ 2>/dev/null | head -1)"
+          if [ -n "$LATEST" ]; then
+            cp -a "$LATEST" artifact-bundle/production-backup
+          fi
+          if [ -f trading-app/reports/orb_fyers_backtest.json ]; then
+            mkdir -p artifact-bundle/reports
+            cp trading-app/reports/orb_fyers_backtest.json artifact-bundle/reports/
+          fi
+          echo "Bundle contents:" && find artifact-bundle -type f | head -50
+
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-analysis
+          path: artifact-bundle/
+          retention-days: 7
+          if-no-files-found: error

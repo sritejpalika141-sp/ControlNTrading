@@ -747,28 +747,22 @@ No separate linter is configured; `smoke_test.py` is the pre-deploy gate.
 
 Add these in **Cursor → Settings → Cloud Agents → Secrets** (or the secrets panel when starting an agent). Start a **new** agent run after saving — secrets are injected at session start.
 
-#### 1. `GCP_CREDENTIALS` (recommended — unlocks DB pull + prod backtest)
+#### 1. `GCP_CREDENTIALS` (optional in Cursor — use GitHub Actions instead)
 
 | Field | Value |
 |-------|--------|
 | **Name** | `GCP_CREDENTIALS` |
-| **Value** | Full JSON from your GCP service account key |
+| **Value** | Full JSON from your GCP service account key (~2000+ chars) |
 
-**Where to get the JSON:**
-
-1. **Easiest:** GitHub repo → **Settings → Secrets and variables → Actions** → copy existing **`GCP_CREDENTIALS`** (same secret the deploy workflow uses).
-2. **Or GCP Console:** Project `sritej-trading-algo-2026` → IAM → Service accounts → Keys → Add key → JSON.
-
-The value must be the entire file, starting with `{"type":"service_account",...}`.
-
-**After adding, run:**
+**Easier alternative (no Cursor secret):** GitHub already stores `GCP_CREDENTIALS` for deploy. Trigger production pull + Fyers backtest via Actions:
 
 ```bash
-bash scripts/pull_production_backup.sh
-bash scripts/run_orb_fyers_on_prod.sh 30 1
+bash scripts/trigger_prod_analysis.sh 30 1
 ```
 
-Auth is handled by `scripts/gcloud_auth_from_env.sh` (auto-sourced by the scripts above).
+Or: GitHub → **Actions** → **Production Analysis** → **Run workflow**.
+
+Artifacts (DB snapshot + `orb_fyers_backtest.json`) download to `backups/ci-download/` after the run completes.
 
 #### 2. Fyers secrets (optional — only for local `backtest_orb_fyers.py`)
 
