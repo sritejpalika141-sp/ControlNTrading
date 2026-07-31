@@ -113,6 +113,7 @@ For most substantial tasks:
 | architecture or stack questions | this file |
 | testing or verification | `process/context/tests/all-tests.md` |
 | creating a new plan | `process/context/planning/all-planning.md` |
+| cloud security, deploy, prod hardening | `process/context/cloud-security-posture.md` |
 
 ## Context Group Lifecycle
 

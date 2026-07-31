@@ -1159,6 +1159,23 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             return
 
         # ═══════════════════════════════════════════
+        # PORTFOLIO: max concurrent index option positions (risk cap)
+        # ═══════════════════════════════════════════
+        _max_index_opts = int(getattr(state, "max_concurrent_index_options", 2) or 2)
+        _active = getattr(state, "active_auto_trades", []) or []
+        _index_opt_count = sum(
+            1
+            for t in _active
+            if (t.get("symbol") or "").upper().endswith(("CE", "PE"))
+            and any(x in (t.get("symbol") or "").upper() for x in ("NIFTY", "BANKNIFTY"))
+        )
+        if _index_opt_count >= _max_index_opts:
+            logger.info(
+                f"⏭️ Portfolio cap: {_index_opt_count}/{_max_index_opts} index options open — skipping {strategy_name}"
+            )
+            return
+
+        # ═══════════════════════════════════════════
         # POLICY: BUY ONLY — Block all SELL trades
         # ═══════════════════════════════════════════
         requested_side = sig.get("side", "BUY")

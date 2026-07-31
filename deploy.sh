@@ -129,7 +129,12 @@ if [ -d "$CPP_DIR" ]; then
 fi
 
 echo "📦 Installing dependencies into .venv..."
+$APP_DIR/.venv/bin/pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
 $APP_DIR/.venv/bin/pip install -r $APP_DIR/requirements.txt --quiet 2>&1 | tail -3
+
+echo "🔒 Refreshing OS security packages (openssl, ca-certificates, curl)..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade openssl ca-certificates curl 2>/dev/null | tail -5 || true
 
 # Set permissions
 sudo chown -R sritejpalika:sritejpalika $APP_DIR/ 2>/dev/null || true
