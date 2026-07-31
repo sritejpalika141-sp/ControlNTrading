@@ -103,12 +103,25 @@ jobs:
         continue-on-error: true
         run: bash scripts/run_orb_fyers_on_prod.sh "$BACKTEST_DAYS" "$BACKTEST_USER"
 
+      - name: Run S9 Fyers backtest on production VM
+        id: s9_fyers_backtest
+        continue-on-error: true
+        run: bash scripts/run_s9_fyers_on_prod.sh "$BACKTEST_DAYS" "$BACKTEST_USER"
+
       - name: Upload backtest report (if produced)
         if: hashFiles('trading-app/reports/orb_fyers_backtest.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: prod-analysis-backtest
           path: trading-app/reports/orb_fyers_backtest.json
+          retention-days: 7
+
+      - name: Upload S9 backtest report (if produced)
+        if: hashFiles('trading-app/reports/s9_fyers_backtest.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-analysis-s9-backtest
+          path: trading-app/reports/s9_fyers_backtest.json
           retention-days: 7
 
       - name: Enable ORB+S9 shadow week on production
@@ -121,6 +134,13 @@ jobs:
           if [ "${{ steps.pull.outcome }}" = "success" ]; then
             echo "✅ Production DB backup uploaded as artifact: prod-analysis"
           fi
-          if [ "${{ steps.fyers_backtest.outcome }}" != "success" ]; then
-            echo "::warning::Fyers backtest did not complete. Log in to prod Fyers if needed, then re-run."
+          if [ -f trading-app/reports/orb_fyers_backtest.json ]; then
+            echo "✅ ORB Fyers backtest JSON present (pass_gate may still be false)."
+          elif [ "${{ steps.fyers_backtest.outcome }}" != "success" ]; then
+            echo "::warning::ORB Fyers backtest did not complete. Log in to prod Fyers if needed, then re-run."
+          fi
+          if [ -f trading-app/reports/s9_fyers_backtest.json ]; then
+            echo "✅ S9 Fyers backtest JSON present (pass_gate may still be false)."
+          elif [ "${{ steps.s9_fyers_backtest.outcome }}" != "success" ]; then
+            echo "::warning::S9 Fyers backtest did not complete."
           fi
