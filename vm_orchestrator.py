@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import sqlite3
 import difflib
+import re
 import threading
 import glob
 import requests
@@ -580,31 +581,37 @@ def run_nightly_audit():
     agents = ['auto_trader.py', 'strategy_researcher.py', 'market_worker.py', 'news_worker.py', 'regime_worker.py', 'health_agent.py']
     for agent in agents:
         try:
-            output = subprocess.check_output(f"ps aux | grep {agent} | grep -v grep", shell=True, text=True)
-            audit_data.append(f"✅ {agent}: RUNNING")
+            ps_out = subprocess.check_output(["ps", "aux"], text=True)
+            if agent in ps_out:
+                audit_data.append(f"✅ {agent}: RUNNING")
+            else:
+                audit_data.append(f"❌ {agent}: STOPPED/MISSING")
         except subprocess.CalledProcessError:
             audit_data.append(f"❌ {agent}: STOPPED/MISSING")
 
-    # 2. Log Parsing (Last 100 lines for errors)
-    audit_data.append("\\n--- RECENT LOG ERRORS ---")
+    # 2. Log Parsing (Last 500 lines for errors)
+    audit_data.append("\n--- RECENT LOG ERRORS ---")
     logs_to_check = ['app.log', 'fyersApi.log']
     for log_file in logs_to_check:
         full_path = os.path.join(APP_DIR, log_file)
         if os.path.exists(full_path):
             try:
-                cmd = f"tail -n 500 \\\"{full_path}\\\" | grep -iE 'error|exception|critical' | tail -n 5"
-                errors = subprocess.check_output(cmd, shell=True, text=True).strip()
-                if errors:
-                    audit_data.append(f"⚠️ {log_file} Warnings:\\n{errors}")
+                with open(full_path, 'r') as f:
+                    lines = f.readlines()
+                last_500 = lines[-500:]
+                errors = [l for l in last_500 if re.search(r'error|exception|critical', l, re.I)]
+                last_5 = errors[-5:]
+                if last_5:
+                    audit_data.append(f"⚠️ {log_file} Warnings:\n{''.join(last_5).strip()}")
                 else:
                     audit_data.append(f"✅ {log_file}: Clean")
-            except subprocess.CalledProcessError:
+            except Exception:
                 audit_data.append(f"✅ {log_file}: Clean")
         else:
             audit_data.append(f"⚠️ {log_file}: File not found")
 
     # 3. Database Integrity
-    audit_data.append("\\n--- DATABASE INTEGRITY ---")
+    audit_data.append("\n--- DATABASE INTEGRITY ---")
     dbs = [TRADING_DB, DB_FILE, MEMORY_DB]
     for db in dbs:
         if os.path.exists(db):
@@ -613,7 +620,7 @@ def run_nightly_audit():
         else:
             audit_data.append(f"❌ {os.path.basename(db)}: Missing")
 
-    full_audit_string = "\\n".join(audit_data)
+    full_audit_string = "\n".join(audit_data)
     print("Nightly Audit Data Collected.")
     
     try:

@@ -83,11 +83,25 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     if not today_candles:
         return None
 
-    # Identify the 9:15 candle (the Opening Range)
-    first_candle = today_candles[0][1]
-    orb_high = first_candle["high"]
-    orb_low = first_candle["low"]
-    orb_open = first_candle["open"]
+    # Identify the Opening Range (C++ accelerated when available)
+    from engine.native_bridge import NativeCore
+    if NativeCore.is_available() and len(today_candles) >= 1:
+        raw_candles = [c for _, c in today_candles]
+        high, low, is_valid = NativeCore.calculate_orb(raw_candles, 1)
+        if is_valid:
+            orb_high = high
+            orb_low = low
+            orb_open = raw_candles[0]["open"]
+        else:
+            first_candle = today_candles[0][1]
+            orb_high = first_candle["high"]
+            orb_low = first_candle["low"]
+            orb_open = first_candle["open"]
+    else:
+        first_candle = today_candles[0][1]
+        orb_high = first_candle["high"]
+        orb_low = first_candle["low"]
+        orb_open = first_candle["open"]
 
     # 3. Check for breakout
     long_breakout = False

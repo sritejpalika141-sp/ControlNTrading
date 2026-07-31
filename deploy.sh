@@ -107,6 +107,9 @@ gcloud compute scp --recurse "$LOCAL_APP/static" "$INSTANCE:$REMOTE_APP/" --zone
 echo "  📂 Scripts (migrations)..."
 gcloud compute scp --recurse "$LOCAL_APP/scripts" "$INSTANCE:$REMOTE_APP/" --zone="$ZONE" --project="$PROJECT" --quiet
 
+echo "  ⚡ C++ HFT Core files..."
+gcloud compute scp --recurse "$SCRIPT_DIR/cpp_core" "$INSTANCE:$REMOTE_BASE/" --zone="$ZONE" --project="$PROJECT" --quiet
+
 echo "  📂 Fyers credentials..."
 gcloud compute scp "$LOCAL_FYERS/.env" "$INSTANCE:$REMOTE_FYERS/.env" --zone="$ZONE" --project="$PROJECT" --quiet
 
@@ -119,7 +122,24 @@ RESTART_SCRIPT=$(mktemp "$SCRIPT_DIR/restart_remote_XXXX.sh")
 cat > "$RESTART_SCRIPT" << 'REMOTE_EOF'
 #!/bin/bash
 APP_DIR="/home/sritejpalika/trading-app"
+CPP_DIR="/home/sritejpalika/cpp_core"
 PORT=8000
+
+echo "⚡ Compiling Native C++ HFT Core on VM..."
+if ! command -v cmake &> /dev/null || ! command -v g++ &> /dev/null; then
+    echo "📦 Installing build-essential & cmake on VM..."
+    sudo apt-get update -qq && sudo apt-get install -y cmake build-essential g++ >/dev/null 2>&1
+fi
+
+if [ -d "$CPP_DIR" ]; then
+    rm -rf "$CPP_DIR/build"
+    mkdir -p "$CPP_DIR/build"
+    cd "$CPP_DIR/build" && cmake .. && make -j4
+    # Also mirror shared lib into trading-app/cpp_core/build/
+    mkdir -p "$APP_DIR/cpp_core/build"
+    cp -f "$CPP_DIR/build/libcpp_core.so" "$APP_DIR/cpp_core/build/" 2>/dev/null || true
+    echo "✅ C++ HFT Core compiled successfully!"
+fi
 
 echo "📦 Installing dependencies into .venv..."
 $APP_DIR/.venv/bin/pip install -r $APP_DIR/requirements.txt --quiet 2>&1 | tail -3

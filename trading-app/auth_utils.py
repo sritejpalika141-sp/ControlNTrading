@@ -25,9 +25,25 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 # deployment). Signature + TTL are enforced by a dedicated URLSafeTimedSerializer salt.
 _OAUTH_STATE_SALT = "fyers-oauth-state"
 OAUTH_STATE_TTL_SECONDS = 600  # 10 minutes: long enough for a login, short enough to limit replay
+
+# PKCE-style verifier cookie (backlog: oauth-state-binding-hardening)
+# Binds the OAuth callback to the initiating browser session by setting an HttpOnly cookie
+# with a random verifier at /fyers/auth-url time, and validating it at /fyers/callback.
+_OAUTH_VERIFIER_SALT = "fyers-oauth-verifier"
+OAUTH_VERIFIER_TTL_SECONDS = 600  # 10 minutes, matches state TTL
 _oauth_serializer: Optional[URLSafeTimedSerializer] = None
+_verifier_serializer: Optional[URLSafeTimedSerializer] = None
 # nonce -> expiry-epoch of nonces already consumed (used-once guard). Pruned lazily.
 _USED_OAUTH_NONCES: Dict[str, float] = {}
+
+# --- PKCE-style OAuth state binding (backlog: oauth-state-binding-hardening) ---
+# A short-lived, httponly, samesite=lax cookie bound to the initiating browser.
+# The cookie value is a signed verifier that must match the `verifier` claim inside
+# the OAuth `state` token on callback. This prevents a stolen `state` (e.g. via
+# Referer header leakage) from being replayed from a different browser.
+_OAUTH_VERIFIER_SALT = "fyers-oauth-verifier"
+OAUTH_VERIFIER_TTL_SECONDS = 600  # Match OAUTH_STATE_TTL_SECONDS
+_verifier_serializer: Optional[URLSafeTimedSerializer] = None
 
 _MODULE_DIR = Path(__file__).resolve().parent
 _ENV_PATH = _MODULE_DIR / ".env"
@@ -159,19 +175,59 @@ def _get_oauth_serializer() -> URLSafeTimedSerializer:
     return _oauth_serializer
 
 
-def generate_oauth_state(user_id) -> str:
-    """Return a signed, single-use, short-TTL OAuth `state` nonce bound to the initiating user."""
-    nonce = os.urandom(16).hex()
-    return _get_oauth_serializer().dumps({"uid": int(user_id), "nonce": nonce})
+def _get_verifier_serializer() -> URLSafeTimedSerializer:
+    global _verifier_serializer
+    if _verifier_serializer is None:
+        _get_serializer()  # ensure SECRET_KEY is present/persisted
+        secret = os.getenv("SECRET_KEY")
+        _verifier_serializer = URLSafeTimedSerializer(secret, salt=_OAUTH_VERIFIER_SALT)
+    return _verifier_serializer
 
 
-def consume_oauth_state(state: Optional[str], now: Optional[float] = None) -> Optional[int]:
+def generate_oauth_state(user_id, response: Optional[object] = None) -> str:
+    """
+    Return a signed, single-use, short-TTL OAuth `state` nonce bound to the initiating user.
+    
+    If `response` (a Starlette/FastAPI Response object) is provided, also set an HttpOnly,
+    Secure, SameSite=Lax cookie containing a PKCE-style verifier that must be presented
+    on callback. This binds the OAuth flow to the initiating browser session.
+    """
+    import os as _os
+    nonce = _os.urandom(16).hex()
+    verifier = _os.urandom(16).hex()
+    
+    state_payload = {"uid": int(user_id), "nonce": nonce, "verifier": verifier}
+    state = _get_oauth_serializer().dumps(state_payload)
+    
+    if response is not None:
+        # Set the verifier cookie (10 min TTL, HttpOnly, Secure, SameSite=Lax)
+        from fastapi.responses import Response as _Response
+        if isinstance(response, _Response):
+            response.set_cookie(
+                key="oauth_verifier",
+                value=_get_verifier_serializer().dumps(verifier),
+                max_age=OAUTH_VERIFIER_TTL_SECONDS,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",  # Must be available on /fyers/callback path
+            )
+    
+    return state
+
+
+def consume_oauth_state(state: Optional[str], request: Optional[object] = None, now: Optional[float] = None) -> Optional[int]:
     """
     Validate an OAuth `state` value and return the bound integer user id, or None if invalid.
 
     Rejects when: state is missing, signature is bad/forged, the token is older than
     OAUTH_STATE_TTL_SECONDS, or the nonce has already been consumed (replay). On success the
     nonce is marked used so a second presentation of the same valid state fails.
+
+    If `request` (a Starlette/FastAPI Request object) is provided, also validates the
+    PKCE-style verifier cookie set by `generate_oauth_state`. This binds the callback to
+    the initiating browser session, preventing interception attacks where an attacker
+    captures the `state` but not the victim's cookie jar.
     """
     if not state:
         return None
@@ -192,10 +248,29 @@ def consume_oauth_state(state: Optional[str], now: Optional[float] = None) -> Op
         return None
     nonce = data.get("nonce")
     uid = data.get("uid")
+    expected_verifier = data.get("verifier")
     if not nonce or uid is None:
         return None
     if nonce in _USED_OAUTH_NONCES:
         return None  # replay of an already-consumed nonce
+
+    # PKCE-style verifier cookie validation (backlog: oauth-state-binding-hardening)
+    # Only validates if the state payload contains a verifier (new flows).
+    # If verifier is present but cookie is missing -> REJECT (interception attack).
+    # If verifier is present and cookie exists but mismatched -> REJECT.
+    # If no verifier in state (legacy) -> ALLOW (backward compat).
+    # If verifier is present, cookie exists, and matches -> ALLOW.
+    if request is not None and expected_verifier is not None:
+        try:
+            cookie_val = request.cookies.get("oauth_verifier")
+            if cookie_val:
+                actual_verifier = _get_verifier_serializer().loads(cookie_val, max_age=OAUTH_VERIFIER_TTL_SECONDS)
+                if actual_verifier != expected_verifier:
+                    return None  # verifier mismatch — likely cross-browser replay
+            else:
+                return None  # no verifier cookie — flow not initiated from this browser
+        except (BadSignature, SignatureExpired, ValueError, TypeError):
+            return None  # invalid/expired verifier cookie
 
     _USED_OAUTH_NONCES[nonce] = now + OAUTH_STATE_TTL_SECONDS
     try:

@@ -110,6 +110,45 @@ async def test_regime_guard_fail_closed_rejects_when_no_confirmed_trend(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_regime_guard_fail_closed_rejects_when_no_confirmed_trend(monkeypatch):
+    FAKE_UID = 987654321
+
+    class _FakeClient:
+        user_id = FAKE_UID
+
+        def get_positions(self):
+            return []
+
+        def place_order(self, *a, **k):
+            return {"success": True, "message": "mock order placed"}
+
+    async def _fake_get_current_client(request, allow_guest=False):
+        return _FakeClient()
+
+    async def _fake_enqueue(priority, func, *args, **kwargs):
+        # Bypass the async queue (which isn't started in tests) and call directly
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "get_current_client", _fake_get_current_client, raising=True)
+    monkeypatch.setattr(app_module.api_queue, "enqueue", _fake_enqueue, raising=True)
+    # NEUTRAL (the module default, and what regime_worker sets on every failure/fallback path)
+    # is not a confirmed tradeable trend -> must fail closed with a structured rejection.
+    monkeypatch.setattr(state, "market_regime", "NEUTRAL", raising=True)
+    # TradingState.save() schedules a fire-and-forget asyncio task that writes
+    # logs/trading_state_<uid>.json — no-op it so this fake-uid test never touches disk.
+    monkeypatch.setattr(TradingState, "save", lambda self: None, raising=True)
+
+    order = app_module.OrderRequest(symbol="NSE:BANKNIFTY25JUL50000CE", qty=15, side="BUY")
+    try:
+        result = await app_module.place_order(_FakeRequest(), order)
+    finally:
+        _cleanup_fake_user_state(FAKE_UID)
+
+    assert result["success"] is False
+    assert "regime" in result["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_regime_guard_allows_aligned_trade_on_confirmed_trend(monkeypatch):
     FAKE_UID = 987654322
 
@@ -125,7 +164,12 @@ async def test_regime_guard_allows_aligned_trade_on_confirmed_trend(monkeypatch)
     async def _fake_get_current_client(request, allow_guest=False):
         return _FakeClient()
 
+    async def _fake_enqueue(priority, func, *args, **kwargs):
+        # Bypass the async queue (which isn't started in tests) and call directly
+        return func(*args, **kwargs)
+
     monkeypatch.setattr(app_module, "get_current_client", _fake_get_current_client, raising=True)
+    monkeypatch.setattr(app_module.api_queue, "enqueue", _fake_enqueue, raising=True)
     monkeypatch.setattr(state, "market_regime", "TRENDING_UP", raising=True)
     monkeypatch.setattr(TradingState, "save", lambda self: None, raising=True)
 

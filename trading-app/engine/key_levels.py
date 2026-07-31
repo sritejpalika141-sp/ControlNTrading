@@ -282,154 +282,159 @@ def _rsi(closes: List[float], period: int = 14) -> float:
     return round(100 - (100 / (1 + rs)), 2)
 
 
+def _adx(candles: List[Dict], period: int = 14) -> float:
+    """Calculate Average Directional Index (ADX)"""
+    if len(candles) < period * 2:
+        return 20.0
+        
+    trs = []
+    plus_dms = []
+    minus_dms = []
+    
+    for i in range(1, len(candles)):
+        high = candles[i]["high"]
+        low = candles[i]["low"]
+        prev_high = candles[i-1]["high"]
+        prev_low = candles[i-1]["low"]
+        prev_close = candles[i-1]["close"]
+        
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+        
+        up_move = high - prev_high
+        down_move = prev_low - low
+        
+        if up_move > down_move and up_move > 0:
+            plus_dms.append(up_move)
+            minus_dms.append(0)
+        elif down_move > up_move and down_move > 0:
+            plus_dms.append(0)
+            minus_dms.append(down_move)
+        else:
+            plus_dms.append(0)
+            minus_dms.append(0)
+
+    smoothed_tr = sum(trs[:period])
+    smoothed_plus = sum(plus_dms[:period])
+    smoothed_minus = sum(minus_dms[:period])
+    
+    if smoothed_tr == 0:
+        return 20.0
+        
+    dxs = []
+    for i in range(period, len(trs)):
+        smoothed_tr = smoothed_tr - (smoothed_tr / period) + trs[i]
+        smoothed_plus = smoothed_plus - (smoothed_plus / period) + plus_dms[i]
+        smoothed_minus = smoothed_minus - (smoothed_minus / period) + minus_dms[i]
+        
+        if smoothed_tr == 0:
+            continue
+            
+        pdi = 100 * (smoothed_plus / smoothed_tr)
+        mdi = 100 * (smoothed_minus / smoothed_tr)
+        
+        if pdi + mdi > 0:
+            dxs.append(100 * abs(pdi - mdi) / (pdi + mdi))
+            
+    if not dxs:
+        return 20.0
+        
+    adx = sum(dxs[:period]) / min(period, len(dxs))
+    for i in range(period, len(dxs)):
+        adx = ((adx * (period - 1)) + dxs[i]) / period
+        
+    return round(adx, 2)
+
+
 def detect_intraday_trend(
     candles_5m: List[Dict],
     candles_15m: List[Dict],
     candles_1h: List[Dict],
 ) -> Dict:
     """
-    Multi-timeframe intraday trend detection for NIFTY options trading.
-
-    Hierarchy:
-        1H  → Macro bias for the day (8-EMA vs 20-EMA)
-        15m → Momentum direction (8-EMA vs 20-EMA + RSI-14)
-        5m  → Entry structure (Higher Highs vs Lower Lows)
-
-    ALL THREE must agree → BULLISH or BEARISH.
-    Any disagreement → NEUTRAL (Capital Protection / Zero-Trading Lockout).
-
-    Returns:
-        {
-            "trend": "BULLISH" | "BEARISH" | "NEUTRAL",
-            "strength": int (0-100),
-            "tf_1h":  {"bias": "BULLISH"|"BEARISH"|"NEUTRAL", "ema_fast": ..., "ema_slow": ...},
-            "tf_15m": {"bias": ..., "rsi": ..., "ema_fast": ..., "ema_slow": ...},
-            "tf_5m":  {"bias": ..., "hh": ..., "ll": ...},
-            "rationale": str,
-        }
+    Multi-timeframe adaptive trend detection.
+    Uses ADX on 15m to determine Choppy (< 25) vs Trendy (>= 25).
+    Trendy: Uses EMA crossovers + 1H Bias
+    Choppy: Uses RSI extremes + Mean Reversion Logic
     """
     result = {
         "trend": "NEUTRAL",
         "strength": 50,
         "tf_1h": {"bias": "NEUTRAL"},
-        "tf_15m": {"bias": "NEUTRAL"},
+        "tf_15m": {"bias": "NEUTRAL", "regime": "UNKNOWN"},
         "tf_5m": {"bias": "NEUTRAL"},
         "rationale": "Insufficient data for multi-TF analysis.",
     }
 
-    # ── 1H Macro Bias ──────────────────────────────────────────────────
-    if len(candles_1h) >= 8:
-        closes_1h = [c["close"] for c in candles_1h]
-        ema_fast_1h = _ema(closes_1h, min(8, len(closes_1h)))
-        ema_slow_1h = _ema(closes_1h, min(20, len(closes_1h)))
-
-        if ema_fast_1h > ema_slow_1h:
-            bias_1h = "BULLISH"
-        elif ema_fast_1h < ema_slow_1h:
-            bias_1h = "BEARISH"
-        else:
-            bias_1h = "NEUTRAL"
-
-        result["tf_1h"] = {
-            "bias": bias_1h,
-            "ema_fast": round(ema_fast_1h, 2),
-            "ema_slow": round(ema_slow_1h, 2),
-        }
-    else:
-        result["rationale"] = "Not enough 1H candles for macro bias."
+    if len(candles_15m) < 30 or len(candles_5m) < 30 or len(candles_1h) < 2:
         return result
 
-    # ── 15m Momentum ───────────────────────────────────────────────────
-    if len(candles_15m) >= 8:
-        closes_15m = [c["close"] for c in candles_15m]
-        ema_fast_15m = _ema(closes_15m, min(8, len(closes_15m)))
-        ema_slow_15m = _ema(closes_15m, min(20, len(closes_15m)))
-        rsi_15m = _rsi(closes_15m, 14)
+    # ── 15m ADX & Regime Detection ─────────────────────────────────────
+    adx_15m = _adx(candles_15m, 14)
+    closes_15m = [c["close"] for c in candles_15m]
+    rsi_15m = _rsi(closes_15m, 14)
+    ema_9_15m = _ema(closes_15m, 9)
+    ema_21_15m = _ema(closes_15m, 21)
+    
+    is_trendy = adx_15m >= 25.0
+    regime = "TRENDY" if is_trendy else "CHOPPY"
+    
+    result["tf_15m"] = {
+        "regime": regime,
+        "adx": adx_15m,
+        "rsi": rsi_15m,
+        "ema_fast": round(ema_9_15m, 2),
+        "ema_slow": round(ema_21_15m, 2)
+    }
 
-        if ema_fast_15m > ema_slow_15m and rsi_15m > 50:
-            bias_15m = "BULLISH"
-        elif ema_fast_15m < ema_slow_15m and rsi_15m < 50:
-            bias_15m = "BEARISH"
+    # ── 1H Macro Bias (For Trendy Markets) ─────────────────────────────
+    closes_1h = [c["close"] for c in candles_1h]
+    ema_fast_1h = _ema(closes_1h, min(8, len(closes_1h)))
+    ema_slow_1h = _ema(closes_1h, min(20, len(closes_1h)))
+    bias_1h = "BULLISH" if ema_fast_1h > ema_slow_1h else "BEARISH"
+    result["tf_1h"]["bias"] = bias_1h
+
+    # ── 5m Execution Bias ──────────────────────────────────────────────
+    closes_5m = [c["close"] for c in candles_5m]
+    rsi_5m = _rsi(closes_5m, 14)
+    ema_9_5m = _ema(closes_5m, 9)
+    ema_21_5m = _ema(closes_5m, 21)
+    
+    result["tf_5m"] = {
+        "rsi": rsi_5m,
+        "ema_fast": round(ema_9_5m, 2),
+        "ema_slow": round(ema_21_5m, 2)
+    }
+
+    if is_trendy:
+        # ── TRENDY LOGIC (EMA + MACRO) ──
+        if ema_9_15m > ema_21_15m and ema_9_5m > ema_21_5m and bias_1h == "BULLISH":
+            result["trend"] = "BULLISH"
+            result["strength"] = min(100, int(60 + adx_15m))
+            result["rationale"] = f"[TRENDY] ADX={adx_15m}. 1H/15m/5m aligned BULLISH. Riding the trend."
+        elif ema_9_15m < ema_21_15m and ema_9_5m < ema_21_5m and bias_1h == "BEARISH":
+            result["trend"] = "BEARISH"
+            result["strength"] = min(100, int(60 + adx_15m))
+            result["rationale"] = f"[TRENDY] ADX={adx_15m}. 1H/15m/5m aligned BEARISH. Riding the trend."
         else:
-            bias_15m = "NEUTRAL"
-
-        result["tf_15m"] = {
-            "bias": bias_15m,
-            "rsi": rsi_15m,
-            "ema_fast": round(ema_fast_15m, 2),
-            "ema_slow": round(ema_slow_15m, 2),
-        }
+            result["trend"] = "NEUTRAL"
+            result["strength"] = 40
+            result["rationale"] = f"[TRENDY] ADX={adx_15m}. Conflicting EMAs across timeframes. Standing aside."
     else:
-        result["rationale"] = "Not enough 15m candles for momentum check."
-        return result
-
-    # ── 5m Entry Structure ─────────────────────────────────────────────
-    if len(candles_5m) >= 6:
-        recent_5m = candles_5m[-12:]  # Last ~1 hour of 5m candles
-        hh_count = 0
-        ll_count = 0
-        for i in range(1, len(recent_5m)):
-            if recent_5m[i]["high"] > recent_5m[i - 1]["high"]:
-                hh_count += 1
-            if recent_5m[i]["low"] < recent_5m[i - 1]["low"]:
-                ll_count += 1
-
-        if hh_count > ll_count:
-            bias_5m = "BULLISH"
-        elif ll_count > hh_count:
-            bias_5m = "BEARISH"
+        # ── CHOPPY LOGIC (MEAN REVERSION via RSI) ──
+        # In choppy markets, we fade extremes.
+        if rsi_15m < 35 and rsi_5m < 30:
+            result["trend"] = "BULLISH" # Mean Reversion Buy
+            result["strength"] = min(100, int(90 - adx_15m))
+            result["rationale"] = f"[CHOPPY] ADX={adx_15m}. RSI Deep Oversold (15m: {rsi_15m}, 5m: {rsi_5m}). Mean reversion BUY."
+        elif rsi_15m > 65 and rsi_5m > 70:
+            result["trend"] = "BEARISH" # Mean Reversion Sell
+            result["strength"] = min(100, int(90 - adx_15m))
+            result["rationale"] = f"[CHOPPY] ADX={adx_15m}. RSI Deep Overbought (15m: {rsi_15m}, 5m: {rsi_5m}). Mean reversion SELL."
         else:
-            bias_5m = "NEUTRAL"
-
-        result["tf_5m"] = {
-            "bias": bias_5m,
-            "hh": hh_count,
-            "ll": ll_count,
-        }
-    else:
-        result["rationale"] = "Not enough 5m candles for entry structure."
-        return result
-
-    # ── Multi-TF Alignment ─────────────────────────────────────────────
-    bias_1h = result["tf_1h"]["bias"]
-    bias_15m = result["tf_15m"]["bias"]
-    bias_5m = result["tf_5m"]["bias"]
-
-    if bias_1h == "BULLISH" and bias_15m == "BULLISH" and bias_5m == "BULLISH":
-        result["trend"] = "BULLISH"
-        # Strength: EMA gap on 15m + RSI bonus
-        ema_gap = abs(ema_fast_15m - ema_slow_15m) / ema_slow_15m * 1000
-        rsi_bonus = max(0, (rsi_15m - 50) * 0.5)
-        result["strength"] = min(100, int(60 + ema_gap + rsi_bonus))
-        result["rationale"] = (
-            f"All 3 TFs aligned BULLISH. "
-            f"1H: EMA8({result['tf_1h']['ema_fast']}) > EMA20({result['tf_1h']['ema_slow']}). "
-            f"15m RSI: {rsi_15m}. 5m: {hh_count}HH vs {ll_count}LL."
-        )
-    elif bias_1h == "BEARISH" and bias_15m == "BEARISH" and bias_5m == "BEARISH":
-        result["trend"] = "BEARISH"
-        ema_gap = abs(ema_fast_15m - ema_slow_15m) / ema_slow_15m * 1000
-        rsi_bonus = max(0, (50 - rsi_15m) * 0.5)
-        result["strength"] = min(100, int(60 + ema_gap + rsi_bonus))
-        result["rationale"] = (
-            f"All 3 TFs aligned BEARISH. "
-            f"1H: EMA8({result['tf_1h']['ema_fast']}) < EMA20({result['tf_1h']['ema_slow']}). "
-            f"15m RSI: {rsi_15m}. 5m: {ll_count}LL vs {hh_count}HH."
-        )
-    else:
-        result["trend"] = "NEUTRAL"
-        result["strength"] = 50
-        disagreements = []
-        if bias_1h != bias_15m:
-            disagreements.append(f"1H({bias_1h}) ≠ 15m({bias_15m})")
-        if bias_15m != bias_5m:
-            disagreements.append(f"15m({bias_15m}) ≠ 5m({bias_5m})")
-        if bias_1h != bias_5m:
-            disagreements.append(f"1H({bias_1h}) ≠ 5m({bias_5m})")
-        result["rationale"] = (
-            f"Timeframe conflict: {', '.join(disagreements)}. "
-            f"Capital Protection active."
-        )
+            result["trend"] = "NEUTRAL"
+            result["strength"] = 30
+            result["rationale"] = f"[CHOPPY] ADX={adx_15m}. RSI neutral (15m: {rsi_15m}). Awaiting extremes."
 
     return result
 

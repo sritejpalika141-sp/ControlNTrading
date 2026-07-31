@@ -3,10 +3,38 @@ Fair Value Gap (FVG) Detection Engine
 Identifies bullish and bearish FVGs on 5-min chart.
 """
 from typing import List, Dict
+from engine.native_bridge import NativeCore
 
 
 def detect_fvg(candles: List[Dict], min_gap_pct: float = 0.02) -> List[Dict]:
-    """Detect Fair Value Gaps in candle data."""
+    """Detect Fair Value Gaps in candle data (C++ accelerated when available)."""
+    if NativeCore.is_available() and len(candles) >= 3:
+        try:
+            native_fvgs = NativeCore.detect_fvg(candles, min_gap_pct / 100.0)
+            fvgs = []
+            for nf in native_fvgs:
+                idx = nf["candle_index"]
+                if idx < len(candles):
+                    c2 = candles[idx - 1]
+                    mid_price = (c2["high"] + c2["low"]) / 2
+                    gap = nf["top"] - nf["bottom"]
+                    direction = "BULLISH" if nf["is_bullish"] else "BEARISH"
+                    fvgs.append({
+                        "type": "bullish_fvg" if nf["is_bullish"] else "bearish_fvg",
+                        "direction": direction,
+                        "top": nf["top"],
+                        "bottom": nf["bottom"],
+                        "gap_size": round(gap, 2),
+                        "gap_pct": round(gap / mid_price * 100, 4),
+                        "timestamp": c2.get("timestamp", c2.get("time", 0)),
+                        "filled": False,
+                        "active": True,
+                    })
+            _check_fvg_fill(fvgs, candles)
+            return fvgs
+        except Exception:
+            pass  # Fallback to python calculation
+
     fvgs = []
     for i in range(2, len(candles)):
         c1, c2, c3 = candles[i-2], candles[i-1], candles[i]

@@ -1,6 +1,13 @@
-Deploy Time: 2026-07-09 22:09:10 IST
+Deploy Time: 2026-07-31 12:41:40 IST
 Branch: main
 ---
-2156fa2 feat: Add Global Macro AI and Commodities support (28 seconds ago)
-0ea2e92 ci: Add automated GitHub Actions deployment workflow (4 hours ago)
-c0b3afa Initial commit of ControlNTrading application (5 hours ago)
+01c419f feat(strikes): OI-change + IV + delta/theta strike selection (all segments) (2 minutes ago)
+65acc22 fix(telegram): read webhook URL directly from user state and trigger immediate initial market briefing on startup (9 minutes ago)
+4e7d83b fix(ui): replace UNKNOWN AI down fallback in regime_worker with Technical Price Action Math fallback to eliminate AI down warning banners (2 hours ago)
+a0ef395 fix(sl-guardian): log via logger (dashboard.log) not print, add scan heartbeat (2 hours ago)
+a47d17a feat(risk): SL Guardian — guarantees every open position always has a stop-loss (2 hours ago)
+804fa6c fix(fyers): round stopLoss and takeProfit distance values to 0.05 tick size to prevent exchange tick rejection (3 hours ago)
+addd041 feat(autonomy): self-healer can fix trading code (gated), self-tuning auto-applies minor (3 hours ago)
+807c98c fix(mcx): ensure MCX session auto-injects MCX:CRUDEOIL and keeps trading loop active during evening hours (18 hours ago)
+93e6a34 feat(persona): configure VM-Orchestrator AI as a 20-year veteran Master Intraday Option Trader strictly focused on daily profit capture and zero overnight positions (18 hours ago)
+0cf1a98 feat(swarm): launch 4 specialist AI subagents for Option Buyers and activate Strategy 11 across all segments on Dashboard Settings UI (18 hours ago)
