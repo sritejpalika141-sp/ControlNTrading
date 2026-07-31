@@ -512,6 +512,7 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             # Increment trades today
             tt = getattr(state, "strat_9_trades_today", 0)
             setattr(state, "strat_9_trades_today", tt + 1)
+            state.save()
             
             return True, signal_dict
             
