@@ -2,15 +2,25 @@
 
 Artifacts pulled from the live GCP VM (`sritej-trading`, `asia-south1-c`) land here.
 
+## Quick start (with `GCP_CREDENTIALS` secret)
+
+```bash
+# From repo root — authenticates via scripts/gcloud_auth_from_env.sh
+bash scripts/pull_production_backup.sh
+bash scripts/run_orb_fyers_on_prod.sh 30 1
+```
+
+See **AGENTS.md → Cloud Agent secrets** for how to add `GCP_CREDENTIALS` in Cursor.
+
 ## Sync status (2026-07-31)
 
 | Layer | Status |
 |-------|--------|
-| GitHub `main` @ `e1b983e`+ | ORB filters merged (PR #4); S9 tune pending deploy |
-| Production static assets (MD5) | Matches local `trading-app/static/` |
-| Production DB / secrets | **Not pulled** — requires GCP SSH credentials in this environment |
+| GitHub `main` | Application code synced via git |
+| Production static assets | Match local when deploy is current |
+| Production DB | Pull with `pull_production_backup.sh` when GCP secret is set |
 
-## Pull command (run on a machine with `gcloud` auth)
+## Pull command
 
 ```bash
 export GCP_PROJECT=sritej-trading-algo-2026
@@ -19,10 +29,10 @@ export GCP_ZONE=asia-south1-c
 bash scripts/pull_production_backup.sh
 ```
 
-Requires one of:
+Credentials (pick one):
 
-- `gcloud auth login` (interactive), or
-- `GCP_CREDENTIALS` JSON (same secret used by GitHub Actions deploy workflow)
+- Cursor / CI secret **`GCP_CREDENTIALS`** — full service-account JSON (recommended)
+- Interactive: `gcloud auth login`
 
 ## Compare after pull
 
