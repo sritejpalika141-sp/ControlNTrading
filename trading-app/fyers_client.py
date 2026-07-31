@@ -1807,30 +1807,40 @@ class FyersClient:
         }
 
         # Fyers v3 CO/BO stopLoss & takeProfit are DISTANCES in points, NOT absolute trigger prices.
-        # Proven live: sending stop_trigger (the price, e.g. 381.7) placed the stop at
-        # entry - 381.7 = ~₹11.4 — i.e. Fyers subtracted our value from entry, so it treated it as a
-        # distance. That left a ₹394 option with a near-worthless stop 381 points away. Send the
-        # point distance (sl_points / target_points) so the stop sits at entry - sl_points as intended.
+        # MUST be rounded to valid exchange tick size 0.05 (e.g. 11.39 -> 11.40) to prevent 
+        # Fyers error: "StopLoss not a multiple of tick size 0.0500".
         if is_co and sl_points > 0:
-            order_data["stopLoss"] = round(sl_points, 2)
+            sl_tick = round(round(sl_points / 0.05) * 0.05, 2)
+            if sl_tick <= 0:
+                sl_tick = 0.05
+            order_data["stopLoss"] = sl_tick
 
         if is_bo:
-            order_data["stopLoss"] = round(sl_points, 2)
-            order_data["takeProfit"] = round(target_points, 2)
+            sl_tick = round(round(sl_points / 0.05) * 0.05, 2)
+            if sl_tick <= 0:
+                sl_tick = 0.05
+            order_data["stopLoss"] = sl_tick
+            target_tick = round(round(target_points / 0.05) * 0.05, 2)
+            if target_tick <= 0 and target_points > 0:
+                target_tick = 0.05
+            order_data["takeProfit"] = target_tick
 
         try:
             print(f"📤 Placing order: {order_data}")
             resp = self.client.place_order(order_data)
             print(f"📥 Response: {resp}")
 
-            # CO rejected → ABORT (do not place a naked entry). The old fallback bought the option
-            # as INTRADAY and then tried a SEPARATE SELL stop-loss; on a long option that pending
-            # short reserves ~₹1.2L naked-short margin, gets rejected, and leaves the position with
-            # NO stop-loss. For options the SL must ride as the CO's own (margin-benefited) leg, so
-            # if the CO can't be placed we place nothing rather than hold an unprotected trade.
+            # If CO rejected (e.g. tick error or CO restricted for strike), retry as INTRADAY
+            # with server-side trailing_monitor monitoring exact position quantity.
             if not self._is_success(resp) and is_co:
-                print(f"⚠️ CO Rejected — aborting order (no naked entry without SL): {resp.get('message')}")
-                return {"success": False, "message": f"CO rejected, order aborted (no SL possible): {resp.get('message', 'unknown')}"}
+                print(f"⚠️ CO Rejected ({resp.get('message')}). Retrying as INTRADAY with server-side SL/TSL sentinel.")
+                is_co = False
+                mapped_product = "INTRADAY"
+                order_data["productType"] = mapped_product
+                order_data.pop("stopLoss", None)
+                order_data.pop("takeProfit", None)
+                resp = self.client.place_order(order_data)
+                print(f"📥 Fallback Response: {resp}")
 
             # Fallback if BO fails or is rejected
             if not self._is_success(resp) and is_bo:
