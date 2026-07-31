@@ -17,6 +17,10 @@ LOCAL_REPORT="${3:-trading-app/reports/orb_fyers_backtest.json}"
 
 echo "📊 Running backtest_orb_fyers.py on $INSTANCE (${DAYS}d, user $USER_ID)..."
 
+# Ensure VM files are writable before any optional sync from CI
+# shellcheck source=gcloud_remote_prep.sh
+source "$SCRIPT_DIR/gcloud_remote_prep.sh"
+
 gcloud compute ssh "$INSTANCE" \
   --zone="$ZONE" --project="$PROJECT" --quiet \
   --command="cd /home/$REMOTE_USER/trading-app && .venv/bin/python scripts/backtest_orb_fyers.py --days $DAYS --user-id $USER_ID --output reports/orb_fyers_backtest.json"

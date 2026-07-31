@@ -12,18 +12,26 @@ on:
         description: Fyers user id on production VM
         required: false
         default: "1"
+  workflow_run:
+    workflows: ["Deploy to Google Cloud VM"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 env:
   GCP_PROJECT: sritej-trading-algo-2026
   GCP_INSTANCE: sritej-trading
   GCP_ZONE: asia-south1-c
+  BACKTEST_DAYS: ${{ github.event.inputs.backtest_days || '30' }}
+  BACKTEST_USER: ${{ github.event.inputs.user_id || '1' }}
 
 jobs:
   prod-analysis:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -70,22 +78,22 @@ jobs:
       - name: Sync scripts to production VM
         continue-on-error: true
         run: |
-          # Same pattern as deploy.sh (avoids permission errors on single-file scp)
+          bash scripts/gcloud_remote_prep.sh
           gcloud compute scp --recurse trading-app/scripts \
+            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/" \
+            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
+          gcloud compute scp trading-app/fyers_client.py \
             "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/" \
             --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
           gcloud compute scp trading-app/engine/orb_filters.py \
             trading-app/engine/economic_calendar.py \
-            "${{ env.GCP_INSTANCE }}:/tmp/" \
+            "${{ env.GCP_INSTANCE }}:/home/sritejpalika/trading-app/engine/" \
             --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet
-          gcloud compute ssh "${{ env.GCP_INSTANCE }}" \
-            --zone="${{ env.GCP_ZONE }}" --project="${{ env.GCP_PROJECT }}" --quiet \
-            --command="cp /tmp/orb_filters.py /tmp/economic_calendar.py /home/sritejpalika/trading-app/engine/ 2>/dev/null || sudo cp /tmp/orb_filters.py /tmp/economic_calendar.py /home/sritejpalika/trading-app/engine/"
 
       - name: Run ORB Fyers backtest on production VM
         id: fyers_backtest
         continue-on-error: true
-        run: bash scripts/run_orb_fyers_on_prod.sh "${{ inputs.backtest_days }}" "${{ inputs.user_id }}"
+        run: bash scripts/run_orb_fyers_on_prod.sh "$BACKTEST_DAYS" "$BACKTEST_USER"
 
       - name: Upload backtest report (if produced)
         if: steps.fyers_backtest.outcome == 'success' && hashFiles('trading-app/reports/orb_fyers_backtest.json') != ''
