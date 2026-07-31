@@ -184,6 +184,8 @@ async def lifespan(app):
     asyncio.create_task(regime_evaluator())
     asyncio.create_task(market_data_worker())
     asyncio.create_task(trailing_monitor())
+    from workers.sl_guardian import sl_guardian
+    asyncio.create_task(sl_guardian())  # guarantees every open position always has a stop-loss
     asyncio.create_task(automation_loop())
     asyncio.create_task(pending_order_watchdog())  # cancel entry orders not filled within 2 min
     asyncio.create_task(news_worker.run())

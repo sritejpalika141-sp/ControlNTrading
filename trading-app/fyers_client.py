@@ -825,6 +825,40 @@ class FyersClient:
             print(f"Quotes error for {symbols}: {e}")
             return results
 
+    def place_stop_loss(self, symbol: str, qty: int, stop_price: float, exit_side: int = -1,
+                        product_type: str = "INTRADAY") -> dict:
+        """Place a STANDALONE protective STOP-LOSS MARKET (SL-M, type 3) order to protect an already
+        open position. Used by the SL Guardian when a Cover-Order SL leg was rejected and the
+        position is running naked.
+
+        Deliberately SL-M (not SL-Limit): SL-M has NO limitPrice, so it sidesteps the exact Fyers
+        'LimitPrice not a valid tick multiple' rejection that left the CO position unprotected. The
+        stop_price (trigger) is rounded to the instrument tick (0.1 for MCX/CDS, 0.05 for NSE).
+        exit_side = -1 (SELL) to close a long option; +1 (BUY) to close a short. Returns the raw
+        Fyers response ({'s':'ok','id':...} on success)."""
+        try:
+            client = self._get_active_client()
+            if not client:
+                return {"s": "error", "message": "no active broker client"}
+            tick = 0.1 if (symbol.startswith("MCX:") or symbol.startswith("CDS:")) else 0.05
+            trig = round(round(float(stop_price) / tick) * tick, 2)
+            data = {
+                "symbol": symbol,
+                "qty": int(qty),
+                "type": 3,                 # 3 = SL-M (stop-loss market)
+                "side": int(exit_side),    # -1 SELL to close a long
+                "productType": product_type,
+                "limitPrice": 0,
+                "stopPrice": trig,
+                "validity": "DAY",
+                "disclosedQty": 0,
+                "offlineOrder": False,
+            }
+            resp = client.place_order(data)
+            return resp if isinstance(resp, dict) else {"s": "error", "message": str(resp)}
+        except Exception as e:
+            return {"s": "error", "message": str(e)}
+
     def get_historical(self, symbol: str, resolution: str, days_back: int = 10) -> List[Dict]:
         """
         Get historical candle data.
