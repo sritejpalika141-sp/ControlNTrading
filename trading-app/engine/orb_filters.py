@@ -13,6 +13,46 @@ IST = pytz.timezone("Asia/Kolkata")
 MIN_ORB_RANGE_PCT = 0.08   # skip ultra-tight opening ranges (noise)
 MAX_ORB_RANGE_PCT = 0.50
 
+INDEX_SYMBOL_MARKERS = ("NIFTY50-INDEX", "BANKNIFTY-INDEX", "^NSEI", "-INDEX")
+
+
+def is_index_spot_symbol(symbol: str) -> bool:
+    u = (symbol or "").upper()
+    return any(m in u for m in INDEX_SYMBOL_MARKERS)
+
+
+def volume_filter_enabled(symbol: str, candles_5m: List[Dict]) -> bool:
+    """
+    Return False when volume data is too sparse to compare (common on Fyers index feeds).
+  When False, callers should skip the volume gate rather than reject every breakout.
+    """
+    if not candles_5m:
+        return False
+    sample = candles_5m[-min(500, len(candles_5m)) :]
+    nonzero = sum(1 for c in sample if (c.get("volume") or 0) > 0)
+    if nonzero < max(3, int(len(sample) * 0.15)):
+        return False
+    if is_index_spot_symbol(symbol):
+        # Index prints often have volume but not comparable to yfinance equity volume scale.
+        med = sorted((c.get("volume") or 0) for c in sample if (c.get("volume") or 0) > 0)
+        if med and med[len(med) // 2] < 100:
+            return False
+    return True
+
+
+def passes_volume_check(
+    trigger_volume: float,
+    avg_volume: float,
+    vix: float,
+    *,
+    symbol: str = "",
+    candles_5m: List[Dict] | None = None,
+) -> bool:
+    if not volume_filter_enabled(symbol, candles_5m or []):
+        return True
+    vol_mult = volume_multiplier(vix)
+    return trigger_volume >= vol_mult * avg_volume
+
 
 def volume_multiplier(vix: float) -> float:
     """Higher bar on low-VIX days where false breakouts are common."""

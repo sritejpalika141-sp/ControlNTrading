@@ -7,8 +7,11 @@ from engine.orb_filters import (
     MAX_ORB_RANGE_PCT,
     MIN_ORB_RANGE_PCT,
     aggregate_15m_from_5m,
+    is_index_spot_symbol,
     orb_range_ok,
+    passes_volume_check,
     trend_15m_confirms,
+    volume_filter_enabled,
     volume_multiplier,
 )
 
@@ -64,3 +67,14 @@ def test_trend_15m_confirms_bearish_with_two_5m_candles():
     ]
     assert trend_15m_confirms(candles, bullish=False) is True
     assert trend_15m_confirms(candles, bullish=True) is False
+
+
+def test_volume_filter_disabled_for_sparse_index_feed():
+    sparse = [_candle(15 + i * 5, 100, 101, 99, 100, vol=0.0) for i in range(8)]
+    assert volume_filter_enabled("NSE:NIFTY50-INDEX", sparse) is False
+    assert passes_volume_check(0, 1000, 16.0, symbol="NSE:NIFTY50-INDEX", candles_5m=sparse) is True
+
+
+def test_is_index_spot_symbol():
+    assert is_index_spot_symbol("NSE:NIFTY50-INDEX") is True
+    assert is_index_spot_symbol("NSE:RELIANCE-EQ") is False

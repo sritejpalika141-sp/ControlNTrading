@@ -7,7 +7,7 @@ on:
       backtest_days:
         description: ORB Fyers backtest lookback (days)
         required: false
-        default: "30"
+        default: "59"
       user_id:
         description: Fyers user id on production VM
         required: false
@@ -26,7 +26,7 @@ env:
   GCP_PROJECT: sritej-trading-algo-2026
   GCP_INSTANCE: sritej-trading
   GCP_ZONE: asia-south1-c
-  BACKTEST_DAYS: ${{ github.event.inputs.backtest_days || '30' }}
+  BACKTEST_DAYS: ${{ github.event.inputs.backtest_days || '59' }}
   BACKTEST_USER: ${{ github.event.inputs.user_id || '1' }}
 
 jobs:
@@ -110,6 +110,10 @@ jobs:
           name: prod-analysis-backtest
           path: trading-app/reports/orb_fyers_backtest.json
           retention-days: 7
+
+      - name: Enable ORB+S9 shadow week on production
+        continue-on-error: true
+        run: bash scripts/apply_shadow_week_on_prod.sh "$BACKTEST_USER" 7
 
       - name: Summarize
         if: always()
