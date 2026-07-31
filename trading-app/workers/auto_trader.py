@@ -1242,6 +1242,21 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             return
 
         # ═══════════════════════════════════════════
+        # MTF ALIGNMENT GATE (5m trend must match CE/PE direction)
+        # ═══════════════════════════════════════════
+        from engine.execution_gates import check_mtf_gate
+
+        _mtf_ok, _mtf_reason = await check_mtf_gate(client, symbol, sig.get("type", ""), api_queue)
+        if not _mtf_ok:
+            logger.info(f"⏭️ MTF gate: {symbol} {sig.get('type')} — {_mtf_reason}")
+            await broadcast_log(
+                f"⏭️ MTF gate: skipped {sig.get('type')} on {symbol} — {_mtf_reason}",
+                "info",
+                user_id=client.user_id,
+            )
+            return
+
+        # ═══════════════════════════════════════════
         # STRATEGY 2: Direct Option Trade (skip strike selection)
         # ═══════════════════════════════════════════
         if sig.get("is_direct_option"):
@@ -1257,6 +1272,18 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             entry_price = fresh_quote.get("lp", 0) if fresh_quote else 0
             if entry_price <= 0:
                 entry_price = strike_info.get("ltp", sig.get("entry_price", 180))
+
+            from engine.execution_gates import passes_microstructure_spread
+
+            _spread_ok, _spread_reason = passes_microstructure_spread(fresh_quote)
+            if not _spread_ok:
+                logger.info(f"⏭️ Microstructure gate: {strike_symbol} — {_spread_reason}")
+                await broadcast_log(
+                    f"⏭️ Wide spread: skipped {strike_symbol} — {_spread_reason}",
+                    "info",
+                    user_id=client.user_id,
+                )
+                return
 
             sl_points = sig.get("sl_points", 20.0)
             # Calculate qty explicitly if not provided
@@ -1588,6 +1615,19 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         if fresh_quote and fresh_quote.get("lp", 0) > 0:
             entry_price = fresh_quote["lp"]
             logger.info(f"📊 Fresh LTP for {strike_symbol}: ₹{entry_price}")
+
+        from engine.execution_gates import passes_microstructure_spread
+
+        if fresh_quote and entry_price > 0:
+            _spread_ok, _spread_reason = passes_microstructure_spread(fresh_quote)
+            if not _spread_ok:
+                logger.info(f"⏭️ Microstructure gate: {strike_symbol} — {_spread_reason}")
+                await broadcast_log(
+                    f"⏭️ Wide spread: skipped {strike_symbol} — {_spread_reason}",
+                    "info",
+                    user_id=client.user_id,
+                )
+                return
 
         # Try 2: Cached LTP from option chain
         if entry_price <= 0:
