@@ -23,21 +23,17 @@ def is_index_spot_symbol(symbol: str) -> bool:
 
 def volume_filter_enabled(symbol: str, candles_5m: List[Dict]) -> bool:
     """
-    Return False when volume data is too sparse to compare (common on Fyers index feeds).
-  When False, callers should skip the volume gate rather than reject every breakout.
+    Return False when volume gate should be skipped.
+    Index spot (NIFTY/BANKNIFTY) volume from Fyers/yfinance is not comparable to the
+    equity-volume thresholds calibrated for option underlyings — skip for index symbols.
     """
+    if is_index_spot_symbol(symbol):
+        return False
     if not candles_5m:
         return False
     sample = candles_5m[-min(500, len(candles_5m)) :]
     nonzero = sum(1 for c in sample if (c.get("volume") or 0) > 0)
-    if nonzero < max(3, int(len(sample) * 0.15)):
-        return False
-    if is_index_spot_symbol(symbol):
-        # Index prints often have volume but not comparable to yfinance equity volume scale.
-        med = sorted((c.get("volume") or 0) for c in sample if (c.get("volume") or 0) > 0)
-        if med and med[len(med) // 2] < 100:
-            return False
-    return True
+    return nonzero >= max(3, int(len(sample) * 0.15))
 
 
 def passes_volume_check(
