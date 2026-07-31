@@ -64,22 +64,12 @@ if [ $VALIDATION_FAILED -ne 0 ]; then
 fi
 echo "✅ All Python files validated."
 
-# ─── Step 2.5: Fix VM ownership (root-owned files block scp) ───
-echo ""
-echo "🔧 Step 2.5: Preparing VM for file upload..."
-# shellcheck source=scripts/gcloud_remote_prep.sh
-source "$SCRIPT_DIR/scripts/gcloud_remote_prep.sh"
-
-# ─── Step 3: Upload files ───
+# ─── Step 3: Upload files (via /tmp staging — CI SSH user cannot overwrite app dir directly) ───
 echo ""
 echo "📤 Step 3: Uploading files to cloud..."
 
-_scp_or_fail() {
-    if ! gcloud compute scp "$@" --zone="$ZONE" --project="$PROJECT" --quiet; then
-        echo "❌ scp failed: $*"
-        exit 1
-    fi
-}
+# shellcheck source=scripts/gcloud_deploy_upload.sh
+source "$SCRIPT_DIR/scripts/gcloud_deploy_upload.sh"
 
 # Generate git info file from local repo
 echo "  📝 Generating git info..."
@@ -91,43 +81,19 @@ GIT_INFO_FILE="$LOCAL_APP/git_info.txt"
     git -C "$SCRIPT_DIR" log -n 10 --format="%h %s (%cr)" 2>/dev/null || echo "No git history available"
 } > "$GIT_INFO_FILE"
 
-echo "  📂 Core files..."
-_scp_or_fail \
-    "$LOCAL_APP/app.py" \
-    "$LOCAL_APP/auth_utils.py" \
-    "$LOCAL_APP/fyers_client.py" \
-    "$LOCAL_APP/models.py" \
-    "$LOCAL_APP/state.py" \
-    "$LOCAL_APP/requirements.txt" \
-    "$LOCAL_APP/dailyupdates.md" \
-    "$LOCAL_APP/git_info.txt" \
-    "$SCRIPT_DIR/vm_orchestrator.py" \
-    "$LOCAL_APP/strategy_researcher.py" \
-    "$INSTANCE:$REMOTE_APP/"
-
-echo "  📂 Engine modules..."
-_scp_or_fail --recurse "$LOCAL_APP/engine" "$INSTANCE:$REMOTE_APP/"
-
-echo "  📂 Worker modules..."
-_scp_or_fail --recurse "$LOCAL_APP/workers" "$INSTANCE:$REMOTE_APP/"
-
-echo "  📂 Data files..."
-_scp_or_fail --recurse "$LOCAL_APP/data" "$INSTANCE:$REMOTE_APP/"
-
-echo "  📂 Static assets..."
-_scp_or_fail --recurse "$LOCAL_APP/static" "$INSTANCE:$REMOTE_APP/"
-
-echo "  📂 Scripts (migrations)..."
-_scp_or_fail --recurse "$LOCAL_APP/scripts" "$INSTANCE:$REMOTE_APP/"
+upload_trading_app_bundle "$LOCAL_APP" "$SCRIPT_DIR/vm_orchestrator.py" \
+  "$INSTANCE" "$ZONE" "$PROJECT" "$REMOTE_USER"
 
 echo "  ⚡ C++ HFT Core files..."
-_scp_or_fail --recurse "$SCRIPT_DIR/cpp_core" "$INSTANCE:$REMOTE_BASE/"
+upload_cpp_core_bundle "$SCRIPT_DIR/cpp_core" "$INSTANCE" "$ZONE" "$PROJECT" "$REMOTE_USER"
 
 echo "  📂 Fyers credentials..."
-_scp_or_fail "$LOCAL_FYERS/.env" "$INSTANCE:$REMOTE_FYERS/.env"
+upload_file_to_remote_path "$LOCAL_FYERS/.env" "$INSTANCE" "$REMOTE_FYERS/.env" \
+  "$ZONE" "$PROJECT" "$REMOTE_USER"
 
 if [ -f "$LOCAL_APP/.env" ]; then
-    _scp_or_fail "$LOCAL_APP/.env" "$INSTANCE:$REMOTE_APP/.env"
+    upload_file_to_remote_path "$LOCAL_APP/.env" "$INSTANCE" "$REMOTE_APP/.env" \
+      "$ZONE" "$PROJECT" "$REMOTE_USER"
 fi
 
 # ─── Step 3.5: Create & upload a remote restart script ───
