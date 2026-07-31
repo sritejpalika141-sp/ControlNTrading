@@ -23,7 +23,17 @@ if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "${GOOGLE_APPLICATION_CREDE
   echo "✅ Using GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}"
 elif [[ -n "${GCP_CREDENTIALS:-}" ]]; then
   KEY_FILE="${GCP_KEY_FILE:-/tmp/gcp-sa-key.json}"
+  if [[ ${#GCP_CREDENTIALS} -lt 200 ]]; then
+    echo "❌ GCP_CREDENTIALS looks truncated (${#GCP_CREDENTIALS} chars). Paste the FULL service-account JSON (~2KB)."
+    echo "   GitHub → Settings → Secrets → GCP_CREDENTIALS, or GCP Console → Service account → Keys → JSON."
+    return 1 2>/dev/null || exit 1
+  fi
   printf '%s' "$GCP_CREDENTIALS" > "$KEY_FILE"
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$KEY_FILE" 2>/dev/null; then
+    echo "❌ GCP_CREDENTIALS is not valid JSON. Copy the entire .json file contents (starts with {\"type\":\"service_account\"...})."
+    rm -f "$KEY_FILE"
+    return 1 2>/dev/null || exit 1
+  fi
   chmod 600 "$KEY_FILE"
   _activate_from_file "$KEY_FILE"
 elif [[ -n "${GCP_CREDENTIALS_FILE:-}" && -f "${GCP_CREDENTIALS_FILE}" ]]; then
