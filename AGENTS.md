@@ -689,6 +689,58 @@ Cross-agent issues: Claude Code and Codex must use the same `process/` folder st
 - Features: `process/features/`
 - Context: `process/context/all-context.md` router plus relevant `process/context/` files/groups
 
+## Cursor Cloud specific instructions
+
+### Product runtime (ControlN / Sritej Trading)
+
+The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn** process on port **8000** with embedded **SQLite** (`trading-app/trading_app.db`). There is no separate frontend build step; static assets are served from `trading-app/static/`.
+
+### First-time VM prerequisites
+
+Ubuntu images may lack `python3-venv`. If `python3 -m venv` fails, install once (not in the update script):
+
+```bash
+sudo apt-get install -y python3.12-venv curl
+```
+
+### Dev `.env` (local only — gitignored)
+
+Create `trading-app/.env` before first run. Minimum for a fresh DB:
+
+```
+INITIAL_ADMIN_PASSWORD=<strong-password>
+```
+
+`SECRET_KEY` and `ENCRYPTION_KEY` are auto-generated on first start. Broker creds (`FYERS_*`) live in `trading-app/.env` or sibling `fyers-mcp-server/.env` and are **optional** for UI/login smoke tests.
+
+### Start / stop the app
+
+| Action | Command |
+|--------|---------|
+| Start (recommended) | `./start_local.sh` from repo root (creates `.venv`, installs deps, runs uvicorn with reload on :8000) |
+| Start (manual) | `cd trading-app && .venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000` |
+| Docker alternative | `cd trading-app && docker compose up` (requires `.env`) |
+
+Default URL: `http://localhost:8000` — login at `/login`, admin user is `admin` (created from `INITIAL_ADMIN_PASSWORD` on empty DB).
+
+### Lint / test / smoke
+
+| Check | Command (from `trading-app/`) |
+|-------|-------------------------------|
+| Pre-deploy smoke (imports + app construct) | `.venv/bin/python smoke_test.py` |
+| Unit tests (fast subset) | `.venv/bin/pytest -q tests/test_admin_and_ratelimit.py tests/test_auth_cookie.py tests/test_models.py` |
+| Full suite | `.venv/bin/pytest -q` — note: `test_regime_guard_allows_aligned_trade_on_confirmed_trend` can hang without broker/network; use `-k "not test_regime_guard_allows"` or a timeout if needed |
+
+There is no separate linter configured; `smoke_test.py` is the primary startup gate before deploy.
+
+### Optional external services
+
+- **Fyers API** — required for live trading / broker-authenticated flows
+- **AI keys** (`GOOGLE_API_KEY`, etc.) — optional; app degrades gracefully
+- **Telegram** — optional alerts
+
+The VC/RIPER-5 harness (`process/`, `.claude/`) is dev tooling only and not needed to run the trading app.
+
 ## Porting Notes
 
 This file intentionally preserves the original `CLAUDE.md` workflow while adapting it
