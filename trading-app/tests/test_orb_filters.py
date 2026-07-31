@@ -69,10 +69,11 @@ def test_trend_15m_confirms_bearish_with_two_5m_candles():
     assert trend_15m_confirms(candles, bullish=True) is False
 
 
-def test_volume_filter_disabled_for_sparse_index_feed():
-    sparse = [_candle(15 + i * 5, 100, 101, 99, 100, vol=0.0) for i in range(8)]
-    assert volume_filter_enabled("NSE:NIFTY50-INDEX", sparse) is False
-    assert passes_volume_check(0, 1000, 16.0, symbol="NSE:NIFTY50-INDEX", candles_5m=sparse) is True
+def test_volume_filter_disabled_for_index_symbol():
+    dense = [_candle(15 + i * 5, 100, 101, 99, 100, vol=50000.0) for i in range(8)]
+    assert volume_filter_enabled("NSE:NIFTY50-INDEX", dense) is False
+    assert passes_volume_check(1, 1000, 16.0, symbol="NSE:NIFTY50-INDEX", candles_5m=dense) is True
+    assert volume_filter_enabled("NSE:RELIANCE-EQ", dense) is True
 
 
 def test_is_index_spot_symbol():
