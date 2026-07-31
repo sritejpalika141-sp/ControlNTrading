@@ -11,17 +11,17 @@ from engine.ai_engine import AIEngine
 logger = logging.getLogger("NIGHTLY_LEARNING")
 IST = pytz.timezone('Asia/Kolkata')
 
-# ── SELF-TUNING (owner directive 30-07-26) ──
-# Re-enabled now that the authoritative executed-trades ledger records every trade reliably. TWO
-# safety rails remain so it can never blindly harm live params like the old blind version did:
-#   1. It reads REAL win-rates from the executed-trades ledger (Database.get_strategy_performance),
-#      NOT the legacy 0-filled counters, and only tunes a strategy with >= MIN_TRADES_FOR_LEARNING
-#      real closed trades.
-#   2. Every AI-proposed parameter change is written as PENDING (approval-required on the dashboard),
-#      never auto-applied to a live strategy. Set AUTO_APPLY_MINOR=True only if you want minor
-#      changes to apply without approval.
+# ── SELF-TUNING (owner directive 30/31-07-26) ──
+# Reads REAL win-rates from the executed-trades ledger + 3-month 5-min market structure, and only
+# tunes a strategy with >= MIN_TRADES_FOR_LEARNING real closed trades. Auto-apply rails:
+#   • AUTO_APPLY_MINOR=True (owner directive 31-07-26): once a strategy has >=10 real trades, MINOR
+#     AI parameter changes (<=20% per-param swing) are applied automatically — no approval needed.
+#   • MAJOR changes (>20% swing on any param) STILL go PENDING/approval-required — a large live-money
+#     parameter jump should be eyeballed even in auto mode. Set REQUIRE_APPROVAL_FOR_MAJOR=False to
+#     auto-apply those too (not recommended).
 SELF_TUNING_ENABLED = True
-AUTO_APPLY_MINOR = False
+AUTO_APPLY_MINOR = True
+REQUIRE_APPROVAL_FOR_MAJOR = True
 MIN_TRADES_FOR_LEARNING = 10
 
 
@@ -296,7 +296,7 @@ async def run_nightly_learning(state, user_id: int):
 
                         from engine.notifier import send_webhook_alert
                         
-                        if is_major:
+                        if is_major and REQUIRE_APPROVAL_FOR_MAJOR:
                             logger.info(f"🚨 Major change detected for {strat}: {major_changes}")
                             # Save to AgentDB as PENDING (keep old config active)
                             await Database.update_agent_config(
