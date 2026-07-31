@@ -3,7 +3,8 @@
 Backtest Strategy 3: 5-Minute ORB on NIFTY spot (yfinance proxy).
 
 Mirrors live checklist: ORB range from 9:15 candle, VIX-adaptive entry mode (simulated),
-volume ≥ 2× historical 9:20 avg, gap < 1%, range width < 0.5%, economic blackout days.
+adaptive volume (2.5× low-VIX / 2× high-VIX), 15m trend alignment, gap < 1%,
+ORB range 0.08%–0.5%, economic blackout days. Filters live in engine/orb_filters.py.
 
 Usage:
   cd trading-app && .venv/bin/python scripts/backtest_orb.py --days 59
@@ -33,6 +34,7 @@ except ImportError:
     sys.exit(1)
 
 from engine.economic_calendar import check_no_economic_events
+from engine.orb_filters import orb_range_ok, trend_15m_confirms, volume_multiplier
 
 
 def fetch_candles(symbol: str, days: int) -> Tuple[List[Dict], List[Dict]]:
@@ -120,6 +122,7 @@ def backtest_orb(
         "volume": 0,
         "gap": 0,
         "range": 0,
+        "trend": 0,
         "no_breakout": 0,
     }
 
@@ -142,8 +145,8 @@ def backtest_orb(
         if orb_open <= 0:
             continue
 
-        range_pct = (orb_high - orb_low) / orb_open * 100
-        if range_pct >= 0.5:
+        ok_range, range_pct = orb_range_ok(orb_high, orb_low, orb_open)
+        if not ok_range:
             skips["range"] += 1
             continue
 
@@ -193,8 +196,15 @@ def backtest_orb(
                 all_v = [x["volume"] for x in candles_5m if x["volume"] > 0]
                 avg_vol = sum(all_v) / len(all_v) if all_v else 1.0
 
-            if trigger_vol < 2 * avg_vol:
+            vol_mult = volume_multiplier(vix_assumption)
+            if trigger_vol < vol_mult * avg_vol:
                 skips["volume"] += 1
+                continue
+
+            bullish = direction == "LONG"
+            candles_so_far = daily[: i + 1]
+            if not trend_15m_confirms(candles_so_far, bullish=bullish):
+                skips["trend"] += 1
                 continue
 
             outcome, pnl = simulate_exit(trigger_close, direction, sl_pts, tp_pts, daily[i + 1 :])

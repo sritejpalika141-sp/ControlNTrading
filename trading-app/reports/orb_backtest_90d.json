@@ -2,11 +2,11 @@
   "strategy": "Strategy 3: 5-Minute ORB",
   "sessions": 57,
   "trades": 46,
-  "wins": 14,
-  "losses": 32,
-  "win_rate_pct": 30.4,
-  "profit_factor": 0.88,
-  "total_pnl_pts": -80.0,
+  "wins": 13,
+  "losses": 33,
+  "win_rate_pct": 28.3,
+  "profit_factor": 0.79,
+  "total_pnl_pts": -140.0,
   "pass_gate": false,
   "skips": {
     "blackout": 0,
@@ -14,6 +14,7 @@
     "volume": 15,
     "gap": 3,
     "range": 3,
+    "trend": 4,
     "no_breakout": 5
   },
   "trade_log": [
@@ -52,15 +53,15 @@
     {
       "date": "2026-05-20",
       "direction": "LONG",
-      "entry": 23477.55,
-      "outcome": "WIN",
-      "pnl_pts": 40.0,
+      "entry": 23520.15,
+      "outcome": "LOSS",
+      "pnl_pts": -20.0,
       "orb_range_pct": 0.27
     },
     {
       "date": "2026-05-21",
       "direction": "SHORT",
-      "entry": 23757.35,
+      "entry": 23738.15,
       "outcome": "LOSS",
       "pnl_pts": -20.0,
       "orb_range_pct": 0.392
@@ -92,7 +93,7 @@
     {
       "date": "2026-05-29",
       "direction": "SHORT",
-      "entry": 23893.4,
+      "entry": 23875.75,
       "outcome": "LOSS",
       "pnl_pts": -20.0,
       "orb_range_pct": 0.399
