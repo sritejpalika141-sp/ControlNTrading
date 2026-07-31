@@ -219,7 +219,8 @@ REMOTE_EOF
 chmod +x "$RESTART_SCRIPT"
 
 echo "  📂 Restart script..."
-gcloud compute scp "$RESTART_SCRIPT" "$INSTANCE:/tmp/restart_app.sh" --zone="$ZONE" --project="$PROJECT" --quiet
+REMOTE_RESTART="/tmp/sritej-restart-$(date +%s).sh"
+gcloud compute scp "$RESTART_SCRIPT" "$INSTANCE:$REMOTE_RESTART" --zone="$ZONE" --project="$PROJECT" --quiet
 rm -f "$RESTART_SCRIPT"
 
 echo "✅ All files uploaded."
@@ -227,7 +228,7 @@ echo "✅ All files uploaded."
 # ─── Step 4: Run restart script on server ───
 echo ""
 echo "🔄 Step 4: Installing deps & restarting on VM..."
-gcloud compute ssh "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --quiet --command="bash /tmp/restart_app.sh"
+gcloud compute ssh "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --quiet --command="bash $REMOTE_RESTART && rm -f $REMOTE_RESTART"
 SSH_EXIT=$?
 
 if [ $SSH_EXIT -ne 0 ]; then
