@@ -71,3 +71,5 @@ jobs:
               test "$COUNT" -ge 1
             '
           echo "✅ CURSOR_API_KEY installed on VM; sritej-orchestrator restarted"
+
+# retrigger 20260801T074611Z
