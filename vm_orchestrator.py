@@ -191,8 +191,19 @@ async def handle_crash(traceback_str: str, service_name: str):
         if state["strike_count"] >= 3:
             wh_url = get_webhook_url()
             if wh_url:
-                trigger_webhook_background(wh_url, f"🚨 **CRITICAL: 3-STRIKE LOOP DETECTED ({service_name})**\nAI patch failed 3 times. Initiating ultimate rollback and halting AI healing for 1 hour. Please use Agent Platform.", "Orchestrator Ultimate Rollback")
-            print(f"🛑 [VM Orchestrator] 3-Strike Limit reached. Rolling back and pausing healing for 1 hour.")
+                trigger_webhook_background(wh_url, f"🚨 **CRITICAL: 3-STRIKE LOOP DETECTED ({service_name})**\nAI patch failed 3 times. Initiating ultimate rollback and escalating to Cursor RIPER agents.", "Orchestrator Ultimate Rollback")
+            print(f"🛑 [VM Orchestrator] 3-Strike Limit reached. Rolling back and escalating to Cursor...")
+            try:
+                from engine.cursor_agent_bridge import escalate_to_cursor_agent
+                escalate_to_cursor_agent(
+                    issue_type="crash_loop_3strike",
+                    summary=f"Local AI heal failed 3 times for {service_name}. Need durable code fix.",
+                    evidence=traceback_str[:8000],
+                    suggested_files=["vm_orchestrator.py", "trading-app/engine/self_healer.py"],
+                    issue_key=f"3strike:{service_name}",
+                )
+            except Exception as _esc:
+                print(f"⚠️ [VM Orchestrator] Cursor escalate failed: {_esc}")
             subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=APP_DIR, check=False)
             subprocess.run(["sudo", "systemctl", "restart", service_name], check=False)
             state["strike_count"] = 0
@@ -318,6 +329,17 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
                 
     if not target_file or not os.path.exists(target_file):
         print(f"❌ [VM Orchestrator] Could not determine local file from traceback in {service_name}. target_file={target_file}")
+        try:
+            from engine.cursor_agent_bridge import escalate_to_cursor_agent
+            escalate_to_cursor_agent(
+                issue_type="heal_unknown_file",
+                summary=f"Could not map crash in {service_name} to a local file for AI patch.",
+                evidence=traceback_str[:8000],
+                suggested_files=[],
+                issue_key=f"unknownfile:{service_name}:{hashlib.md5(error_msg.encode()).hexdigest()[:10]}",
+            )
+        except Exception as _esc:
+            print(f"⚠️ [VM Orchestrator] Cursor escalate failed: {_esc}")
         return
 
     print(f"📄 [VM Orchestrator] Target file identified: {target_file}")
@@ -351,9 +373,31 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
             patch = await ai_engine.generate_code_fix(error_data, file_content)
             if not patch or not patch.get("search_content") or not patch.get("replace_content"):
                 print("❌ [VM Orchestrator] AI failed to generate a valid patch.")
+                try:
+                    from engine.cursor_agent_bridge import escalate_to_cursor_agent
+                    escalate_to_cursor_agent(
+                        issue_type="heal_patch_failed",
+                        summary=f"AI could not generate a valid patch for {target_file} ({service_name}).",
+                        evidence=traceback_str[:8000],
+                        suggested_files=[os.path.relpath(target_file, APP_DIR)],
+                        issue_key=f"patchfail:{cache_key[:12]}",
+                    )
+                except Exception as _esc:
+                    print(f"⚠️ [VM Orchestrator] Cursor escalate failed: {_esc}")
                 return
         except Exception as e:
             print(f"❌ [VM Orchestrator] AI Engine Error: {e}")
+            try:
+                from engine.cursor_agent_bridge import escalate_to_cursor_agent
+                escalate_to_cursor_agent(
+                    issue_type="heal_ai_error",
+                    summary=f"AI engine error while healing {service_name}: {e}",
+                    evidence=traceback_str[:8000],
+                    suggested_files=[os.path.relpath(target_file, APP_DIR)] if target_file else [],
+                    issue_key=f"aierr:{cache_key[:12]}",
+                )
+            except Exception as _esc:
+                print(f"⚠️ [VM Orchestrator] Cursor escalate failed: {_esc}")
             return
 
     search_str = patch["search_content"]
@@ -366,6 +410,17 @@ async def heal_application(traceback_str: str, lines: list, error_msg: str, serv
                 with sqlite3.connect(DB_FILE) as conn:
                     conn.execute('DELETE FROM healing_memory WHERE hash_key = ?', (cache_key,))
             except Exception: pass
+        try:
+            from engine.cursor_agent_bridge import escalate_to_cursor_agent
+            escalate_to_cursor_agent(
+                issue_type="heal_patch_mismatch",
+                summary=f"Cached/generated patch did not match file content for {target_file}.",
+                evidence=traceback_str[:8000],
+                suggested_files=[os.path.relpath(target_file, APP_DIR)],
+                issue_key=f"mismatch:{cache_key[:12]}",
+            )
+        except Exception as _esc:
+            print(f"⚠️ [VM Orchestrator] Cursor escalate failed: {_esc}")
         return
 
     new_content = file_content.replace(search_str, replace_str, 1)

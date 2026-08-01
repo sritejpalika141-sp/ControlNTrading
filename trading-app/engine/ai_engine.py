@@ -25,6 +25,24 @@ from .encryption import get_secret
 _LAST_CHAIN_FAIL_ALERT = 0.0
 
 
+def _parse_ai_json(raw: str) -> Dict:
+    """Extract JSON object from model output (handles markdown fences / leading prose)."""
+    if not raw:
+        raise ValueError("empty AI response")
+    text = raw.strip()
+    if text.startswith("```"):
+        # ```json ... ``` or ``` ... ```
+        parts = text.split("```")
+        if len(parts) >= 2:
+            chunk = parts[1]
+            if chunk.lstrip().startswith("json"):
+                chunk = chunk.lstrip()[4:]
+            text = chunk.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON object found in AI response")
+    return json.loads(text[start : end + 1])
 
 
 # Setup logging
@@ -863,15 +881,20 @@ Respond ONLY with this JSON:
                     raw_res = await self._call_ollama(prompt)
                 
                 if raw_res:
-                    result = json.loads(raw_res)
+                    result = _parse_ai_json(raw_res)
                     prov.on_success()
+                    bullets = result.get("telegram_bullets") or []
+                    if not isinstance(bullets, list):
+                        bullets = []
+                    bullets = [str(b).strip() for b in bullets if str(b).strip()][:6]
                     return {
-                        "equities_trend": result.get("equities_trend", "NEUTRAL").upper(),
-                        "commodities_trend": result.get("commodities_trend", "NEUTRAL").upper(),
-                        "currency_trend": result.get("currency_trend", "NEUTRAL").upper(),
+                        "equities_trend": str(result.get("equities_trend", "NEUTRAL") or "NEUTRAL").upper(),
+                        "commodities_trend": str(result.get("commodities_trend", "NEUTRAL") or "NEUTRAL").upper(),
+                        "currency_trend": str(result.get("currency_trend", "NEUTRAL") or "NEUTRAL").upper(),
                         "summary": result.get("summary", "No clear sentiment."),
-                        "high_conviction_asset": result.get("high_conviction_asset", "NONE").upper(),
-                        "commodity_pick": str(result.get("commodity_pick", "NONE") or "NONE").upper()
+                        "telegram_bullets": bullets,
+                        "high_conviction_asset": str(result.get("high_conviction_asset", "NONE") or "NONE").upper(),
+                        "commodity_pick": str(result.get("commodity_pick", "NONE") or "NONE").upper(),
                     }
             except Exception as e:
                 logger.warning(f"⚠️ {prov.name} news summary failed: {e}")
@@ -881,8 +904,9 @@ Respond ONLY with this JSON:
             "commodities_trend": "NEUTRAL",
             "currency_trend": "NEUTRAL",
             "summary": "Failed to parse news sentiment.",
+            "telegram_bullets": [],
             "high_conviction_asset": "NONE",
-                "commodity_pick": "NONE"
+            "commodity_pick": "NONE",
         }
 
     def _build_trend_prompt(self, symbol: str, context: Dict) -> str:

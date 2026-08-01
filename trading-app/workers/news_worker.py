@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import httpx
 import xml.etree.ElementTree as ET
@@ -219,11 +220,38 @@ class NewsWorker:
                         title_prefix = f"📊 Market Briefing ({_now_ist.strftime('%H:%M IST')})"
 
                     if should_send:
-                        bullets = result.get("telegram_bullets") or [
-                            f"• 📌 Global Summary: {result.get('summary', 'No summary')}",
-                            f"• 🎯 Indian Equities: {result.get('equities_trend', 'NEUTRAL')}",
-                            f"• 🛢️ Commodities: {result.get('commodities_trend', 'NEUTRAL')}"
-                        ]
+                        bullets = result.get("telegram_bullets") or []
+                        brief_ok = bool(bullets) and "Failed to parse" not in str(result.get("summary", ""))
+                        if not brief_ok:
+                            # Escalate quality failure to Cursor RIPER via orchestrator bridge
+                            try:
+                                from engine.cursor_agent_bridge import escalate_to_cursor_agent
+                                escalate_to_cursor_agent(
+                                    issue_type="news_brief_parse_quality",
+                                    summary="Global news researcher produced empty/failed telegram_bullets for market briefing.",
+                                    evidence=json.dumps(
+                                        {
+                                            "summary": result.get("summary"),
+                                            "equities_trend": result.get("equities_trend"),
+                                            "headlines_sample": top_headlines[:8],
+                                        },
+                                        indent=2,
+                                    )[:4000],
+                                    suggested_files=[
+                                        "trading-app/workers/news_worker.py",
+                                        "trading-app/engine/ai_engine.py",
+                                    ],
+                                    issue_key=f"newsbrief:{today_str}:{current_hour}",
+                                )
+                            except Exception as _esc:
+                                logger.warning(f"Cursor escalate (news brief) failed: {_esc}")
+                        if not bullets:
+                            bullets = [
+                                f"• 📌 Global Summary: {result.get('summary', 'No summary')}",
+                                f"• 🎯 Indian Equities: {result.get('equities_trend', 'NEUTRAL')}",
+                                f"• 🛢️ Commodities: {result.get('commodities_trend', 'NEUTRAL')}",
+                                f"• ⚡ FX bias: {result.get('currency_trend', 'NEUTRAL')}",
+                            ]
                         bullet_text = "\n".join(bullets)
                         msg = (
                             f"<b>{title_prefix}</b>\n\n"
