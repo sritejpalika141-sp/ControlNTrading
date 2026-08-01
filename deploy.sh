@@ -139,22 +139,28 @@ echo "📦 Ensuring healthy .venv + dependencies..."
 NEED_VENV=0
 if [ ! -x "$APP_DIR/.venv/bin/python" ] && [ ! -x "$APP_DIR/.venv/bin/python3" ]; then
     NEED_VENV=1
-elif ! "$APP_DIR/.venv/bin/python" -c "import sys; print(sys.version)" >/dev/null 2>&1 \
-   && ! "$APP_DIR/.venv/bin/python3" -c "import sys; print(sys.version)" >/dev/null 2>&1; then
+elif ! sudo -u sritejpalika "$APP_DIR/.venv/bin/python" -c "import sys; print(sys.version)" >/dev/null 2>&1 \
+   && ! sudo -u sritejpalika "$APP_DIR/.venv/bin/python3" -c "import sys; print(sys.version)" >/dev/null 2>&1; then
     NEED_VENV=1
 fi
 if [ "$NEED_VENV" = "1" ]; then
-    echo "♻️  Recreating .venv with system python3..."
+    echo "♻️  Recreating .venv with system python3 (as sritejpalika)..."
     sudo rm -rf "$APP_DIR/.venv"
     sudo -u sritejpalika python3 -m venv "$APP_DIR/.venv"
 fi
 PY="$APP_DIR/.venv/bin/python3"
 [ -x "$PY" ] || PY="$APP_DIR/.venv/bin/python"
-"$PY" -m pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
-"$PY" -m pip install -r "$APP_DIR/requirements.txt" --quiet 2>&1 | tail -5
+# Always install as the app owner — CI SSH user cannot write into .venv owned by sritejpalika.
+sudo -u sritejpalika "$PY" -m pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
+sudo -u sritejpalika "$PY" -m pip install -r "$APP_DIR/requirements.txt" --quiet 2>&1 | tail -8
 # Ensure uvicorn entrypoint exists for systemd ExecStart
 if [ ! -x "$APP_DIR/.venv/bin/python" ] && [ -x "$APP_DIR/.venv/bin/python3" ]; then
-    ln -sfn python3 "$APP_DIR/.venv/bin/python"
+    sudo -u sritejpalika ln -sfn python3 "$APP_DIR/.venv/bin/python"
+fi
+# Verify critical import before restart
+if ! sudo -u sritejpalika "$PY" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
+    echo "❌ venv still missing uvicorn/fastapi after pip install"
+    sudo -u sritejpalika "$PY" -m pip install 'uvicorn[standard]' fastapi --quiet 2>&1 | tail -5
 fi
 
 echo "🔒 Refreshing OS security packages (openssl, ca-certificates, curl)..."
