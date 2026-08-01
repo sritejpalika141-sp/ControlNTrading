@@ -289,6 +289,7 @@ async def trailing_monitor():
                         await broadcast_log(f"🛑 SYSTEM LOCKED: Max loss ₹{abs(total_pnl):.0f} reached. Kill Switch Active.", "error", user_id=u_id, telegram_alert=True)
                         state.automation_enabled = False
                         state.hard_exit_triggered = True
+                        state.square_off_in_progress = True
                         
                         # Liquidate everything instantly
                         for _p in [p for p in positions if p.get("qty", 0) != 0]:
@@ -322,6 +323,7 @@ async def trailing_monitor():
                             logger.error(f"Kill-Switch Cancel Pending error: {_e}")
                             
                         state.active_auto_trades = []
+                        state.square_off_in_progress = False
                         state.save()
                     continue
 
@@ -334,12 +336,14 @@ async def trailing_monitor():
                     await broadcast_log(f"🛑 Daily loss limit hit: booked loss ₹{abs(realized_pnl):.0f}. Trading stopped for the day.", "error", user_id=u_id, telegram_alert=True)
                     state.automation_enabled = False
                     state.hard_exit_triggered = True
+                    state.square_off_in_progress = True
                     for _p in [p for p in positions if p.get("qty", 0) != 0]:
                         try:
                             await api_queue.enqueue(1, client.place_order, symbol=_p.get("symbol", ""), qty=abs(_p.get("qty", 0)), side=("SELL" if _p.get("side", 1) > 0 else "BUY"), order_type="MARKET", product="INTRADAY")
                         except Exception as _e:
                             logger.error(f"Daily-stop square-off error: {_e}")
                     state.active_auto_trades = []
+                    state.square_off_in_progress = False
                     state.save()
 
                     await broadcast_log("🛑 AUTOMATION DISABLED — Max loss limit hit. All positions exited.", "error")

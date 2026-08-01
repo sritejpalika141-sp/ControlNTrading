@@ -684,34 +684,16 @@
 
   <script>
     async function connectFyers() {
-      const loginWin = window.open('', '_blank');
+      // Prefer server-side redirect so PKCE verifier cookie is set on this browser session.
+      const loginWin = window.open('/fyers/auth', '_blank');
       if (!loginWin) {
         alert("Popup window was blocked! Please allow popups for this site.");
         return;
       }
-      try {
-        const res = await fetch('/api/fyers/login_url');
-        if (res.status === 400 || res.status === 401) {
-          const errData = await res.json();
-          loginWin.close();
-          alert("Error: " + (errData.error || "Please save your App ID and Secret first."));
-          return;
-        }
-        const data = await res.json();
-        if(data.url) {
-          loginWin.location.href = data.url;
-          document.getElementById('accountModal').style.display='none';
-          document.getElementById('authModal').classList.remove('hidden');
-          document.getElementById('authUrlInput').value = '';
-          document.getElementById('authUrlInput').focus();
-        } else {
-          loginWin.close();
-          alert("Failed to generate login link. Save your App ID and Secret first.");
-        }
-      } catch(e) {
-        if (loginWin) loginWin.close();
-        alert("Error: " + e.message);
-      }
+      document.getElementById('accountModal').style.display='none';
+      document.getElementById('authModal').classList.remove('hidden');
+      document.getElementById('authUrlInput').value = '';
+      document.getElementById('authUrlInput').focus();
     }
     // Welcome badge is handled dynamically by app.js updateAuthUI() via /api/auth-status
     // showing admin crown or user badge based on role.

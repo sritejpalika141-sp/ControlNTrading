@@ -31,6 +31,6 @@ Full JSON: `trading-app/reports/strategy9_rules_backtest.json`
 
 ## Next steps
 
-1. LLM shadow logging for 1–2 weeks; compare false-entry rate vs rules-only.
+1. LLM shadow logging for 1–2 weeks; compare false-entry rate vs rules-only. **Started 01-08-26:** live JSONL at `logs/strategy9_llm_shadow.jsonl` + `scripts/backtest_strategy9_shadow.py`.
 2. Fyers historical replay when credentials available on analysis VM.
-3. Consider ADX 27 sweep if PF still &lt; 1.2 after shadow week.
+3. ADX 27 sweep — **DONE 01-08-26:** ADX≥27 PF **0.92** vs ADX≥25 PF **0.99** → **keep MIN_ADX_15M = 25**.

@@ -692,20 +692,14 @@ async def get_fyers_login_url(request: Request):
         grant_type='authorization_code'
     )
     url = session.generate_authcode()
-    # A2: bind the OAuth `state` to a signed, single-use, short-TTL nonce keyed to the
-    # initiating user instead of the raw user_id (which any party could observe/guess and
-    # replay to hijack another user's callback + session cookie).
-    # Backlog (oauth-state-binding-hardening): also set a PKCE-style verifier cookie
-    # bound to the initiating browser to prevent intercepted state replay.
+    # Set PKCE verifier cookie on the JSON response (same defense as /fyers/auth redirect).
     from urllib.parse import quote as _urlquote
-    oauth_state = generate_oauth_state(user_id, response=None)
-    # We can't easily set a cookie on the redirect response since we're returning JSON.
-    # The cookie will be set by the frontend via document.cookie after receiving the URL,
-    # OR we could refactor to return a redirect. For now, the state is still protected
-    # by signature + nonce + TTL, and the verifier cookie is an additional defense.
-    # TODO: Frontend should call a set-verifier-cookie endpoint or we refactor to redirect.
-    url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-    return {"url": url}
+    resp = JSONResponse({"url": ""})
+    oauth_state = generate_oauth_state(user_id, response=resp)
+    final_url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+    resp.body = json.dumps({"url": final_url}).encode("utf-8")
+    resp.headers["content-length"] = str(len(resp.body))
+    return resp
 
 
 @app.get("/fyers/auth")
@@ -3213,6 +3207,10 @@ async def toggle_automation(request: Request):
     enabled = body.get("enabled", False)
     
     if enabled:
+        if getattr(state, "square_off_in_progress", False):
+            return {"success": False, "message": "Square-off in progress — cannot re-enable automation yet."}
+        if getattr(state, "hard_exit_triggered", False):
+            return {"success": False, "message": "Hard exit already triggered today — automation stays off until daily reset."}
         is_auth = await api_queue.enqueue(2, client.is_authenticated)
         if not is_auth:
             return {"success": False, "message": "Fyers account is not active. Please authenticate your Fyers account first."}
@@ -3941,9 +3939,22 @@ async def telegram_webhook(request: Request):
                         trigger_webhook_background(state_obj.webhook_url, "🔴 <b>EMERGENCY STOP</b>\n\nAll automated trading has been paused. No new trades will be taken.", title="System Halted")
                         
                     elif text == "/start":
-                        state_obj.automation_enabled = True
-                        state_obj.save()
-                        trigger_webhook_background(state_obj.webhook_url, "🟢 <b>AUTOMATION RESUMED</b>\n\nAutomated trading is now active.", title="System Resumed")
+                        if getattr(state_obj, "square_off_in_progress", False):
+                            trigger_webhook_background(
+                                state_obj.webhook_url,
+                                "⛔ Cannot resume — square-off still in progress.",
+                                title="Automation Blocked",
+                            )
+                        elif getattr(state_obj, "hard_exit_triggered", False):
+                            trigger_webhook_background(
+                                state_obj.webhook_url,
+                                "⛔ Cannot resume — hard exit already triggered today.",
+                                title="Automation Blocked",
+                            )
+                        else:
+                            state_obj.automation_enabled = True
+                            state_obj.save()
+                            trigger_webhook_background(state_obj.webhook_url, "🟢 <b>AUTOMATION RESUMED</b>\n\nAutomated trading is now active.", title="System Resumed")
                         
                     elif text == "/settings":
                         msg = (

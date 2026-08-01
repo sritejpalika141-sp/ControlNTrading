@@ -475,10 +475,16 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
                             "sl_underlying": t.get("sl", 0), "sl_premium": 0}
                 break
 
+        try:
+            from engine.economic_calendar import check_no_economic_events
+            _event_risk = not check_no_economic_events()
+        except Exception:
+            _event_risk = False
+
         snapshot = {
             "timestamp_ist": now.strftime("%H:%M"),
             "is_expiry_day": now.weekday() == 3,
-            "event_risk_today": False,
+            "event_risk_today": _event_risk,
             "nifty_spot": spot,
             "prev_close": prev_close,
             "gap_pct": chp,
@@ -501,8 +507,25 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
         response = await ai_engine.run_trading_agent(SYSTEM_PROMPT, user_prompt)
         
         sig_type = response.get("signal_type")
-        
-        if sig_type in ["CE_BUY", "PE_BUY"]:
+        would_execute = sig_type in ["CE_BUY", "PE_BUY"]
+        try:
+            _shadow = False
+            if hasattr(state, "is_shadow_strategy"):
+                try:
+                    _shadow = bool(state.is_shadow_strategy("Strategy 9: 9-EMA Momentum Scalper"))
+                except Exception:
+                    _shadow = False
+            _log_strategy9_llm_shadow(
+                symbol=symbol,
+                snapshot=snapshot,
+                response=response if isinstance(response, dict) else {},
+                would_execute=would_execute,
+                paper_or_shadow=bool(getattr(state, "paper_trading", False) or _shadow),
+            )
+        except Exception as _shadow_err:
+            logger.debug(f"Strategy 9 shadow log skipped: {_shadow_err}")
+
+        if would_execute:
             direction = "CALL" if sig_type == "CE_BUY" else "PUT"
             
             signal_dict = {
@@ -534,3 +557,39 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
         logger.error(f"Strategy 9 Agent error: {e}")
         
     return False, {}
+
+
+def _log_strategy9_llm_shadow(*, symbol: str, snapshot: dict, response: dict, would_execute: bool, paper_or_shadow: bool) -> None:
+    """Append one JSONL decision record for LLM vs rules-only comparison (no order placement)."""
+    import hashlib
+    import json as _json
+    from pathlib import Path
+
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / "strategy9_llm_shadow.jsonl"
+    digest_src = _json.dumps(
+        {
+            "symbol": symbol,
+            "ts": snapshot.get("timestamp_ist"),
+            "spot": snapshot.get("nifty_spot"),
+            "adx": snapshot.get("adx_15m"),
+            "vix": snapshot.get("india_vix"),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    record = {
+        "ts": datetime.now(IST).isoformat(),
+        "symbol": symbol,
+        "snapshot_digest": hashlib.sha256(digest_src.encode()).hexdigest()[:16],
+        "signal_type": response.get("signal_type"),
+        "confidence": response.get("confidence"),
+        "notes": (response.get("notes") or response.get("reason") or "")[:240],
+        "would_execute": would_execute,
+        "paper_or_shadow": paper_or_shadow,
+        "event_risk_today": snapshot.get("event_risk_today"),
+        "adx_15m": snapshot.get("adx_15m"),
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(_json.dumps(record, default=str) + "\n")

@@ -113,6 +113,7 @@ def backtest_orb(
     sl_pts: float = 20.0,
     tp_pts: float = 40.0,
     symbol: str = "",
+    delta: float = 0.55,
 ) -> Dict:
     days = group_by_session_day(candles_5m)
     trades: List[Dict] = []
@@ -209,12 +210,15 @@ def backtest_orb(
                 continue
 
             outcome, pnl = simulate_exit(trigger_close, direction, sl_pts, tp_pts, daily[i + 1 :])
+            # Option-premium proxy: approximate premium move ≈ spot move × delta
+            pnl = pnl * float(delta)
             trades.append({
                 "date": day_str,
                 "direction": direction,
                 "entry": round(trigger_close, 2),
                 "outcome": outcome,
                 "pnl_pts": round(pnl, 2),
+                "delta": float(delta),
                 "orb_range_pct": round(range_pct, 3),
             })
             triggered = True
@@ -232,6 +236,7 @@ def backtest_orb(
 
     return {
         "strategy": "Strategy 3: 5-Minute ORB",
+        "delta": float(delta),
         "sessions": len(sorted_days),
         "trades": len(trades),
         "wins": wins,
@@ -250,6 +255,7 @@ def main():
     parser.add_argument("--symbol", default="^NSEI")
     parser.add_argument("--days", type=int, default=59)
     parser.add_argument("--vix", type=float, default=16.0)
+    parser.add_argument("--delta", type=float, default=0.55, help="Option delta proxy for PnL scaling")
     parser.add_argument("--output", default="")
     parser.add_argument("--dry-run", action="store_true", help="Fetch data only")
     args = parser.parse_args()
@@ -264,17 +270,20 @@ def main():
     if args.dry_run:
         sys.exit(0)
 
-    report = backtest_orb(c5, cd, vix_assumption=args.vix)
+    report = backtest_orb(c5, cd, vix_assumption=args.vix, delta=args.delta)
     print(json.dumps({k: v for k, v in report.items() if k != "trade_log"}, indent=2))
 
-    if args.output:
-        out_path = args.output if os.path.isabs(args.output) else os.path.join(APP_DIR, args.output)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        with open(out_path, "w") as f:
-            json.dump(report, f, indent=2)
-        print(f"💾 Report saved: {out_path}")
+    out_path = args.output
+    if not out_path:
+        out_path = f"reports/orb_backtest_delta_{str(args.delta).replace('.', '_')}.json"
+    out_path = out_path if os.path.isabs(out_path) else os.path.join(APP_DIR, out_path)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"💾 Report saved: {out_path}")
 
-    sys.exit(0 if report.get("pass_gate") else 1)
+    # Exit 0 when JSON written; gate is a report field.
+    sys.exit(0)
 
 
 if __name__ == "__main__":

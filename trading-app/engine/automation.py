@@ -76,6 +76,8 @@ class TradingState:
         self.active_symbols = ["NSE:NIFTY50-INDEX"]
         self.enabled_symbols = ["NSE:NIFTY50-INDEX"]
         self.hard_exit_triggered = False
+        # Blocks manual re-enable / new entries while emergency liquidation is in progress.
+        self.square_off_in_progress = False
         # Per-session (asset-aware) EOD square-off tracking: session keys ("NSE"/"MCX"/"CDS")
         # that have hit their hard-exit time today. Lets NSE stop at 15:14 while MCX trades to 23:20.
         self.closed_sessions_today = []
@@ -195,6 +197,7 @@ class TradingState:
                         # AFTER this if/else so they survive a date-change reset — see the
                         # "PERSISTENT (non-daily) config" block below.
                         self.hard_exit_triggered = data.get("hard_exit_triggered", False)
+                        self.square_off_in_progress = data.get("square_off_in_progress", False)
                         self.closed_sessions_today = data.get("closed_sessions_today", [])
                         self.last_reset_date = saved_date
                         self.eod_report_sent_date = data.get("eod_report_sent_date", "")
@@ -322,6 +325,7 @@ class TradingState:
             "enabled_symbols": getattr(self, "enabled_symbols", ["NSE:NIFTY50-INDEX"]),
             "agent_added_symbols": getattr(self, "agent_added_symbols", []),
             "hard_exit_triggered": self.hard_exit_triggered,
+            "square_off_in_progress": getattr(self, "square_off_in_progress", False),
             "closed_sessions_today": getattr(self, "closed_sessions_today", []),
             "active_strategies": self.active_strategies,
             "commodity_strategies": getattr(self, "commodity_strategies", []),
@@ -437,6 +441,7 @@ class TradingState:
         self.traded_strikes_today = []
         self.skipped_signals = []
         self.hard_exit_triggered = False
+        self.square_off_in_progress = False
         self.closed_sessions_today = []
         self.profit_target_met = False
         self.last_loss_time = 0.0
@@ -639,6 +644,8 @@ class TradingState:
 
         if self.hard_exit_triggered:
             return False, "Max loss exit triggered — no more trades today"
+        if getattr(self, "square_off_in_progress", False):
+            return False, "Square-off in progress — new entries blocked"
         # Per-session (asset-aware) EOD gate: once a symbol's session has hard-exited today
         # (e.g. NSE at 15:14), block new entries for THAT session while others (e.g. MCX till
         # 23:20) keep trading. Only active when a symbol is passed; loss-based stops above stay global.

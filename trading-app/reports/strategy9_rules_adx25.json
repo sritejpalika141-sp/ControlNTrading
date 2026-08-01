@@ -1,0 +1,132 @@
+{
+  "strategy": "Strategy 9 rules-only (ADX\u226525.0, 10:00\u201314:00)",
+  "min_adx": 25.0,
+  "trades": 124,
+  "wins": 41,
+  "losses": 83,
+  "win_rate_pct": 33.1,
+  "profit_factor": 0.99,
+  "pass_gate": false,
+  "sample_trades": [
+    {
+      "date": "2026-05-12",
+      "signal": "PUT",
+      "adx": 31.75,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-12",
+      "signal": "PUT",
+      "adx": 34.43,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-12",
+      "signal": "PUT",
+      "adx": 30.17,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-14",
+      "signal": "PUT",
+      "adx": 50.48,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-14",
+      "signal": "CALL",
+      "adx": 27.47,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-14",
+      "signal": "CALL",
+      "adx": 36.4,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-15",
+      "signal": "PUT",
+      "adx": 31.03,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-15",
+      "signal": "CALL",
+      "adx": 29.74,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-15",
+      "signal": "CALL",
+      "adx": 27.82,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-18",
+      "signal": "CALL",
+      "adx": 25.89,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-18",
+      "signal": "PUT",
+      "adx": 29.14,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-18",
+      "signal": "PUT",
+      "adx": 28.09,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-20",
+      "signal": "CALL",
+      "adx": 29.87,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-20",
+      "signal": "PUT",
+      "adx": 26.08,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-20",
+      "signal": "PUT",
+      "adx": 25.27,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-21",
+      "signal": "PUT",
+      "adx": 34.27,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-21",
+      "signal": "PUT",
+      "adx": 39.63,
+      "outcome": "WIN"
+    },
+    {
+      "date": "2026-05-21",
+      "signal": "CALL",
+      "adx": 31.96,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-22",
+      "signal": "PUT",
+      "adx": 33.15,
+      "outcome": "LOSS"
+    },
+    {
+      "date": "2026-05-22",
+      "signal": "PUT",
+      "adx": 30.91,
+      "outcome": "LOSS"
+    }
+  ]
+}

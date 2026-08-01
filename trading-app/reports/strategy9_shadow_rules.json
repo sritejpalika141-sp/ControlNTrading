@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-08-01T08:21:16.896906Z",
+  "mode": "rules-only",
+  "rules_only": {
+    "mode": "rules-only",
+    "trades": 124,
+    "wins": 41,
+    "losses": 83,
+    "win_rate_pct": 33.1,
+    "profit_factor": 0.99,
+    "pass_gate": false,
+    "false_entry_proxy": 83
+  },
+  "rules_full": {
+    "strategy": "Strategy 9 rules-only (ADX\u226525.0, 10:00\u201314:00)",
+    "min_adx": 25.0,
+    "trades": 124,
+    "wins": 41,
+    "losses": 83,
+    "win_rate_pct": 33.1,
+    "profit_factor": 0.99,
+    "pass_gate": false
+  },
+  "llm_comparison": {
+    "llm_shadow_available": false,
+    "message": "No shadow log at /workspace/trading-app/logs/strategy9_llm_shadow.jsonl \u2014 run live sessions to populate."
+  },
+  "pass_gate": false
+}

@@ -394,13 +394,14 @@ Radius section; program-level expected surface):
 
 ## Current Execution State
 
-Last updated: 05-07-26
-Completed phases: Phase 0 (Planning — this umbrella plan)
-Current phase: Phase 1 (Asset Abstraction Layer)
-Current loop step: RESEARCH (pending)
-Validate-contract status: pending (no phase validate-contracts written yet)
+Last updated: 01-08-26
+Completed phases: Phase 0 (Planning); Phase 1 registry + entry-gate bridging landed on main (CODE DONE, not full EVL); Phase 2 crude scaffold CODE DONE (inert)
+Current phase: Phase 2 (Onboard Crude Oil) — **BLOCKED** on market-open MCX Fyers data probe
+Current loop step: EXECUTE (paused — waiting for user Fyers login during MCX session)
+Validate-contract status: pending for Phase 2 EVL
 Program Net Gate: PENDING
-Latest validator run: 05-07-26 — not yet run (this is planning only; no execution has occurred)
+
+**Next action:** During MCX hours, authenticate Fyers → read-only crude quote → confirm lot/qty → wire PAPER-only order path → ≥5 trading-day paper window → EVL. Do not start Phases 3–5 until Phase 2 is VERIFIED.
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any

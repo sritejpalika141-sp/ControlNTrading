@@ -148,3 +148,18 @@ Gate: smoke PASS, P0 tests PASS, ORB backtest report committed to task folder.
 | C3 — S9 persistence | **Done** | `strat_9_trades_today` in `automation.py` |
 | C4 — S9 rules replay | **Done** | `scripts/backtest_strategy9_rules.py` |
 | C5 — Reports | **Done** | `orb_backtest_REPORT_31-07-26.md`, `strategy9_rules_REPORT_31-07-26.md` |
+
+
+## Execution status update (2026-08-01)
+
+| Item | Status |
+|------|--------|
+| C1–C5 (original) | Done |
+| S9 LLM shadow JSONL + shadow script | **Done** |
+| ADX 27 sweep | **Done** — keep ADX 25 |
+| ORB delta sweep | **Done** — keep 0.55 |
+| Square-off re-entry + OAuth cookie + AST lock test | **Done** (security residuals) |
+| Shadow week through 2026-08-07 | **In progress** (prod paper) |
+| Live sizing increase | **Blocked** — gates still fail |
+| See | `offline_closeout_REPORT_01-08-26.md` |
+
