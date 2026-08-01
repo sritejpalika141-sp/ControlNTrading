@@ -715,6 +715,10 @@ INITIAL_ADMIN_PASSWORD=<strong-password>
 
 `SECRET_KEY` / `ENCRYPTION_KEY` auto-generate on first start. `FYERS_*` and `GCP_CREDENTIALS` are **optional** in the cloud dev VM — login, smoke tests, and yfinance backtests work without them.
 
+### Gotcha: `engine/native_bridge.py`
+
+`engine/fvg.py` and `engine/strategy_orb.py` import `engine.native_bridge.NativeCore` at module load. If that file is missing, **uvicorn will not start** and pytest collection of `test_app.py` fails with `ModuleNotFoundError`. The module is a pure-Python ctypes wrapper; `libcpp_core.so` is optional (Python fallbacks apply when the `.so` is absent). Do not delete it. If a worktree lacks it, restore from a prod backup under `backups/ci-download/*/production-backup/engine/native_bridge.py` or from `main`.
+
 ### Start / stop the app
 
 | Action | Command |
@@ -730,10 +734,11 @@ Login: `http://localhost:8000/login` — user `admin` (seeded from `INITIAL_ADMI
 | Check | Command (from `trading-app/`) |
 |-------|-------------------------------|
 | Startup gate | `.venv/bin/python smoke_test.py` |
-| Fast unit tests | `.venv/bin/pytest -q tests/test_p0_fixes.py tests/test_orb_filters.py tests/test_strategy9_filters.py -k "not test_regime_guard"` |
+| Fast unit tests | `.venv/bin/pytest -q tests/test_p0_fixes.py tests/test_orb_filters.py tests/test_strategy9_filters.py tests/test_execution_gates.py tests/test_security_middleware.py tests/test_cursor_agent_bridge.py -k "not test_regime_guard"` |
+| Auth / rate-limit | `.venv/bin/pytest -q tests/test_auth_cookie.py tests/test_admin_and_ratelimit.py` |
 | ORB / S9 backtests (offline) | `.venv/bin/python scripts/backtest_orb.py --days 59` and `scripts/backtest_strategy9_rules.py --days 59` |
 
-No separate linter is configured; `smoke_test.py` is the pre-deploy gate.
+No separate linter is configured; `smoke_test.py` is the pre-deploy gate. Prefer the fast subsets above — a bare `pytest tests/` can appear hung when collecting suites that import the full live app + workers.
 
 ### Optional external services
 
