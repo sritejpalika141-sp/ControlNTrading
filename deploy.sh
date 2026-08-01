@@ -119,18 +119,43 @@ if ! command -v cmake &> /dev/null || ! command -v g++ &> /dev/null; then
 fi
 
 if [ -d "$CPP_DIR" ]; then
-    rm -rf "$CPP_DIR/build"
-    mkdir -p "$CPP_DIR/build"
-    cd "$CPP_DIR/build" && cmake .. && make -j4
-    # Also mirror shared lib into trading-app/cpp_core/build/
-    mkdir -p "$APP_DIR/cpp_core/build"
-    cp -f "$CPP_DIR/build/libcpp_core.so" "$APP_DIR/cpp_core/build/" 2>/dev/null || true
-    echo "✅ C++ HFT Core compiled successfully!"
+    # CI SSH user may not own build artifacts — always use sudo for clean/rebuild.
+    sudo rm -rf "$CPP_DIR/build" || true
+    sudo mkdir -p "$CPP_DIR/build"
+    sudo chown -R sritejpalika:sritejpalika "$CPP_DIR" || true
+    if (cd "$CPP_DIR/build" && cmake .. && make -j4); then
+        mkdir -p "$APP_DIR/cpp_core/build"
+        cp -f "$CPP_DIR/build/libcpp_core.so" "$APP_DIR/cpp_core/build/" 2>/dev/null || true
+        echo "✅ C++ HFT Core compiled successfully!"
+    else
+        echo "⚠️  C++ HFT Core build skipped/failed — Python fallback remains active"
+    fi
+else
+    echo "⚠️  cpp_core directory missing on VM — skipping native build"
 fi
 
-echo "📦 Installing dependencies into .venv..."
-$APP_DIR/.venv/bin/pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
-$APP_DIR/.venv/bin/pip install -r $APP_DIR/requirements.txt --quiet 2>&1 | tail -3
+echo "📦 Ensuring healthy .venv + dependencies..."
+# Recreate venv if missing or broken (e.g. pip shebang points at a Mac laptop path).
+NEED_VENV=0
+if [ ! -x "$APP_DIR/.venv/bin/python" ] && [ ! -x "$APP_DIR/.venv/bin/python3" ]; then
+    NEED_VENV=1
+elif ! "$APP_DIR/.venv/bin/python" -c "import sys; print(sys.version)" >/dev/null 2>&1 \
+   && ! "$APP_DIR/.venv/bin/python3" -c "import sys; print(sys.version)" >/dev/null 2>&1; then
+    NEED_VENV=1
+fi
+if [ "$NEED_VENV" = "1" ]; then
+    echo "♻️  Recreating .venv with system python3..."
+    sudo rm -rf "$APP_DIR/.venv"
+    sudo -u sritejpalika python3 -m venv "$APP_DIR/.venv"
+fi
+PY="$APP_DIR/.venv/bin/python3"
+[ -x "$PY" ] || PY="$APP_DIR/.venv/bin/python"
+"$PY" -m pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
+"$PY" -m pip install -r "$APP_DIR/requirements.txt" --quiet 2>&1 | tail -5
+# Ensure uvicorn entrypoint exists for systemd ExecStart
+if [ ! -x "$APP_DIR/.venv/bin/python" ] && [ -x "$APP_DIR/.venv/bin/python3" ]; then
+    ln -sfn python3 "$APP_DIR/.venv/bin/python"
+fi
 
 echo "🔒 Refreshing OS security packages (openssl, ca-certificates, curl)..."
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
