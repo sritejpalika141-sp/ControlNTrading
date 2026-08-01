@@ -49,7 +49,12 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     # risk_orchestrator.propose_trade decides: this validated 95-confidence ORB signal is allowed
     # through in choppy markets; only sub-85 signals are skipped.
 
-    if "Strategy 3: 5-Minute ORB" not in state.active_strategies:
+    # Asset-aware enablement: equity ORB uses active_strategies; commodity ORB uses commodity_strategies.
+    is_commodity = symbol.startswith(("MCX:", "CDS:"))
+    if is_commodity:
+        if "Commodity: 5-Minute ORB" not in getattr(state, "commodity_strategies", []):
+            return None
+    elif "Strategy 3: 5-Minute ORB" not in state.active_strategies:
         return None
 
     # Strictly 1 trade today
@@ -59,17 +64,29 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     now = datetime.now(IST)
     current_time_str = now.strftime("%H:%M:%S")
 
-    # Time expiration check: if past 10:30 AM IST, mark expired for today
-    if current_time_str > "10:30:00":
-        if not getattr(state, "strat_orb_expired", False):
-            logger.info(f"⏰ Strategy 3: Time window closed for {symbol} (10:30 AM). Expired for today.")
-            state.strat_orb_expired = True
-            state.save()
-        return None
+    # Session window: NSE ORB is morning-only; commodity ORB follows MCX open+first-hour style window.
+    if is_commodity:
+        # MCX open ~09:00 IST; allow ORB-style breakout until 11:00 (commodity morning range).
+        if current_time_str > "11:00:00":
+            if not getattr(state, "strat_orb_expired", False):
+                logger.info(f"⏰ Commodity ORB: Time window closed for {symbol} (11:00). Expired for today.")
+                state.strat_orb_expired = True
+                state.save()
+            return None
+        if current_time_str < "09:05:00":
+            return None
+    else:
+        # Time expiration check: if past 10:30 AM IST, mark expired for today
+        if current_time_str > "10:30:00":
+            if not getattr(state, "strat_orb_expired", False):
+                logger.info(f"⏰ Strategy 3: Time window closed for {symbol} (10:30 AM). Expired for today.")
+                state.strat_orb_expired = True
+                state.save()
+            return None
 
-    # Too early: Must be after 9:20:00 AM IST to have the first 5-min candle (9:15) closed
-    if current_time_str < "09:20:00":
-        return None
+        # Too early: Must be after 9:20:00 AM IST to have the first 5-min candle (9:15) closed
+        if current_time_str < "09:20:00":
+            return None
 
     # 2. Extract today's 5m candles
     today = now.date()

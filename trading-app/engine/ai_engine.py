@@ -180,10 +180,19 @@ class AIEngine:
         if self.github_key:
             logger.info("✅ GitHub AI initialized (free GPT-4o-mini).")
 
-        # === 8. Ollama (Local AI Fallback) ===
-        # Always enable Ollama. It will gracefully fail if the service is down.
-        self.providers["ollama"] = AIProvider("Ollama", enabled=True)
-        logger.info("✅ Ollama Local AI initialized (ultimate fallback).")
+        # Always register Ollama, but start disabled until a live probe succeeds — otherwise
+        # is_available() stays True forever with no cloud keys and strategies believe AI is up.
+        self.providers["ollama"] = AIProvider("Ollama", enabled=False)
+        try:
+            import httpx as _httpx
+            r = _httpx.get("http://localhost:11434/api/tags", timeout=1.5)
+            if r.status_code == 200:
+                self.providers["ollama"].enabled = True
+                logger.info("✅ Ollama Local AI probed and enabled.")
+            else:
+                logger.info("ℹ️ Ollama not ready (HTTP %s) — disabled until restart.", r.status_code)
+        except Exception:
+            logger.info("ℹ️ Ollama not reachable — disabled (cloud providers / rules fallback used).")
 
         # ── Prune KNOWN-DEAD providers (the cheap fix) ──────────────────────────────────
         # On 22-Jul the chain wasted cycles on providers that will never succeed this session:

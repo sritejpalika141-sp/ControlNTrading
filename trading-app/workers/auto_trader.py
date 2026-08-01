@@ -2019,7 +2019,10 @@ async def automation_loop():
                         from datetime import time as dtime
                         from state import IST
                         now_t = datetime.now(IST).time()
-                        if pending["candles_alive"] > 3 or now_t >= dtime(15, 15):
+                        # NSE hard-exit at 15:15 cancels equity pendings only — MCX/CDS continue into evening.
+                        _is_com_pending = symbol.startswith(("MCX:", "CDS:"))
+                        _nse_eod = (not _is_com_pending) and now_t >= dtime(15, 15)
+                        if pending["candles_alive"] > 3 or _nse_eod:
                             state.strat_7_pending_order = None
                         else:
                             triggered = False

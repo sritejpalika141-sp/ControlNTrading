@@ -3211,9 +3211,11 @@ async def toggle_automation(request: Request):
             return {"success": False, "message": "Square-off in progress — cannot re-enable automation yet."}
         if getattr(state, "hard_exit_triggered", False):
             return {"success": False, "message": "Hard exit already triggered today — automation stays off until daily reset."}
-        is_auth = await api_queue.enqueue(2, client.is_authenticated)
-        if not is_auth:
-            return {"success": False, "message": "Fyers account is not active. Please authenticate your Fyers account first."}
+        # Paper mode (or shadow-only) can run without a live Fyers session.
+        if not getattr(state, "paper_trading", False):
+            is_auth = await api_queue.enqueue(2, client.is_authenticated)
+            if not is_auth:
+                return {"success": False, "message": "Fyers account is not active. Please authenticate your Fyers account first (or enable Paper Trading)."}
             
     state.automation_enabled = enabled
     state.save()
@@ -3484,6 +3486,11 @@ async def health_check():
     if kill_switch_active:
         status = "halted"
     elif not token_valid and active_users > 0:
+        status = "degraded"
+    elif active_users == 0:
+        # No broker clients loaded — process is up but not trading-ready.
+        status = "degraded"
+    elif not token_valid:
         status = "degraded"
     elif error_count > 3:
         status = "degraded"

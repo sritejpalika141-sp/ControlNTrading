@@ -551,12 +551,68 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             logger.info(f"Strategy 9 AI decided to SKIP DAY: {response.get('reason')}")
             
         elif sig_type == "NO_SIGNAL":
-            pass # normal behaviour
+            reason = str(response.get("reason") or "").lower()
+            ai_dead = any(
+                tok in reason
+                for tok in ("busy", "rate limited", "failed", "unavailable", "no ai", "all ai")
+            )
+            if ai_dead:
+                rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=now)
+                if rules_sig:
+                    logger.info(f"Strategy 9 rules-only fallback fired for {symbol}: {rules_sig['type']}")
+                    tt = getattr(state, "strat_9_trades_today", 0)
+                    setattr(state, "strat_9_trades_today", tt + 1)
+                    state.save()
+                    return True, rules_sig
 
     except Exception as e:
         logger.error(f"Strategy 9 Agent error: {e}")
+        try:
+            rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=datetime.now(IST))
+            if rules_sig:
+                logger.info(f"Strategy 9 rules-only fallback after error for {symbol}: {rules_sig['type']}")
+                return True, rules_sig
+        except Exception as _re:
+            logger.debug(f"Strategy 9 rules fallback failed: {_re}")
         
     return False, {}
+
+
+def _rules_only_signal_from_candles(candles_5m: list, *, spot: float, now: datetime) -> dict:
+    """Deterministic EMA9 retest + ADX gate when LLM is unavailable (matches backtest rules)."""
+    if not candles_5m or len(candles_5m) < 20:
+        return {}
+    if not session_allows_entry(now):
+        return {}
+    highs = [c["high"] for c in candles_5m]
+    lows = [c["low"] for c in candles_5m]
+    closes = [c["close"] for c in candles_5m]
+    adx = calculate_adx(highs, lows, closes, 14)
+    if not adx_gate_passes(adx):
+        return {}
+    ema9 = _calculate_ema(closes, 9)
+    c = candles_5m[-1]
+    prev = candles_5m[-2]
+    touched = c["low"] <= ema9 <= c["high"] or prev["low"] <= ema9 <= prev["high"]
+    direction = None
+    if touched and c["close"] > c["open"] and c["close"] > ema9:
+        direction = "CALL"
+    elif touched and c["close"] < c["open"] and c["close"] < ema9:
+        direction = "PUT"
+    if not direction:
+        return {}
+    return {
+        "type": direction,
+        "strategy": "Strategy 9: 9-EMA Momentum Scalper",
+        "time": now.strftime("%H:%M"),
+        "confidence": 55,
+        "spot": spot,
+        "reason": f"Rules-only fallback (ADX={adx:.1f}, EMA9 retest) — LLM unavailable",
+        "sl": spot - 15 if direction == "CALL" else spot + 15,
+        "target_1": spot + 15 if direction == "CALL" else spot - 15,
+        "target_2": spot + 30 if direction == "CALL" else spot - 30,
+        "rules_only": True,
+    }
 
 
 def _log_strategy9_llm_shadow(*, symbol: str, snapshot: dict, response: dict, would_execute: bool, paper_or_shadow: bool) -> None:
