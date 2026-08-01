@@ -1,13 +1,13 @@
-Deploy Time: 2026-07-31 12:41:40 IST
+Deploy Time: 2026-07-31 15:50:41 IST
 Branch: main
 ---
-01c419f feat(strikes): OI-change + IV + delta/theta strike selection (all segments) (2 minutes ago)
-65acc22 fix(telegram): read webhook URL directly from user state and trigger immediate initial market briefing on startup (9 minutes ago)
-4e7d83b fix(ui): replace UNKNOWN AI down fallback in regime_worker with Technical Price Action Math fallback to eliminate AI down warning banners (2 hours ago)
-a0ef395 fix(sl-guardian): log via logger (dashboard.log) not print, add scan heartbeat (2 hours ago)
-a47d17a feat(risk): SL Guardian — guarantees every open position always has a stop-loss (2 hours ago)
-804fa6c fix(fyers): round stopLoss and takeProfit distance values to 0.05 tick size to prevent exchange tick rejection (3 hours ago)
-addd041 feat(autonomy): self-healer can fix trading code (gated), self-tuning auto-applies minor (3 hours ago)
-807c98c fix(mcx): ensure MCX session auto-injects MCX:CRUDEOIL and keeps trading loop active during evening hours (18 hours ago)
-93e6a34 feat(persona): configure VM-Orchestrator AI as a 20-year veteran Master Intraday Option Trader strictly focused on daily profit capture and zero overnight positions (18 hours ago)
-0cf1a98 feat(swarm): launch 4 specialist AI subagents for Option Buyers and activate Strategy 11 across all segments on Dashboard Settings UI (18 hours ago)
+0f3ba8a chore(sync): synchronize all local engine improvements and deployment scripts to remote (79 seconds ago)
+065a01b fix(risk): reconcile stale active-trades — phantom entries were blocking strategy re-entry (2 minutes ago)
+d82c898 feat(strikes): OI-change + IV + delta/theta strike selection (all segments) (2 minutes ago)
+237f639 Merge pull request #10 from sritejpalika141-sp/cursor/prod-analysis-fix-9e4a (3 minutes ago)
+9d3e442 fix(ci): sync backtest scripts to prod VM; upload DB even if backtest fails (3 minutes ago)
+0aa7e52 Merge pull request #9 from sritejpalika141-sp/cursor/prod-analysis-workflow-9e4a (15 minutes ago)
+b997f7d ci: Production Analysis workflow — pull DB + Fyers backtest via GitHub secrets (15 minutes ago)
+372f62c Merge pull request #8 from sritejpalika141-sp/cursor/gcp-secret-validation-9e4a (18 minutes ago)
+9e65ea1 fix(scripts): validate GCP_CREDENTIALS length and JSON before auth (19 minutes ago)
+35b3971 Merge pull request #7 from sritejpalika141-sp/cursor/gcloud-auth-helper-9e4a (21 minutes ago)
