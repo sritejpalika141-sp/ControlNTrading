@@ -1,13 +1,13 @@
-Deploy Time: 2026-08-01 13:13:46 IST
+Deploy Time: 2026-08-01 16:11:50 IST
 Branch: main
 ---
-679e1c9 fix(news): clean markdown codeblocks from news JSON response and return live RSS headline fallbacks to prevent Failed to parse news sentiment warnings (63 seconds ago)
-8e24c89 Merge pull request #29 from sritejpalika141-sp/cursor/fix-cursor-key-sudo-9e4a (5 minutes ago)
-41d2624 fix(ci): write CURSOR_API_KEY to VM .env via sudo (5 minutes ago)
-a318d43 Merge pull request #28 from sritejpalika141-sp/cursor/deploy-cursor-api-key-9e4a (5 hours ago)
-81a7210 ci(deploy): install CURSOR_API_KEY on VM every deploy (5 hours ago)
-3d367c5 Merge pull request #27 from sritejpalika141-sp/cursor/install-cursor-key-workflow-9e4a (5 hours ago)
-07eac61 ci: workflow to install CURSOR_API_KEY on production VM (5 hours ago)
-d147d51 Merge pull request #26 from sritejpalika141-sp/cursor/cursor-key-vault-9e4a (5 hours ago)
-845e5bb fix(orchestrator): resolve CURSOR_API_KEY from vault/.env (5 hours ago)
-6fd85f8 Merge pull request #25 from sritejpalika141-sp/cursor/vm-cursor-riper-bridge-9e4a (5 hours ago)
+3e3d450 fix(deploy): exclude local .venv from rsync bundle and auto-recreate native Linux venv on VM (9 minutes ago)
+0ca714c fix(deploy): pip install into VM .venv as sritejpalika (70 minutes ago)
+c7034fd fix(deploy): recreate broken VM .venv and sudo cpp_core build (73 minutes ago)
+215a2e8 fix(trading): make strategies/agents actually runnable (2 hours ago)
+0e2ba0e feat(planning): finish offline plan items — S9 shadow, guards, sweeps (2 hours ago)
+679e1c9 fix(news): clean markdown codeblocks from news JSON response and return live RSS headline fallbacks to prevent Failed to parse news sentiment warnings (3 hours ago)
+8e24c89 Merge pull request #29 from sritejpalika141-sp/cursor/fix-cursor-key-sudo-9e4a (3 hours ago)
+41d2624 fix(ci): write CURSOR_API_KEY to VM .env via sudo (3 hours ago)
+a318d43 Merge pull request #28 from sritejpalika141-sp/cursor/deploy-cursor-api-key-9e4a (8 hours ago)
+81a7210 ci(deploy): install CURSOR_API_KEY on VM every deploy (8 hours ago)

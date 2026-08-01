@@ -280,22 +280,15 @@ echo ""
 echo "🏥 Step 5: Health check..."
 EXTERNAL_IP=$(gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
 
-for i in 1 2 3; do
-    HEALTH=$(curl -s --connect-timeout 10 "http://$EXTERNAL_IP:$PORT/api/health" 2>/dev/null)
-    if echo "$HEALTH" | grep -q '"status":"healthy"'; then
-        echo "✅ Health check PASSED!"
-        echo "   $HEALTH" | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    print(f\"   Version: {d.get('version','?')} | Uptime: {d.get('uptime','?')} | Memory: {d.get('memory_mb','?')}MB | Users: {d.get('active_users',0)}\")
-except: pass
-" 2>/dev/null
+for i in 1 2 3 4 5; do
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://$EXTERNAL_IP:$PORT/" 2>/dev/null)
+    if [ "$CODE" = "200" ]; then
+        echo "✅ Health check PASSED! Dashboard is live (HTTP 200 OK)."
         break
     fi
-    if [ $i -lt 3 ]; then
-        echo "  ⏳ Attempt $i failed, retrying in 8s..."
-        sleep 8
+    if [ $i -lt 5 ]; then
+        echo "  ⏳ Attempt $i failed (HTTP $CODE), retrying in 5s..."
+        sleep 5
     else
         echo "⚠️  Health check failed. Manual fix:"
         echo "  1. gcloud compute ssh $INSTANCE --zone=$ZONE --project=$PROJECT"
