@@ -3,6 +3,12 @@ name: Install Cursor API Key on VM
 
 on:
   workflow_dispatch:
+  # Also run when this file changes on main (bootstrap after secret is added)
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/install-cursor-api-key.yml"
+      - ".github/workflows/deploy.yml"
 
 permissions:
   contents: read

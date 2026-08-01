@@ -36,3 +36,38 @@ jobs:
       - name: Run deploy.sh
         run: |
           bash deploy.sh
+
+      - name: Install CURSOR_API_KEY on VM (for orchestrator RIPER wake)
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GCP_PROJECT: sritej-trading-algo-2026
+          GCP_INSTANCE: sritej-trading
+          GCP_ZONE: asia-south1-c
+        run: |
+          set -euo pipefail
+          if [ -z "${CURSOR_API_KEY:-}" ]; then
+            echo "::warning::CURSOR_API_KEY secret not set — vm_orchestrator cannot auto-wake Cursor agents."
+            exit 0
+          fi
+          printf '%s' "$CURSOR_API_KEY" | gcloud compute ssh "$GCP_INSTANCE" \
+            --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
+            --command='
+              set -e
+              KEY=$(cat)
+              ENV=/home/sritejpalika/trading-app/.env
+              sudo -u sritejpalika touch "$ENV"
+              sudo -u sritejpalika grep -v "^CURSOR_API_KEY=" "$ENV" > /tmp/env_clean 2>/dev/null || cp "$ENV" /tmp/env_clean
+              sudo -u sritejpalika mv /tmp/env_clean "$ENV"
+              printf "CURSOR_API_KEY=%s\n" "$KEY" | sudo -u sritejpalika tee -a "$ENV" >/dev/null
+              sudo chmod 600 "$ENV"
+              sudo chown sritejpalika:sritejpalika "$ENV"
+              sudo mkdir -p /etc/systemd/system/sritej-orchestrator.service.d
+              printf "%s\n" "[Service]" "EnvironmentFile=-/home/sritejpalika/trading-app/.env" | sudo tee /etc/systemd/system/sritej-orchestrator.service.d/cursor-api.conf >/dev/null
+              sudo systemctl daemon-reload
+              sudo systemctl restart sritej-orchestrator || true
+              sleep 2
+              sudo systemctl is-active sritej-orchestrator || true
+              COUNT=$(sudo -u sritejpalika grep -c "^CURSOR_API_KEY=crsr_" "$ENV" || echo 0)
+              echo "cursor_api_key_lines=$COUNT"
+            '
+          echo "✅ CURSOR_API_KEY installed; orchestrator restarted"
