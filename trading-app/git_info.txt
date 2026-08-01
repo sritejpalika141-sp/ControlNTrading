@@ -1,13 +1,13 @@
-Deploy Time: 2026-07-31 15:50:41 IST
+Deploy Time: 2026-08-01 13:13:46 IST
 Branch: main
 ---
-0f3ba8a chore(sync): synchronize all local engine improvements and deployment scripts to remote (79 seconds ago)
-065a01b fix(risk): reconcile stale active-trades — phantom entries were blocking strategy re-entry (2 minutes ago)
-d82c898 feat(strikes): OI-change + IV + delta/theta strike selection (all segments) (2 minutes ago)
-237f639 Merge pull request #10 from sritejpalika141-sp/cursor/prod-analysis-fix-9e4a (3 minutes ago)
-9d3e442 fix(ci): sync backtest scripts to prod VM; upload DB even if backtest fails (3 minutes ago)
-0aa7e52 Merge pull request #9 from sritejpalika141-sp/cursor/prod-analysis-workflow-9e4a (15 minutes ago)
-b997f7d ci: Production Analysis workflow — pull DB + Fyers backtest via GitHub secrets (15 minutes ago)
-372f62c Merge pull request #8 from sritejpalika141-sp/cursor/gcp-secret-validation-9e4a (18 minutes ago)
-9e65ea1 fix(scripts): validate GCP_CREDENTIALS length and JSON before auth (19 minutes ago)
-35b3971 Merge pull request #7 from sritejpalika141-sp/cursor/gcloud-auth-helper-9e4a (21 minutes ago)
+679e1c9 fix(news): clean markdown codeblocks from news JSON response and return live RSS headline fallbacks to prevent Failed to parse news sentiment warnings (63 seconds ago)
+8e24c89 Merge pull request #29 from sritejpalika141-sp/cursor/fix-cursor-key-sudo-9e4a (5 minutes ago)
+41d2624 fix(ci): write CURSOR_API_KEY to VM .env via sudo (5 minutes ago)
+a318d43 Merge pull request #28 from sritejpalika141-sp/cursor/deploy-cursor-api-key-9e4a (5 hours ago)
+81a7210 ci(deploy): install CURSOR_API_KEY on VM every deploy (5 hours ago)
+3d367c5 Merge pull request #27 from sritejpalika141-sp/cursor/install-cursor-key-workflow-9e4a (5 hours ago)
+07eac61 ci: workflow to install CURSOR_API_KEY on production VM (5 hours ago)
+d147d51 Merge pull request #26 from sritejpalika141-sp/cursor/cursor-key-vault-9e4a (5 hours ago)
+845e5bb fix(orchestrator): resolve CURSOR_API_KEY from vault/.env (5 hours ago)
+6fd85f8 Merge pull request #25 from sritejpalika141-sp/cursor/vm-cursor-riper-bridge-9e4a (5 hours ago)

@@ -22,6 +22,7 @@ upload_trading_app_bundle() {
   rsync -a \
     --exclude 'trading_app.db' \
     --exclude '.env' \
+    --exclude '.venv' \
     --exclude '__pycache__' \
     --exclude '*.pyc' \
     "${local_app}/" "${stage}/trading-app/"
@@ -40,7 +41,7 @@ upload_trading_app_bundle() {
     EXTRACT=/tmp/sritej-extract-\$\$
     mkdir -p \"\${EXTRACT}\"
     tar xzf /tmp/sritej-deploy.tar.gz -C \"\${EXTRACT}\"
-    sudo rsync -a --exclude trading_app.db --exclude .env \"\${EXTRACT}/trading-app/\" \"${remote_app}/\"
+    sudo rsync -a --exclude trading_app.db --exclude .env --exclude .venv \"\${EXTRACT}/trading-app/\" \"${remote_app}/\"
     sudo chown -R ${remote_user}:${remote_user} \"${remote_app}\"
     rm -rf \"\${EXTRACT}\" /tmp/sritej-deploy.tar.gz
   "
