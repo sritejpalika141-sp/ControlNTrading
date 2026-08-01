@@ -83,8 +83,25 @@ def _write_ticket(payload: Dict[str, Any]) -> Path:
     return path
 
 
+def _resolve_cursor_api_key() -> str:
+    """Prefer env, then encrypted vault / .env via get_secret (same path as other prod secrets)."""
+    key = (os.getenv("CURSOR_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        from engine.encryption import get_secret
+
+        key = (get_secret("CURSOR_API_KEY", fallback_env=True) or "").strip()
+        if key:
+            os.environ["CURSOR_API_KEY"] = key
+            return key
+    except Exception:
+        pass
+    return ""
+
+
 def _post_cursor_agent(prompt_text: str, name: str) -> Dict[str, Any]:
-    api_key = (os.getenv("CURSOR_API_KEY") or "").strip()
+    api_key = _resolve_cursor_api_key()
     if not api_key:
         return {"ok": False, "skipped": True, "reason": "CURSOR_API_KEY not set"}
 
