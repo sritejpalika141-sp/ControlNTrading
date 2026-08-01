@@ -114,6 +114,7 @@ For most substantial tasks:
 | testing or verification | `process/context/tests/all-tests.md` |
 | creating a new plan | `process/context/planning/all-planning.md` |
 | cloud security, deploy, prod hardening | `process/context/cloud-security-posture.md` |
+| vm_orchestrator ↔ Cursor RIPER escalation | `process/context/orchestrator-cursor-riper.md` |
 
 ## Context Group Lifecycle
 
