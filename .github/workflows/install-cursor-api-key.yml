@@ -3,12 +3,10 @@ name: Install Cursor API Key on VM
 
 on:
   workflow_dispatch:
-  # Also run when this file changes on main (bootstrap after secret is added)
   push:
     branches: [main]
     paths:
       - ".github/workflows/install-cursor-api-key.yml"
-      - ".github/workflows/deploy.yml"
 
 permissions:
   contents: read
@@ -29,7 +27,7 @@ jobs:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
           if [ -z "$CURSOR_API_KEY" ]; then
-            echo "::error::Add repository secret CURSOR_API_KEY (Cursor Dashboard → API Keys), then re-run this workflow."
+            echo "::error::Add repository secret CURSOR_API_KEY, then re-run this workflow."
             exit 1
           fi
 
@@ -47,25 +45,29 @@ jobs:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
           set -euo pipefail
-          # Pass key via stdin over SSH — avoid printing secret in logs
+          # Write key via root sudo (CI SSH user cannot mv into trading-app/.env)
           printf '%s' "$CURSOR_API_KEY" | gcloud compute ssh "$GCP_INSTANCE" \
             --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
             --command='
               set -e
               KEY=$(cat)
               ENV=/home/sritejpalika/trading-app/.env
-              sudo -u sritejpalika touch "$ENV"
-              sudo -u sritejpalika grep -v "^CURSOR_API_KEY=" "$ENV" > /tmp/env_clean 2>/dev/null || cp "$ENV" /tmp/env_clean
-              sudo -u sritejpalika mv /tmp/env_clean "$ENV"
-              printf "CURSOR_API_KEY=%s\n" "$KEY" | sudo -u sritejpalika tee -a "$ENV" >/dev/null
-              sudo chmod 600 "$ENV"
+              TMP=/tmp/trading-app.env.$$
+              sudo touch "$ENV"
+              sudo grep -v "^CURSOR_API_KEY=" "$ENV" > "$TMP" 2>/dev/null || sudo cp "$ENV" "$TMP"
+              printf "CURSOR_API_KEY=%s\n" "$KEY" >> "$TMP"
+              sudo cp "$TMP" "$ENV"
+              rm -f "$TMP"
               sudo chown sritejpalika:sritejpalika "$ENV"
+              sudo chmod 600 "$ENV"
               sudo mkdir -p /etc/systemd/system/sritej-orchestrator.service.d
               printf "%s\n" "[Service]" "EnvironmentFile=-/home/sritejpalika/trading-app/.env" | sudo tee /etc/systemd/system/sritej-orchestrator.service.d/cursor-api.conf >/dev/null
               sudo systemctl daemon-reload
               sudo systemctl restart sritej-orchestrator
               sleep 2
               sudo systemctl is-active sritej-orchestrator
-              sudo -u sritejpalika grep -c "^CURSOR_API_KEY=crsr_" "$ENV"
+              COUNT=$(sudo grep -c "^CURSOR_API_KEY=crsr_" "$ENV" || echo 0)
+              echo "cursor_api_key_lines=$COUNT"
+              test "$COUNT" -ge 1
             '
           echo "✅ CURSOR_API_KEY installed on VM; sritej-orchestrator restarted"
