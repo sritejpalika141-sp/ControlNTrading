@@ -55,19 +55,21 @@ jobs:
               set -e
               KEY=$(cat)
               ENV=/home/sritejpalika/trading-app/.env
-              sudo -u sritejpalika touch "$ENV"
-              sudo -u sritejpalika grep -v "^CURSOR_API_KEY=" "$ENV" > /tmp/env_clean 2>/dev/null || cp "$ENV" /tmp/env_clean
-              sudo -u sritejpalika mv /tmp/env_clean "$ENV"
-              printf "CURSOR_API_KEY=%s\n" "$KEY" | sudo -u sritejpalika tee -a "$ENV" >/dev/null
-              sudo chmod 600 "$ENV"
+              TMP=/tmp/trading-app.env.$$
+              sudo touch "$ENV"
+              sudo grep -v "^CURSOR_API_KEY=" "$ENV" > "$TMP" 2>/dev/null || sudo cp "$ENV" "$TMP"
+              printf "CURSOR_API_KEY=%s\n" "$KEY" >> "$TMP"
+              sudo cp "$TMP" "$ENV"
+              rm -f "$TMP"
               sudo chown sritejpalika:sritejpalika "$ENV"
+              sudo chmod 600 "$ENV"
               sudo mkdir -p /etc/systemd/system/sritej-orchestrator.service.d
               printf "%s\n" "[Service]" "EnvironmentFile=-/home/sritejpalika/trading-app/.env" | sudo tee /etc/systemd/system/sritej-orchestrator.service.d/cursor-api.conf >/dev/null
               sudo systemctl daemon-reload
               sudo systemctl restart sritej-orchestrator || true
               sleep 2
               sudo systemctl is-active sritej-orchestrator || true
-              COUNT=$(sudo -u sritejpalika grep -c "^CURSOR_API_KEY=crsr_" "$ENV" || echo 0)
+              COUNT=$(sudo grep -c "^CURSOR_API_KEY=crsr_" "$ENV" || echo 0)
               echo "cursor_api_key_lines=$COUNT"
             '
           echo "✅ CURSOR_API_KEY installed; orchestrator restarted"
