@@ -22,10 +22,23 @@ logger = logging.getLogger("CRUDE_EIA")
 IST = pytz.timezone("Asia/Kolkata")
 _ASSET = "CRUDE_OIL_OPTIONS"
 
+# 03-08-26 fix: a 1-candle range breakout is meaningless noise on a choppy/range-bound session —
+# require the breakout distance to be at least this many times the recent average candle range
+# (a simple ATR proxy) before treating it as a real breakout.
+CHOP_ATR_LOOKBACK = 10
+CHOP_ATR_MULT = 0.8
+
 
 def _no_trade(reason: str) -> dict:
     return {"type": "NO TRADE", "side": None, "strategy": "Crude EIA Volatility",
             "reason": reason, "confidence": 0, "asset_class": _ASSET}
+
+
+def _atr(candles) -> float:
+    lookback = candles[-(1 + CHOP_ATR_LOOKBACK):-1]
+    if len(lookback) < 3:
+        return 0.0
+    return sum(c["high"] - c["low"] for c in lookback) / len(lookback)
 
 
 def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSET) -> dict:
@@ -47,9 +60,15 @@ def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSE
     recent_high = max(c["high"] for c in prior)
     recent_low = min(c["low"] for c in prior)
     if last["close"] > recent_high:
+        atr = _atr(candles)
+        if atr > 0 and (last["close"] - recent_high) < CHOP_ATR_MULT * atr:
+            return _no_trade("Upside breakout too small vs recent range (chop filter)")
         return {"type": "CALL", "side": "BUY", "strategy": "Crude EIA Volatility",
                 "reason": "EIA-day upside breakout", "confidence": 88, "asset_class": _ASSET}
     if last["close"] < recent_low:
+        atr = _atr(candles)
+        if atr > 0 and (recent_low - last["close"]) < CHOP_ATR_MULT * atr:
+            return _no_trade("Downside breakout too small vs recent range (chop filter)")
         return {"type": "PUT", "side": "BUY", "strategy": "Crude EIA Volatility",
                 "reason": "EIA-day downside breakout", "confidence": 88, "asset_class": _ASSET}
     return _no_trade("EIA window active but no breakout")

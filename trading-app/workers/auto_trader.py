@@ -45,6 +45,16 @@ from datetime import timedelta
 # snapshot, short enough that stale entries do not linger indefinitely.
 POSITION_ABSENCE_GRACE_SECONDS = 30
 
+# 03-08-26 fix: Crude Evening Momentum / EIA Volatility used to market-buy the instant their raw
+# signal fired — which, on MCX's frequently choppy/range-bound sessions, meant buying right at the
+# local extreme of the move just before it mean-reverted. Raw signals now queue as a pending order
+# and must (1) survive one more candle without reversing (confirmation) and (2) wait for price to
+# retrace back toward the signal level (pullback entry, cheaper premium + proof the level holds)
+# before actually trading. See run_crude_strats() in execute_auto_trade().
+CRUDE_PENDING_MAX_CANDLES = 4       # give up waiting for confirmation/pullback after this many new candles
+CRUDE_PULLBACK_ATR_MULT = 0.4       # retracement target, as a multiple of recent avg candle range
+CRUDE_PULLBACK_MIN_POINTS = 1.0     # floor so the retracement target is never ~0 in a dead-quiet tape
+
 # Maps an equity strategy name -> its commodity-family equivalent. A strategy with NO mapping here
 # does NOT run on commodity (MCX/CDS) symbols at all. This is how the equity and commodity strategy
 # families are kept separate: equity symbols gate on state.active_strategies, MCX symbols gate on
@@ -2136,22 +2146,105 @@ async def automation_loop():
                 if not (spot and candles_5m):
                     return
                 coms = getattr(state, "commodity_strategies", [])
+
+                def _crude_atr(candles, lookback=10):
+                    lb = candles[-(lookback + 1):-1] if len(candles) > 1 else []
+                    if len(lb) < 3:
+                        return 0.0
+                    return sum(c["high"] - c["low"] for c in lb) / len(lb)
+
+                def _queue_crude_pending(strategy_name, sig):
+                    atr = _crude_atr(candles_5m)
+                    retrace = max(atr * CRUDE_PULLBACK_ATR_MULT, CRUDE_PULLBACK_MIN_POINTS)
+                    signal_price = candles_5m[-1]["close"]
+                    entry_trigger = round(
+                        signal_price + retrace if sig["type"] == "PUT" else signal_price - retrace, 1
+                    )
+                    state.crude_pending_order = {
+                        "type": sig["type"],
+                        "strategy_name": strategy_name,
+                        "sig_strategy": sig.get("strategy", strategy_name),
+                        "reason": sig.get("reason", ""),
+                        "confidence": sig.get("confidence", 80),
+                        "asset_class": sig.get("asset_class", "CRUDE_OIL_OPTIONS"),
+                        "signal_price": signal_price,
+                        "entry_trigger": entry_trigger,
+                        "candles_at_signal": len(candles_5m),
+                        "confirmed": False,
+                    }
+                    state.save()
+                    print(f"🛢️ CRUDE {sig['type']} signal queued ({strategy_name}) — awaiting confirmation "
+                          f"candle + pullback to {entry_trigger} (signal @ {signal_price}, {symbol}).", flush=True)
+
+                # ── Resolve a pending crude entry (confirmation candle + pullback trigger) FIRST.
+                # No fresh signal is evaluated while one is in flight — a pending order already
+                # claims this underlying, and a second signal here would just race it.
+                pending = getattr(state, "crude_pending_order", None)
+                if pending:
+                    try:
+                        n_new = len(candles_5m) - pending.get("candles_at_signal", len(candles_5m))
+                        if n_new > CRUDE_PENDING_MAX_CANDLES:
+                            print(f"🛢️ Crude pending {pending['type']} expired unconfirmed/untriggered ({symbol}).", flush=True)
+                            state.crude_pending_order = None
+                            state.save()
+                            return
+                        if not pending.get("confirmed"):
+                            if n_new < 1:
+                                return  # still waiting for the confirmation candle to close
+                            # CONFIRMATION CANDLE: the candle after the raw signal must not have
+                            # already reversed past the signal level — else it was a fake-out and
+                            # we drop it instead of chasing a reversal.
+                            latest_close = candles_5m[-1]["close"]
+                            still_valid = (latest_close <= pending["signal_price"]) if pending["type"] == "PUT" \
+                                else (latest_close >= pending["signal_price"])
+                            if not still_valid:
+                                print(f"🛢️ Crude pending {pending['type']} failed confirmation — reversed ({symbol}).", flush=True)
+                                state.crude_pending_order = None
+                                state.save()
+                                return
+                            pending["confirmed"] = True
+                            state.save()
+                        # PULLBACK TRIGGER: wait for price to retrace back toward the signal level
+                        # before actually buying — cheaper entry, and proof the level is holding as
+                        # support/resistance rather than paying the peak/trough premium outright.
+                        triggered = (spot >= pending["entry_trigger"]) if pending["type"] == "PUT" \
+                            else (spot <= pending["entry_trigger"])
+                        if not triggered:
+                            return
+                        if not state.can_trade(pending["strategy_name"], signal_type=pending["type"], symbol=symbol)[0]:
+                            state.crude_pending_order = None
+                            state.save()
+                            return
+                        sig = {
+                            "type": pending["type"], "side": "BUY", "strategy": pending["sig_strategy"],
+                            "reason": f"{pending['reason']} (confirmed pullback entry)",
+                            "confidence": pending["confidence"], "asset_class": pending["asset_class"],
+                        }
+                        print(f"🛢️ CRUDE {pending['type']} PULLBACK ENTRY: {symbol} @ ~{spot} "
+                              f"(signal was {pending['signal_price']}).", flush=True)
+                        await risk_orchestrator.propose_trade(pending["strategy_name"], symbol, sig, {"trend": "NEUTRAL"}, client, state)
+                        state.crude_pending_order = None
+                        state.save()
+                    except Exception as _pe:
+                        logger.error(f"Crude pending-order error for {symbol}: {_pe}")
+                        state.crude_pending_order = None
+                        state.save()
+                    return
+
                 try:
                     if "Commodity: Evening Momentum" in coms:
                         from engine.strategy_crude_evening import generate_signal as _crude_evening
                         sig = _crude_evening(candles=candles_5m)
                         if sig and sig.get("type") in ("CALL", "PUT") and \
                            state.can_trade("Commodity: Evening Momentum", signal_type=sig["type"], symbol=symbol)[0]:
-                            print(f"🛢️ CRUDE EVENING SIGNAL: {sig['type']} {symbol} — {sig.get('reason','')}", flush=True)
-                            await risk_orchestrator.propose_trade("Commodity: Evening Momentum", symbol, sig, {"trend": "NEUTRAL"}, client, state)
+                            _queue_crude_pending("Commodity: Evening Momentum", sig)
                             return
                     if "Commodity: EIA Volatility (Wed)" in coms:
                         from engine.strategy_crude_eia import generate_signal as _crude_eia
                         sig = _crude_eia(candles=candles_5m)
                         if sig and sig.get("type") in ("CALL", "PUT") and \
                            state.can_trade("Commodity: EIA Volatility (Wed)", signal_type=sig["type"], symbol=symbol)[0]:
-                            print(f"🛢️ CRUDE EIA SIGNAL: {sig['type']} {symbol} — {sig.get('reason','')}", flush=True)
-                            await risk_orchestrator.propose_trade("Commodity: EIA Volatility (Wed)", symbol, sig, {"trend": "NEUTRAL"}, client, state)
+                            _queue_crude_pending("Commodity: EIA Volatility (Wed)", sig)
                 except Exception as _ce:
                     logger.error(f"Crude strategy error for {symbol}: {_ce}")
 

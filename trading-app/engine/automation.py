@@ -147,7 +147,12 @@ class TradingState:
         self.strat_9_trades_today = 0
         self.strat_9_consec_sl = 0
         self.strat_9_last_call = None
-        
+        # Crude (Evening Momentum / EIA Volatility) pullback+confirmation entry state
+        # (03-08-26 fix): raw momentum/breakout signals no longer trade immediately — they wait
+        # here for a confirmation candle + a retracement trigger. See run_crude_strats() in
+        # workers/auto_trader.py.
+        self.crude_pending_order = None
+
         # Pre-Market AI Oracle State
         self.use_ai_oracle = False
         self.ai_daily_bias = ""
@@ -244,6 +249,7 @@ class TradingState:
                         self.strat_7_pending_order = data.get("strat_7_pending_order", None)
                         self.strat_7_was_stopout = data.get("strat_7_was_stopout", False)
                         self.strat_7_awaiting_confirmation = data.get("strat_7_awaiting_confirmation", None)
+                        self.crude_pending_order = data.get("crude_pending_order", None)
 
                         self.use_ai_oracle = data.get("use_ai_oracle", False)
                         self.ai_daily_bias = data.get("ai_daily_bias", "")
@@ -345,6 +351,7 @@ class TradingState:
             "strat_7_pending_order": getattr(self, "strat_7_pending_order", None),
             "strat_7_was_stopout": getattr(self, "strat_7_was_stopout", False),
             "strat_7_awaiting_confirmation": getattr(self, "strat_7_awaiting_confirmation", None),
+            "crude_pending_order": getattr(self, "crude_pending_order", None),
             "strat_10_trades_today": getattr(self, "strat_10_trades_today", 0),
             "strat_9_trades_today": getattr(self, "strat_9_trades_today", 0),
             "strat_9_consec_sl": getattr(self, "strat_9_consec_sl", 0),
@@ -476,6 +483,7 @@ class TradingState:
         self.strat_9_trades_today = 0
         self.strat_9_consec_sl = 0
         self.strat_9_last_call = None
+        self.crude_pending_order = None
         # Reset AI Bias
         self.ai_daily_bias = ""
         # Preserve automation_enabled and active_symbols across resets
