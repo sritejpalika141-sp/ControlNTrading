@@ -264,7 +264,8 @@ def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
                 "target": round(entry_price + (entry_price - sl_price) * 2, 1), # 1:2 RR
                 "entry_zone_top": setup["top"],
                 "entry_zone_bottom": setup["bottom"],
-                "use_1m_option_candle": True # Flag to tell auto_trader to grab option 1M candle
+                # NEVER buy at 1m candle HIGH — that was the buy-high→SL pattern. Entry uses LTP.
+                "use_1m_option_candle": False,
             })
 
     # 2. Catch-all NO TRADE explanation

@@ -1912,13 +1912,17 @@ class FyersClient:
                 logger.warning(f"⚠️ Cannot get any price for {symbol}. Order cannot be placed.")
                 return {"success": False, "message": f"Could not fetch live price for {symbol} to calculate Limit Buffer. Is WebSocket active?"}
 
-            if side_int == 1:  # BUY — use ask price + 1% buffer (wider for throttled markets)
-                raw = (ask if ask > 0 else ltp) * 1.01
+            if side_int == 1:  # BUY
+                # Options: NEVER chase ask+1% (was buying tops). Cap at ask/LTP.
+                if self._is_option_symbol(symbol):
+                    raw = ask if ask > 0 else ltp
+                else:
+                    raw = (ask if ask > 0 else ltp) * 1.01
             else:  # SELL — use bid price - 1% buffer
                 raw = (bid if bid > 0 else ltp) * 0.99
 
-            # Round to tick size 0.05
-            limit_price = round(round(raw / 0.05) * 0.05, 2)
+            # Round to instrument tick (MCX 0.1 / NSE 0.05)
+            limit_price = round_to_tick(raw, get_price_tick(symbol))
 
             # Force LIMIT type (type=1) since algo apps don't allow true MARKET
             actual_type = 1  # LIMIT order
@@ -1926,9 +1930,9 @@ class FyersClient:
         else:
             type_map = {"MARKET": 2, "LIMIT": 1, "STOP": 3, "STOPLIMIT": 4}
             actual_type = type_map.get(order_type.upper(), 1)
-            # Round limit price to tick
+            # Round limit price to instrument tick
             if limit_price > 0:
-                limit_price = round(round(limit_price / 0.05) * 0.05, 2)
+                limit_price = round_to_tick(limit_price, get_price_tick(symbol))
                 
                 # Fyers rejects actual_type=2 (MARKET) if limit_price > 0
                 if actual_type == 2:

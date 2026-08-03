@@ -1569,15 +1569,14 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         else:
             current_trend = "NEUTRAL"
 
+        # ── ENTRY PRICE (LOCKED owner 03-08-26): NEVER buy at candle HIGH ──
+        # Old Strategy 1 path set entry = last 1m option high → systematic buy-high → SL.
+        # Entry stays at quote LTP / mid from above. Flag ignored if still set by old signals.
         if sig.get("use_1m_option_candle"):
-            try:
-                opt_candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 1)
-                if opt_candles and len(opt_candles) >= 1:
-                    # Entry preference only — SL still comes from calculate_smart_sl below.
-                    entry_price = opt_candles[-1]["high"]
-                    logger.info(f"📊 Strategy 1 entry at last 1m option high={entry_price}")
-            except Exception as e:
-                logger.error(f"Failed to set 1m option entry high: {e}. Using quote entry.")
+            logger.warning(
+                f"⚠️ Ignoring use_1m_option_candle high-entry for {strike_symbol} — "
+                f"keeping LTP ₹{entry_price} (buy-high disabled)"
+            )
 
         sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
         sl_points = sl_data["sl_points"]
@@ -1875,9 +1874,13 @@ async def automation_loop():
                         await risk_orchestrator.propose_trade("Strategy 11: FRVP LVN Vacuum", symbol, sig, {"trend": sig.get("direction", "NEUTRAL")}, client, state)
 
             async def run_strat_1():
-                if "Strategy 1: OB + FVG" in state.active_strategies and analysis.get("signals"):
-                    trade_placed = False
-                    for sig in analysis["signals"]:
+                # Strategy 1 is equity OB/FVG only — never on MCX/CDS (was buying crude at highs).
+                if symbol.startswith(("MCX:", "CDS:")):
+                    return
+                if "Strategy 1: OB + FVG" not in state.active_strategies or not analysis.get("signals"):
+                    return
+                trade_placed = False
+                for sig in analysis["signals"]:
                         if trade_placed: break
                         if sig.get("type") not in ("CALL", "PUT"): continue
                         tech_conf = sig.get("confidence", 0)

@@ -701,6 +701,13 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Agent scrips (NewsWorker):** Runs every **30 minutes** inside `sritej-trading` (not `vm_orchestrator`). Needs a live Fyers token to quote-validate picks; without it, injects are skipped (`last_skip_reason` on `/api/market-summary`). After Fyers reconnect or morning token refresh, news+inject is scheduled immediately. Force: `POST /api/scripts/agent-refresh` (authed). Equity window `<15:00 IST`, MCX `09:00–22:00 IST`. Agent scrips purge at 15:30 (equity) / 23:45 (MCX).
 
+**LOCKED — Do not buy the high:**
+- Strategy 1 must **never** set entry = 1m candle HIGH (disabled). Entry = LTP.
+- Strategy 1 is **blocked on MCX/CDS** (equity OB/FVG only).
+- Crude EIA = **Wednesday window only**; Evening momentum = **after 17:00 IST only**.
+- Options AUTOLIMIT: no ask+1% chase.
+- Owner stop-bleeding: turn automation OFF / paper ON, disable commodity strategies, remove CRUDE from watchlist until SL attach is proven on MCX.
+
 **LOCKED — Initial SL + Trailing SL (TSL) — EVERY strategy, no exceptions:**
 
 - Rule: BUY option stop = **lowest of last 3 candles on the 1‑min OPTION chart**. Trail only **raises** that stop. Initial distance = `entry − that low`.

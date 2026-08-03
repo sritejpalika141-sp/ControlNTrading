@@ -34,10 +34,22 @@ def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSE
     heh, hem = ac.hard_exit_time
     hard_exit = now.replace(hour=heh, minute=hem, second=0, microsecond=0)
 
-    # Per owner directive (22-07-26): this momentum strategy now runs the FULL MCX session, not
-    # only the post-17:00 evening window. The 17:00 lower-bound gate has been removed. The
-    # hard-exit upper bound is kept — it is a safety rail (no new entries right before the
-    # mandatory session close), not a strategy-identity gate.
+    # Restored (03-08-26): evening momentum only after 17:00 IST — all-day momentum
+    # continuation was chasing moves (buy-high). Hard-exit upper bound still applies.
+    try:
+        start_hm = (getattr(ac, "risk_config", None) or {}).get("evening_session_start") or (17, 0)
+        if isinstance(start_hm, str):
+            parts = start_hm.split(":")
+            sh, sm = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        else:
+            sh, sm = int(start_hm[0]), int(start_hm[1])
+        evening_start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        if now < evening_start:
+            return _no_trade(f"Before evening window ({sh:02d}:{sm:02d} IST)")
+    except Exception:
+        if now.hour < 17:
+            return _no_trade("Before evening window (17:00 IST)")
+
     if now >= hard_exit:
         return _no_trade("Past crude hard-exit — no new entries")
     if not candles or len(candles) < 3:
