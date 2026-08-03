@@ -43,8 +43,8 @@ def _has_active_stop(orders, symbol) -> bool:
 
 
 async def _compute_stop(client, symbol, entry, ltp, side_long):
-    """Protective stop price using the same floored 3→4→5-candle swing-low logic as entries.
-    Falls back to a 12%-of-premium floor. Always returns a stop on the correct side of LTP."""
+    """Protective stop using LOCKED canonical calculate_smart_sl (last-3×1m option low).
+    Fallback is a tight 3% premium distance — never the old 12% widen."""
     sl_pts = None
     try:
         from workers.auto_trader import calculate_smart_sl
@@ -53,7 +53,7 @@ async def _compute_stop(client, symbol, entry, ltp, side_long):
     except Exception as e:
         logger.warning(f"Guardian SL calc failed for {symbol}: {e}")
     if not sl_pts or sl_pts <= 0:
-        sl_pts = max(round(entry * 0.12, 1), 8.0)
+        sl_pts = max(round(entry * 0.03, 1), 1.0) if entry > 0 else 5.0
     stop = round(entry - sl_pts, 1) if side_long else round(entry + sl_pts, 1)
     # Ensure the trigger is on the correct side of the current price (below LTP for a long).
     ref = ltp or entry

@@ -701,9 +701,17 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Agent scrips (NewsWorker):** Runs every **30 minutes** inside `sritej-trading` (not `vm_orchestrator`). Needs a live Fyers token to quote-validate picks; without it, injects are skipped (`last_skip_reason` on `/api/market-summary`). After Fyers reconnect or morning token refresh, news+inject is scheduled immediately. Force: `POST /api/scripts/agent-refresh` (authed). Equity window `<15:00 IST`, MCX `09:00–22:00 IST`. Agent scrips purge at 15:30 (equity) / 23:45 (MCX).
 
-**Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
+**LOCKED — Initial SL + Trailing SL (TSL) — EVERY strategy, no exceptions:**
 
-**Initial + trailing SL:** Both use **lowest of last 3 candles on the 1‑min option chart**. Initial SL is `entry − that low` (no 12% premium / ATR widen — that made crude stops ~₹35 wide so trail never engaged). Trail only raises the stop from that level. Tests: `tests/test_smart_sl_3candle.py`.
+- Rule: BUY option stop = **lowest of last 3 candles on the 1‑min OPTION chart**. Trail only **raises** that stop. Initial distance = `entry − that low`.
+- Same logic for Strategy 1–11, ORB, 9:26, Wisdom, Aerospace, Gap Fill, crude/EIA, commodity — signal `sl_points` (20pts, 50% premium, ORB width, −2/VIX clamps, etc.) are **ignored at placement**.
+- Banned overrides (removed): Strategy 1 Variant‑L 1R trail, Strategy 3/9 T1‑breakeven trail + skip‑global‑trail `continue`, Strategy 5/6 FVL+ATR trail, Strategy 1 −2/VIX/10–20 clamp, SL Guardian 12% floor.
+- Allowed separately: hard time exits (S5 bars / S6 13:30) and ORB T2 profit-target **exit** (not trail). Manual broker SL tighten is still respected (trail never loosens).
+- Code: `CANONICAL_SL_*` + `calculate_smart_sl` + global block in `trailing_monitor` (`workers/auto_trader.py`). Guardian: `workers/sl_guardian.py`.
+- Tests: `tests/test_smart_sl_3candle.py`, `tests/test_sl_tsl_lock.py`.
+- **Do not reintroduce strategy-specific SL/TSL without explicit owner approval.**
+
+**Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
 
 ### First-time VM prerequisites
 

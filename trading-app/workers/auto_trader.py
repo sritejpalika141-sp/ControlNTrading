@@ -2,11 +2,10 @@
 Automated trading background tasks.
 
 - `trailing_monitor`: monitors active auto-trades, enforces max-loss exit, and
-  trails stop-losses in 10-point steps (or Strategy 3 target/breakeven logic).
-- `calculate_smart_sl`: derives chart-based SL/target points using recent
-  candles (swing-low for trending, ATR×1.5 for range-bound).
+  trails ALL stops with the LOCKED 3×1m option-candle rule (no strategy overrides).
+- `calculate_smart_sl`: LOCKED initial SL = same rule as trail (entry − last-3 1m low).
 - `execute_auto_trade`: places a confirmed auto-trade (BUY-only policy) with
-  smart SL, regime-aware product type, and strategy-aware target handling.
+  canonical smart SL for EVERY strategy (signal sl_points are ignored for placement).
 - `automation_loop`: top-level scheduler that evaluates Strategy 2 / 3 / 1 per
   active user and dispatches `execute_auto_trade` when guards pass.
 """
@@ -63,6 +62,16 @@ _COMMODITY_STRAT_MAP = {
 # untouched — the watchdog never cancels the SL leg.
 PENDING_ENTRY_ORDERS = {}          # str(order_id) -> {"ts": epoch, "symbol": str, "user_id": int}
 PENDING_ORDER_TIMEOUT = 120        # seconds (2 minutes)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOCKED OWNER RULE (03-08-26) — DO NOT CHANGE without explicit owner approval
+# Initial SL and Trailing SL (TSL) are IDENTICAL for EVERY strategy, always:
+#   BUY option → stop trigger = lowest low of the last 3 one-minute OPTION candles
+#   Trail only RAISES the stop from that level (never widens, never %/ATR/1R/BE
+#   strategy-specific trail). Signal-provided sl_points are IGNORED at placement.
+# ═══════════════════════════════════════════════════════════════════════════
+CANONICAL_SL_LOOKBACK = 3
+CANONICAL_SL_RESOLUTION = "1"
 
 
 def track_pending_order(order_id, symbol, user_id, sl_order_id=None, tgt_order_id=None):
@@ -516,52 +525,10 @@ async def trailing_monitor():
                     # Prefer the real open position qty from broker if available
                     active_qty = abs(pos.get("qty", traded_qty)) if pos else traded_qty
 
-                    # ── Strategy 1 (OB+FVG) — Variant L exit: breakeven at +1R, then trail by 1R ──
-                    # Backtest over 68 trading days (confluence-only signals, 2 trades/day cap):
-                    # win rate 14.7% -> 57.6% and max drawdown -348 -> -113 pts vs the old
-                    # hold-to-stop/EOD exit. Deliberately does NOT book a partial: the resting SL
-                    # order covers the FULL quantity, so a partial fill could desync it and leave the
-                    # account unintentionally SHORT. INTRADAY only — the daily hard-exit squares off
-                    # anything still open, and this only ever tightens the stop (never widens it).
-                    if str(t.get("strategy", "")).startswith("Strategy 1"):
-                        try:
-                            # Explicit local import: api_queue is otherwise bound by a
-                            # function-local import further up this coroutine, which is not
-                            # guaranteed to have executed on every path.
-                            from engine.api_queue import api_queue as _apiq
-                            r_pts = float(t.get("sl_points", 0) or 0)
-                            if r_pts > 0:
-                                fav = (ltp - entry) if side == "BUY" else (entry - ltp)
-                                peak = max(float(t.get("s1_peak_fav", 0) or 0), fav)
-                                t["s1_peak_fav"] = peak
-                                if peak >= r_pts:          # +1R reached -> breakeven, then trail by 1R
-                                    give_back = peak - r_pts
-                                    new_sl = (entry + give_back) if side == "BUY" else (entry - give_back)
-                                    new_sl = round(round(new_sl / 0.05) * 0.05, 2)
-                                    cur = float(t.get("trailing_sl_price", 0) or 0)
-                                    better = (new_sl > cur) if side == "BUY" else (cur == 0 or new_sl < cur)
-                                    sl_order_id = t.get("sl_order_id")
-                                    if better and sl_order_id:
-                                        o_type = t.get("sl_order_type", 4)
-                                        lim = (new_sl - 1.0) if side == "BUY" else (new_sl + 1.0)
-                                        lim = round(round(lim / 0.05) * 0.05, 2)
-                                        mod_res = await _apiq.enqueue(
-                                            2, client.modify_order, order_id=sl_order_id,
-                                            order_type=o_type, stop_price=new_sl,
-                                            limit_price=lim if o_type == 4 else 0, qty=active_qty)
-                                        if mod_res.get("success"):
-                                            t["trailing_sl_price"] = new_sl
-                                            t["last_sl_update"] = time.time()
-                                            state.update_trade_sl_price(sl_order_id, new_sl)
-                                            await broadcast_log(
-                                                f"🛡️ Strategy 1 SL → ₹{new_sl} (peak +{peak:.1f} pts, 1R={r_pts:.1f})",
-                                                "success", user_id=u_id)
-                                        else:
-                                            logger.warning(f"Strategy 1 trail failed for {sym}: {mod_res.get('message')}")
-                        except Exception as _s1e:
-                            logger.error(f"Strategy 1 breakeven/trail error for {sym}: {_s1e}")
+                    # Strategy 1 / all strategies: TSL is ONLY the global 3×1m trail below
+                    # (LOCKED owner rule 03-08-26 — no Variant-L / 1R / breakeven trail overrides).
 
-                    # Strategy 5 (Aerospace) Milestone & Time Stop Monitoring
+                    # Strategy 5 (Aerospace) Time Stop Monitoring (exit-only; TSL is global 3×1m)
                     if t.get("strategy") == "Strategy 5: Optimized Aerospace Mean Reversion":
                         # Time Guardrail: 45 bars (3 minutes per bar = 135 minutes)
                         entry_time = t.get("entry_time", time.time())
@@ -628,102 +595,23 @@ async def trailing_monitor():
                             else:
                                 logger.warning(f"⚠️ Strategy 6 exit for {sym}: CO cancel unconfirmed and position not flat — keeping trade for re-evaluation next tick")
                             continue
-                            
-                        # Trailing Activation & Update
-                        fvl_target = t.get("fvl_target", 0)
-                        # Check Nifty spot (We can get it from analysis or just fetch quote)
-                        # For simplicity, we can fetch spot here or rely on the ATR trail directly if spot crossed.
-                        # Wait, the instruction said: "TARGET MILESTONE: The underlying Nifty Index reaching the central Kalman Fair Value Line acts as the milestone activator."
-                        # And: "TRAILING ENGINE ACTIVATION: The exact moment the underlying index touches or crosses the central FVL, activate the trailing mechanism on the live Cover Order."
-                        # We need Nifty spot price. Let's fetch it.
-                        nifty_quote = ws_feed.get_quotes_from_ws(["NSE:NIFTY50-INDEX"]) if ws_feed.is_connected() else {}
-                        spot = nifty_quote.get("NSE:NIFTY50-INDEX", {}).get("lp", 0)
-                        if spot == 0:
-                            try:
-                                sq = await api_queue.enqueue(2, client.get_quotes, ["NSE:NIFTY50-INDEX"])
-                                spot = sq.get("NSE:NIFTY50-INDEX", {}).get("lp", 0)
-                            except:
-                                pass
-                                
-                        if spot > 0 and fvl_target > 0:
-                            # Did we cross FVL?
-                            side_index = t.get("type", "CALL")
-                            crossed = False
-                            if side_index == "CALL" and spot >= fvl_target: crossed = True
-                            if side_index == "PUT" and spot <= fvl_target: crossed = True
-                            
-                            if crossed and not t.get("trailed"):
-                                logger.info(f"🛡️ Strategy 5 FVL Milestone Hit at {spot}! Activating ATR trail.")
-                                await broadcast_log(f"🛡️ Strategy 5 FVL Hit! Activating CO Trailing.", "success", user_id=u_id)
-                                t["trailed"] = True
-                                
-                        # If trailed is active, push SL up by ATR
-                        if t.get("trailed"):
-                            # Fetch 14-period ATR of the option
-                            # We can approximate ATR dynamically by fetching 14 bars. To avoid heavy API calls in loop,
-                            # we can do a simplified trailing: SL = LTP - (some fixed value) or just limit updates.
-                            # We will check if 15 seconds have passed since last update
-                            last_update = t.get("last_sl_update", 0)
-                            if time.time() - last_update > 15:
-                                try:
-                                    # Fetch historical for ATR calculation
-                                    bars = await api_queue.enqueue(2, client.get_historical, sym, "3", 1) # fetch a few days to get 14 bars
-                                    # Fallback ATR for Nifty options on 3-min timeframe when history is
-                                    # insufficient. Real ATR is computed below when ≥14 bars are available.
-                                    atr = 8.0
-                                    if len(bars) >= 14:
-                                        # Compute simple ATR
-                                        trs = []
-                                        for i in range(1, 14):
-                                            high = bars[-i]["high"]
-                                            low = bars[-i]["low"]
-                                            pc = bars[-i-1]["close"]
-                                            tr = max(high-low, abs(high-pc), abs(low-pc))
-                                            trs.append(tr)
-                                        if trs:
-                                            atr = sum(trs)/len(trs)
-                                    else:
-                                        logger.warning(f"⚠️ Strategy 5 ATR for {sym}: insufficient candle data ({len(bars) if bars else 0} bars < 14), using fallback ATR={atr}")
 
-                                    new_sl = ltp - (1.2 * atr)
-                                    new_sl = round(round(new_sl / 0.05) * 0.05, 2)
-                                    # B6: `new_sl` is an ABSOLUTE price. Compare against and store
-                                    # into a dedicated `trailing_sl_price` field — NOT `sl_points`,
-                                    # which everywhere else in the codebase is a distance/offset.
-                                    # Overwriting sl_points with an absolute price silently corrupts
-                                    # every downstream reader that treats it as a distance.
-                                    current_sl_price = t.get("trailing_sl_price", 0)
+                        # FVL/ATR trail REMOVED (LOCKED 03-08-26): Strategy 6 uses the same
+                        # global 3×1m TSL as every other strategy — fall through below.
 
-                                    # Only trail UP
-                                    if new_sl > current_sl_price:
-                                        sl_order_id = t.get("sl_order_id")
-                                        if sl_order_id:
-                                            mod_res = await api_queue.enqueue(2, client.modify_order, order_id=sl_order_id, order_type=4, stop_price=new_sl, qty=active_qty)
-                                            if mod_res.get("success"):
-                                                t["trailing_sl_price"] = new_sl
-                                                t["last_sl_update"] = time.time()
-                                                logger.info(f"Strategy 5 Trailed SL to {new_sl} (ATR: {atr:.2f})")
-                                except Exception as e:
-                                    logger.error(f"Strategy 5 ATR calc/trail error: {e}")
-
-                    # Strategy 3 (ORB) and Strategy 9 (9-EMA Scalper) Target Monitoring
+                    # Strategy 3 / 9: optional T2 profit-target EXIT only.
+                    # T1 breakeven trail + unconditional continue REMOVED so global 3×1m TSL always runs.
                     if t.get("strategy") in ["Strategy 3: 5-Minute ORB", "Strategy 9: 9-EMA Momentum Scalper"]:
                         target_1 = t.get("target_1")
                         target_2 = t.get("target_2")
-                        trailed = t.get("trailed", False)
 
                         if target_1 and target_2:
-                            is_target_1_hit = False
                             is_target_2_hit = False
 
                             if side == "BUY":
-                                if ltp >= target_1:
-                                    is_target_1_hit = True
                                 if ltp >= target_2:
                                     is_target_2_hit = True
                             else:  # SELL
-                                if ltp <= target_1:
-                                    is_target_1_hit = True
                                 if ltp <= target_2:
                                     is_target_2_hit = True
 
@@ -782,77 +670,19 @@ async def trailing_monitor():
                                 else:
                                     await broadcast_log(f"⚠️ Strategy 3 exit failed: {exit_res.get('message')}", "error", user_id=u_id)
                                 continue
+                            # T1 hit no longer moves SL to breakeven — 3×1m TSL owns the stop.
 
-                            if is_target_1_hit and not trailed:
-                                logger.info(f"🛡️ Strategy 3 Target 1 Hit for {sym} at ₹{ltp}! Trailing SL to breakeven (₹{entry}).")
-                                sl_order_id = t.get("sl_order_id")
-                                if sl_order_id:
-                                    limit_price = entry - 1.0 if side == "BUY" else entry + 1.0
-                                    limit_price = round(round(limit_price / 0.05) * 0.05, 2)
-                                    o_type = t.get("sl_order_type", 4)
-                                    mod_res = await asyncio.to_thread(
-                                        client.modify_order,
-                                        order_id=sl_order_id,
-                                        order_type=o_type,
-                                        stop_price=entry,
-                                        limit_price=limit_price if o_type == 4 else 0,
-                                        qty=active_qty
-                                    )
-                                    if mod_res.get("success"):
-                                        await broadcast_log(f"🛡️ Strategy 3 SL trailed to breakeven (₹{entry})", "success", user_id=u_id)
-                                        state.update_trade_sl_price(sl_order_id, entry)
-                                        state.mark_trade_trailed(sl_order_id)
-                                    else:
-                                        await broadcast_log(f"⚠️ Strategy 3 SL trail failed: {mod_res.get('message')}", "warning", user_id=u_id)
-                                else:
-                                    t["trailed"] = True
-                                    state.save()
-                        continue
+                    # Strategy 7: structural spot HL/LH trail DISABLED (LOCKED 03-08-26).
+                    # Option stop is trailed solely by global 3×1m candle rule below.
 
-                    # Strategy 7: Spot-based Structural Trailing
-                    if t.get("strategy") == "Strategy 7: Swing-Pivot Breakout":
-                        now = time.time()
-                        last_swing_check = t.get("last_swing_check", 0)
-                        if now - last_swing_check > 60:
-                            t["last_swing_check"] = now
-                            state.save()
-                            try:
-                                # Fetch Nifty spot 5-min candles
-                                spot_candles = await api_queue.enqueue(2, client.get_historical, "NSE:NIFTY50-INDEX", "5", 1)
-                                if spot_candles:
-                                    from engine.strategy_swing import get_latest_pivots_for_trailing
-                                    latest_hl, latest_lh = get_latest_pivots_for_trailing(spot_candles)
-                                    
-                                    new_spot_sl = None
-                                    if side == "BUY" and latest_hl: # CE trades use HL
-                                        if t.get("latest_hl_lh") != latest_hl:
-                                            new_spot_sl = latest_hl
-                                    elif side == "SELL" and latest_lh: # PE trades use LH
-                                        if t.get("latest_hl_lh") != latest_lh:
-                                            new_spot_sl = latest_lh
-                                            
-                                    if new_spot_sl:
-                                        # Spot SL changed, update Option SL
-                                        t["latest_hl_lh"] = new_spot_sl
-                                        
-                                        # Rough Option SL update: for every 1 point move in spot SL, move option SL by 0.5 pts
-                                        spot_diff = abs(new_spot_sl - (t.get("initial_spot_sl", new_spot_sl)))
-                                        # Actually, we don't store initial_spot_sl. Let's just bump option SL incrementally.
-                                        # Better yet, just trail the option SL using 1-min swing low like the others, since mapping spot to option is imprecise.
-                                        # Wait, strategy 7 specifically requested "structural trailing SL (HL/LH)".
-                                        # So if new_spot_sl is higher (for CE), we can just bump the option SL by (new_spot_sl - old_spot_sl) * 0.5
-                                        pass
-                            except Exception as e:
-                                logger.error(f"Strategy 7 spot trailing error: {e}")
-                                
-                    # Global Trailing Stoploss (Always 3-Candle Swing Low)
+                    # Global Trailing Stoploss — LOCKED: EVERY strategy, last-3×1m option candles
                     now = time.time()
                     last_swing_check = t.get("last_swing_check", 0)
                     
                     is_expiry = is_symbol_expiry_today(sym)
                     
-                    # Always use 1-min chart for trailing SL
-                    timeframe = "1"
+                    # Always use 1-min chart for trailing SL (CANONICAL — identical to initial SL)
+                    timeframe = CANONICAL_SL_RESOLUTION
                     
                     if now - last_swing_check > 5:
                         t["last_swing_check"] = now
@@ -862,7 +692,7 @@ async def trailing_monitor():
                             candles = await api_queue.enqueue(2, client.get_historical, sym, timeframe, 1) 
                             
                             # Globally enforce 3 candles for all trades
-                            required_candles = 3
+                            required_candles = CANONICAL_SL_LOOKBACK
                             
                             if candles and len(candles) >= required_candles:
                                 recent = candles[-required_candles:]
@@ -893,8 +723,6 @@ async def trailing_monitor():
                                             logger.warning(f"Broker SL sync failed for {sym}: {_e}")
 
                                     current_sl_price = t.get("sl_price", entry - t.get("sl_points", 0))
-
-                                    # Auto-Breakeven Rule for Expiry Day removed to strictly follow 3-candle low
 
                                     # Trail SL up if the new swing low is higher than current SL and below LTP
                                     if lowest_low > current_sl_price and lowest_low < ltp:
@@ -931,8 +759,6 @@ async def trailing_monitor():
                                 elif side == "SELL":
                                     highest_high = max(c["high"] for c in recent)
                                     current_sl_price = t.get("sl_price", entry + t.get("sl_points", 0))
-                                    
-                                    # Auto-Breakeven Rule for Expiry Day removed to strictly follow 3-candle high
                                         
                                     # Trail SL down if new swing high is lower than current SL
                                     if highest_high < current_sl_price and highest_high > ltp:
@@ -979,17 +805,14 @@ async def trailing_monitor():
 
 async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, client) -> Dict:
     """
-    Initial stop-loss = lowest of the last 3 candles on the 1-min OPTION chart
-    (same structure the trailing monitor uses). Distance = entry - that low.
+    LOCKED OWNER RULE (03-08-26) — Initial SL for EVERY strategy.
 
-    Owner rule (03-08-26): do NOT widen with a % premium / ATR floor — that pushed
-    crude SLs ~12% below entry (e.g. ₹292.9 → ₹257.75) so the 3-candle trail never
-    engaged. Trailing still only RAISES the stop from this initial level.
+    Identical structure to trailing_monitor TSL:
+      BUY → distance = entry − lowest of last 3 one-minute OPTION candles
+      (Trail raises that absolute stop; this function returns the distance for place_order.)
 
-    Guards only:
-      • positive distance (low must be below entry)
-      • tiny absolute minimum so the broker accepts the order
-      • never wider than 80% of premium (stop stays above zero)
+    Do NOT widen with % premium / ATR / progressive 4–5 lookback.
+    Do NOT add strategy-specific offsets (−2, VIX, 10–20 clamp) here or at call sites.
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
 
@@ -1002,9 +825,9 @@ async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, c
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
     try:
-        candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
-        if candles and len(candles) >= 3:
-            recent = candles[-3:]
+        candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, CANONICAL_SL_RESOLUTION, 2)
+        if candles and len(candles) >= CANONICAL_SL_LOOKBACK:
+            recent = candles[-CANONICAL_SL_LOOKBACK:]
             swing_low = min(c["low"] for c in recent)
             dist = round(entry_ltp - swing_low, 2)
             if dist > 0:
@@ -1306,7 +1129,11 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 )
                 return
 
-            sl_points = sig.get("sl_points", 20.0)
+            # LOCKED (03-08-26): EVERY strategy — including direct-option S2/S3/S4/S5 —
+            # uses calculate_smart_sl (last-3×1m option low). Signal sl_points are ignored.
+            sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
+            sl_points = sl_data["sl_points"]
+            sl_method = sl_data["method"]
             # Calculate qty explicitly if not provided
             if strike_symbol and strike_symbol.startswith("MCX:"):
                 lots = getattr(state, "mcx_lots", 1)
@@ -1356,7 +1183,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 await broadcast_log(f"🛑 Insufficient balance: {strike_symbol} needs ₹{_req:.0f}, have ₹{_av:.0f} — trade skipped.", "error", user_id=client.user_id)
                 return
 
-            logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Product: {product_type}")
+            logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts ({sl_method}) | TGT: {target_points}pts | Product: {product_type}")
             shadow_exec = state.is_shadow_strategy(strategy_name) and not state.paper_trading
             if shadow_exec:
                 await broadcast_log(
@@ -1414,7 +1241,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             if result.get("success"):
                 await _record_entry_to_ledger(
                     client, symbol, strike_symbol, side, qty, entry_price, sl_points,
-                    ("orb_checklist" if is_orb else "strategy_926_fixed"), target_points,
+                    sl_method, target_points,
                     product_type, getattr(state, "market_regime", "NEUTRAL"), current_trend,
                     result.get("order_id"), strategy_name,
                     entry_reason=sig.get("reason", "") or sig.get("signal_reason", ""))
@@ -1422,7 +1249,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                     "symbol": strike_symbol, "side": side, "qty": qty,
                     "price": entry_price, "signal_type": f"{strategy_name}_{sig['type']}",
                     "status": "PLACED", "sl": sl_points, "target": target_points,
-                    "sl_method": "orb_checklist" if is_orb else "strategy_926_fixed"
+                    "sl_method": sl_method
                 })
                 await broadcast_log(
                     f"✅ {strategy_name} Order placed: {strike_symbol} @ ₹{entry_price} | {result.get('message', '')}",
@@ -1711,7 +1538,9 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             logger.warning(f"Position dedup check failed for {strike_symbol}: {e}")
 
         # ═══════════════════════════════════════════
-        # SMART SL CALCULATION (Chart-based)
+        # SMART SL — LOCKED canonical 3×1m for EVERY strategy (incl. Strategy 1)
+        # Signal/strategy-specific SL math (−2, VIX, 10–20 clamp, % premium, ORB width)
+        # is IGNORED. Entry may still prefer last-candle high for Strategy 1.
         # ═══════════════════════════════════════════
         trend_info = analysis.get("trend", {})
         # Safety: analysis["trend"] can be a STRING (many strategies pass {"trend": "NEUTRAL"}) or a
@@ -1723,61 +1552,22 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             current_trend = (trend_info.get("trend", "") or "").upper()
         else:
             current_trend = "NEUTRAL"
-        is_trending = "BULL" in current_trend or "BEAR" in current_trend
 
-        # 1-Minute Option Candle SL and Entry for Strategy 1
         if sig.get("use_1m_option_candle"):
             try:
-                # Fetch recent 1-minute option candles
                 opt_candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 1)
-                if opt_candles and len(opt_candles) >= 3:
-                    last_3_candles = opt_candles[-3:]
-                    last_closed = opt_candles[-1] # Grabbing the most recent closed/closing candle
-                    
-                    # Entry at Top
-                    entry_price = last_closed["high"]
-                    
-                    # SL at lowest low of last 3 candles minus 2
-                    sl_price = min(c["low"] for c in last_3_candles) - 2.0
-                    
-                    # VIX Adjustment (+4 buffer)
-                    try:
-                        vix_q = await api_queue.enqueue(2, client.get_quote, "NSE:INDIAVIX-INDEX")
-                        if vix_q and vix_q.get("lp", 0) > 18:
-                            sl_price -= 4.0
-                    except Exception:
-                        pass
-                        
-                    sl_points = max(round(entry_price - sl_price, 1), 1.0)
-                    # Honor the global SL rule (owner directive): floor 10 pts (anti instant-stop),
-                    # hard cap 20 pts (max risk/trade) — the same bounds every other strategy uses.
-                    # Strategy 1's own SL path previously bypassed this cap.
-                    sl_points = min(max(sl_points, 10.0), 20.0)
-
-                    sl_method = "1m_option_candle"
-                    # No fixed target — Strategy 1 now RIDES the 3-candle trailing stop like every other
-                    # strategy (owner directive 24-07-26). target=0 keeps it a Cover Order (CO), not a BO.
-                    target_points = 0.0
-                    logger.info(f"📊 OPTION CANDLE SL: High={last_closed['high']}, Low={last_closed['low']}, Final Entry={entry_price}, SL_pts={sl_points} (floored 10 / capped 20), TGT_pts={target_points} (ride trail)")
-                else:
-                    raise ValueError("No option candles found")
+                if opt_candles and len(opt_candles) >= 1:
+                    # Entry preference only — SL still comes from calculate_smart_sl below.
+                    entry_price = opt_candles[-1]["high"]
+                    logger.info(f"📊 Strategy 1 entry at last 1m option high={entry_price}")
             except Exception as e:
-                logger.error(f"Failed to use 1m option candle: {e}. Falling back to default SL.")
-                sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
-                sl_points = sl_data["sl_points"]
-                sl_method = sl_data["method"]
-                target_points = 0.0
-        elif sig.get("strategy") == "Strategy 7: Swing-Pivot Breakout":
-            sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
-            sl_points = sl_data["sl_points"]
-            sl_method = sl_data["method"]
-            target_points = 0.0
-            logger.info(f"📊 STRATEGY 7 SL: Using 3-Candle Low, Option SL_pts={sl_points}")
-        else:
-            sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
-            sl_points = sl_data["sl_points"]
-            sl_method = sl_data["method"]
-            target_points = 0.0
+                logger.error(f"Failed to set 1m option entry high: {e}. Using quote entry.")
+
+        sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
+        sl_points = sl_data["sl_points"]
+        sl_method = sl_data["method"]
+        target_points = 0.0
+        logger.info(f"📊 CANONICAL SL: {sl_points}pts via {sl_method} (strategy={sig.get('strategy')})")
 
         # User directive: ALL strategies place INTRADAY orders only (not CO/MARGIN/BO).
         product_type = "INTRADAY"
