@@ -258,7 +258,22 @@ async def trailing_monitor():
                             await broadcast_log(f"🚨 Force-closing {sym}: catastrophic loss ₹{abs(_fmtm):.0f} (SL failed).", "error", user_id=u_id, telegram_alert=True)
                             try:
                                 _cqty = abs(_pos.get("qty", qty_val)) if _pos else int(qty_val)
-                                await api_queue.enqueue(1, client.place_order, symbol=sym, qty=_cqty, side=("SELL" if side == "BUY" else "BUY"), order_type="MARKET", product="INTRADAY")
+                                _exit_side = "SELL" if side == "BUY" else "BUY"
+                                _prod = "INTRADAY"
+                                if client._is_option_symbol(sym):
+                                    if _pos:
+                                        _prod = client._position_product(_pos) or client.resolve_exit_product(sym)
+                                    else:
+                                        _prod = client.resolve_exit_product(sym)
+                                    if _exit_side != "SELL":
+                                        logger.error(f"Catastrophic close blocked for {sym}: options buy-only (refusing BUY-to-cover)")
+                                        continue
+                                await api_queue.enqueue(
+                                    1, client.place_order,
+                                    symbol=sym, qty=_cqty, side=_exit_side,
+                                    order_type="MARKET", product=_prod, is_exit=True,
+                                    sl_points=0.0, target_points=0.0,
+                                )
                             except Exception as _e:
                                 logger.error(f"Catastrophic force-close error for {sym}: {_e}")
                             state.record_trade_close("loss", pos={"side": side, "symbol": sym}, exit_price=_fltp, pnl=_fmtm, reason="Catastrophic SL-failure force-close")
@@ -294,21 +309,25 @@ async def trailing_monitor():
                         # Liquidate everything instantly
                         for _p in [p for p in positions if p.get("qty", 0) != 0]:
                             try:
-                                # We temporarily bypass the fyers_client killswitch by calling the raw client, or we rely on the fact that close-outs might fail but the DB lock protects future trades.
-                                # Actually, our fyers_client blocks place_order. We should allow force-closes or use the underlying client.
-                                # The underlying client is self.client inside fyers_client.
                                 _cqty = abs(_p.get("qty", 0))
-                                _side = -1 if _p.get("side", 1) > 0 else 1
-                                _order_data = {
-                                    "symbol": _p.get("symbol", ""),
-                                    "qty": _cqty,
-                                    "type": 2, # Market
-                                    "side": _side,
-                                    "productType": "INTRADAY",
-                                    "validity": "DAY",
-                                    "offlineOrder": False,
-                                }
-                                await api_queue.enqueue(2, client.client.place_order, _order_data)
+                                _sym = _p.get("symbol", "")
+                                _net = client._position_net_qty(_p) if hasattr(client, "_position_net_qty") else int(_p.get("qty", 0) or 0)
+                                # Options buy-only: only SELL to close longs; never BUY-to-cover a short.
+                                if client._is_option_symbol(_sym):
+                                    if _net <= 0:
+                                        logger.error(f"Kill-Switch skip {_sym}: no long option to close (buy-only)")
+                                        continue
+                                    _side_str = "SELL"
+                                    _prod = client._position_product(_p) or client.resolve_exit_product(_sym)
+                                else:
+                                    _side_str = "SELL" if _net > 0 else "BUY"
+                                    _prod = client._position_product(_p) or "INTRADAY"
+                                await api_queue.enqueue(
+                                    1, client.place_order,
+                                    symbol=_sym, qty=_cqty, side=_side_str,
+                                    order_type="MARKET", product=_prod, is_exit=True,
+                                    sl_points=0.0, target_points=0.0,
+                                )
                             except Exception as _e:
                                 logger.error(f"Kill-Switch Liquidation error: {_e}")
                         
@@ -339,7 +358,22 @@ async def trailing_monitor():
                     state.square_off_in_progress = True
                     for _p in [p for p in positions if p.get("qty", 0) != 0]:
                         try:
-                            await api_queue.enqueue(1, client.place_order, symbol=_p.get("symbol", ""), qty=abs(_p.get("qty", 0)), side=("SELL" if _p.get("side", 1) > 0 else "BUY"), order_type="MARKET", product="INTRADAY")
+                            _sym = _p.get("symbol", "")
+                            _net = client._position_net_qty(_p)
+                            if client._is_option_symbol(_sym):
+                                if _net <= 0:
+                                    continue
+                                _side = "SELL"
+                                _prod = client._position_product(_p) or client.resolve_exit_product(_sym)
+                            else:
+                                _side = "SELL" if _net > 0 else "BUY"
+                                _prod = client._position_product(_p) or "INTRADAY"
+                            await api_queue.enqueue(
+                                1, client.place_order,
+                                symbol=_sym, qty=abs(_p.get("qty", 0)),
+                                side=_side, order_type="MARKET", product=_prod,
+                                is_exit=True, sl_points=0.0, target_points=0.0,
+                            )
                         except Exception as _e:
                             logger.error(f"Daily-stop square-off error: {_e}")
                     state.active_auto_trades = []
@@ -706,7 +740,7 @@ async def trailing_monitor():
                                     except Exception as e:
                                         logger.error(f"Error cancelling SL order: {e}")
 
-                                # Exit position
+                                # Exit position (options: SELL-to-close only, matching product book)
                                 exit_side = "SELL" if side == "BUY" else "BUY"
                                 qty = t.get("qty", 0)
                                 if qty <= 0:
@@ -719,7 +753,15 @@ async def trailing_monitor():
                                 if pos:
                                     qty = abs(pos.get("qty", qty))
 
-                                product_type = "INTRADAY" if "INDEX" not in sym and "-EQ" in sym else "MARGIN"
+                                if client._is_option_symbol(sym):
+                                    if exit_side != "SELL":
+                                        logger.error(f"Strategy 3 exit blocked for {sym}: options buy-only")
+                                        continue
+                                    product_type = (
+                                        client._position_product(pos) if pos else ""
+                                    ) or client.resolve_exit_product(sym, "MARGIN")
+                                else:
+                                    product_type = "INTRADAY" if "INDEX" not in sym and "-EQ" in sym else "MARGIN"
                                 exit_res = await asyncio.to_thread(
                                     client.place_order,
                                     symbol=sym,
@@ -728,7 +770,8 @@ async def trailing_monitor():
                                     order_type="MARKET",
                                     product=product_type,
                                     sl_points=0.0,
-                                    target_points=0.0
+                                    target_points=0.0,
+                                    is_exit=True,
                                 )
                                 if exit_res.get("success"):
                                     trade_pnl = (ltp - entry) if side == "BUY" else (entry - ltp)

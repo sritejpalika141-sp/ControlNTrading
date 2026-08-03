@@ -50,7 +50,13 @@ class DrawdownSentinelWorker:
                 logger.warning(f"Drawdown Sentinel: SL cancel failed for {sym}: {e}")
 
         exit_side = "SELL" if side == "BUY" else "BUY"
-        product_type = "INTRADAY" if "-EQ" in sym else "MARGIN"
+        if getattr(client, "_is_option_symbol", lambda _s: False)(sym):
+            if exit_side != "SELL":
+                logger.error(f"Drawdown Sentinel blocked {sym}: options buy-only")
+                return
+            product_type = client.resolve_exit_product(sym, "MARGIN")
+        else:
+            product_type = "INTRADAY" if "-EQ" in sym else "MARGIN"
         try:
             res = await api_queue.enqueue(
                 1,
@@ -62,6 +68,7 @@ class DrawdownSentinelWorker:
                 product=product_type,
                 sl_points=0.0,
                 target_points=0.0,
+                is_exit=True,
             )
             if isinstance(res, dict) and res.get("success"):
                 result_type = "profit" if mtm > 0 else "loss" if mtm < 0 else "breakeven"

@@ -115,7 +115,8 @@ async def sl_guardian():
                         exit_side = -1 if side_long else 1
                         logger.warning(f"🛡️ Guardian: NAKED position {sym} (entry {entry}, ltp {ltp}) — "
                                        f"placing protective SL-M @ {stop} ({sl_pts}pts).")
-                        res = await asyncio.to_thread(client.place_stop_loss, sym, qty, stop, exit_side)
+                        res = await asyncio.to_thread(client.place_stop_loss, sym, qty, stop, exit_side,
+                                                       client._position_product(p) or client.resolve_exit_product(sym, "MARGIN"))
                         ok = isinstance(res, dict) and (res.get("s") == "ok" or res.get("id"))
                         oid = (res or {}).get("id", "")
                         if ok:

@@ -835,11 +835,27 @@ class FyersClient:
         'LimitPrice not a valid tick multiple' rejection that left the CO position unprotected. The
         stop_price (trigger) is rounded to the instrument tick (0.1 for MCX/CDS, 0.05 for NSE).
         exit_side = -1 (SELL) to close a long option; +1 (BUY) to close a short. Returns the raw
-        Fyers response ({'s':'ok','id':...} on success)."""
+        Fyers response ({'s':'ok','id':...} on success).
+
+        BUY-ONLY OPTIONS: SELL protective stops are allowed only when a matching long CE/PE exists;
+        productType is forced to that long's product so we never open a naked INTRADAY short vs a CO long.
+        """
         try:
             client = self._get_active_client()
             if not client:
                 return {"s": "error", "message": "no active broker client"}
+
+            if self._is_option_symbol(symbol) and int(exit_side) == -1:
+                long_pos = self._find_option_long(symbol, min_qty=1)
+                if not long_pos:
+                    msg = "options SL SELL blocked: no matching long CE/PE (buy-only)"
+                    print(f"⛔ {msg}: {symbol}", flush=True)
+                    return {"s": "error", "message": msg}
+                product_type = self._position_product(long_pos) or product_type
+                # Never exceed the long qty (would create a residual short)
+                long_qty = abs(self._position_net_qty(long_pos))
+                qty = min(int(qty), long_qty) if long_qty > 0 else int(qty)
+
             tick = 0.1 if (symbol.startswith("MCX:") or symbol.startswith("CDS:")) else 0.05
             trig = round(round(float(stop_price) / tick) * tick, 2)
             data = {
@@ -858,6 +874,57 @@ class FyersClient:
             return resp if isinstance(resp, dict) else {"s": "error", "message": str(resp)}
         except Exception as e:
             return {"s": "error", "message": str(e)}
+
+    @staticmethod
+    def _is_option_symbol(symbol: str) -> bool:
+        s = (symbol or "").upper()
+        return s.endswith("CE") or s.endswith("PE")
+
+    @staticmethod
+    def _position_net_qty(pos: Dict) -> int:
+        """Signed net qty: +long / -short. Prefers Fyers netQty when present."""
+        if not pos:
+            return 0
+        if pos.get("netQty") is not None:
+            try:
+                return int(pos.get("netQty") or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            qty = abs(int(pos.get("qty", 0) or 0))
+            side = int(pos.get("side", 1) or 1)
+            return qty if side > 0 else -qty
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _position_product(pos: Dict) -> str:
+        if not pos:
+            return ""
+        return str(pos.get("productType") or pos.get("product") or "").upper()
+
+    def _find_option_long(self, symbol: str, min_qty: int = 1) -> Optional[Dict]:
+        """Return an open long CE/PE position for symbol with net qty >= min_qty, else None."""
+        try:
+            positions = self.get_positions() or []
+        except Exception:
+            positions = []
+        for p in positions:
+            if str(p.get("symbol", "")) != symbol:
+                continue
+            net = self._position_net_qty(p)
+            if net >= int(min_qty):
+                return p
+        return None
+
+    def resolve_exit_product(self, symbol: str, fallback: str = "MARGIN") -> str:
+        """Product type for closing an option long — must match the live position book."""
+        long_pos = self._find_option_long(symbol, min_qty=1)
+        prod = self._position_product(long_pos) if long_pos else ""
+        if prod:
+            return prod
+        # CO entries often report as CO; square-off typically uses MARGIN/INTRADAY depending on book.
+        return (fallback or "MARGIN").upper()
 
     def get_historical(self, symbol: str, resolution: str, days_back: int = 10) -> List[Dict]:
         """
@@ -1574,27 +1641,54 @@ class FyersClient:
     def place_order(self, symbol: str, qty: int, side: str,
                     order_type: str = "MARKET", product: str = "NRML",
                     limit_price: float = 0, stop_price: float = 0,
-                    sl_points: float = 12.0, target_points: float = 0.0) -> Dict:
+                    sl_points: float = 12.0, target_points: float = 0.0,
+                    is_exit: bool = False) -> Dict:
         """
         Place an order.
         For MARKET orders: auto-fetches LTP and places as LIMIT with buffer
         (Fyers Algo apps require Market Price Protection — no true market orders).
+
+        OPTIONS BUY-ONLY POLICY: CE/PE SELL is allowed only as sell-to-close of an existing
+        long in the same product book. Sell-to-open / writing puts/calls is rejected.
         """
-        # Check global KILL SWITCH
+        side_int = 1 if str(side).upper() == "BUY" else -1
+        is_option = self._is_option_symbol(symbol)
+
+        # ── Options buy-only: never open a short CE/PE ──
+        if is_option and side_int == -1:
+            long_pos = self._find_option_long(symbol, min_qty=1)
+            if not long_pos:
+                msg = ("⛔ Options SELL blocked: no matching long CE/PE to close "
+                       "(buy-only policy — cannot sell-to-open / write options).")
+                print(f"{msg} symbol={symbol}", flush=True)
+                return {"success": False, "message": msg}
+            live_qty = abs(self._position_net_qty(long_pos))
+            if qty > live_qty > 0:
+                print(f"ℹ️ Clamping option exit qty {qty} → {live_qty} for {symbol}", flush=True)
+                qty = live_qty
+            # Match product book (CO/MARGIN/INTRADAY) so SELL nets the long instead of opening a short.
+            matched = self._position_product(long_pos)
+            if matched:
+                product = matched
+            is_exit = True
+        elif is_option and side_int == 1 and is_exit:
+            # BUY is_exit would mean covering a short — not allowed under buy-only.
+            return {"success": False, "message": "⛔ Options BUY-to-cover blocked (buy-only; no short options)."}
+
+        # Check global KILL SWITCH — still allow verified option exits so liquidation works.
         from models import Database
-        if Database.is_kill_switch_active():
+        if Database.is_kill_switch_active() and not (is_option and side_int == -1 and is_exit):
             print(f"🛑 [KILL SWITCH ACTIVE] Order rejected: {symbol} {side} {qty}")
             return {"success": False, "message": "SYSTEM LOCKED: Global Kill-Switch is active."}
 
         # POSITION SIZING: If qty is 0 or not provided, calculate based on risk.
         # Lazy import — see the note at the top of this file: importing from `state` at module
         # level creates a circular import (state.py imports FyersClient from here).
-        if qty <= 0 and limit_price > 0:
+        if qty <= 0 and limit_price > 0 and side_int == 1:
             from state import calculate_position_size
             qty = calculate_position_size(self.user_id, limit_price, sl_points, symbol)
             print(f"📊 POSITION SIZING: Calculated qty={qty} for {symbol} (risk={sl_points}pts)")
 
-        side_int = 1 if side.upper() == "BUY" else -1
         sl_order_type = 0
 
         # Check paper trading
@@ -1869,17 +1963,15 @@ class FyersClient:
             resp = self.client.place_order(order_data)
             print(f"📥 Response: {resp}")
 
-            # If CO rejected (e.g. tick error or CO restricted for strike), retry as INTRADAY
-            # with server-side trailing_monitor monitoring exact position quantity.
+            # If CO rejected — ABORT. Do NOT fall back to INTRADAY + separate SELL stop:
+            # that pending short does not net a CO long and can open a naked short PE/CE
+            # (buy-only violation). Match engine/brokers/fyers.py abort policy.
             if not self._is_success(resp) and is_co:
-                print(f"⚠️ CO Rejected ({resp.get('message')}). Retrying as INTRADAY with server-side SL/TSL sentinel.")
-                is_co = False
-                mapped_product = "INTRADAY"
-                order_data["productType"] = mapped_product
-                order_data.pop("stopLoss", None)
-                order_data.pop("takeProfit", None)
-                resp = self.client.place_order(order_data)
-                print(f"📥 Fallback Response: {resp}")
+                print(f"⚠️ CO Rejected — aborting order (no naked entry / no separate SELL SL): {resp.get('message')}", flush=True)
+                return {
+                    "success": False,
+                    "message": f"CO rejected, order aborted (no SL possible): {resp.get('message', 'unknown')}",
+                }
 
             # Fallback if BO fails or is rejected
             if not self._is_success(resp) and is_bo:
@@ -1889,6 +1981,9 @@ class FyersClient:
                 order_data["productType"] = mapped_product
                 order_data.pop("stopLoss", None)
                 order_data.pop("takeProfit", None)
+                # BUY-only: never fall back to a SELL entry
+                if side_int == -1 and self._is_option_symbol(symbol):
+                    return {"success": False, "message": "BO rejected; options SELL entry blocked (buy-only)."}
                 resp = self.client.place_order(order_data)
                 print(f"📥 Fallback Response: {resp}")
 
@@ -1985,8 +2080,11 @@ class FyersClient:
         if entry_side == "BUY":
             sl_trigger = round(round((entry_price - sl_points) / 0.05) * 0.05, 2)
             sl_limit = round(round((entry_price - sl_points - 1) / 0.05) * 0.05, 2)
-            sl_side = -1  # SELL
+            sl_side = -1  # SELL to close the long just bought
         else:
+            # Buy-only options: never place a BUY stop that would cover/open a short option.
+            if self._is_option_symbol(symbol):
+                return {"success": False, "message": "options SELL-entry SL blocked (buy-only policy)"}
             sl_trigger = round(round((entry_price + sl_points) / 0.05) * 0.05, 2)
             sl_limit = round(round((entry_price + sl_points + 1) / 0.05) * 0.05, 2)
             sl_side = 1  # BUY

@@ -1815,9 +1815,23 @@ async def daily_hard_exit_scheduler():
                             qty = abs(pos.get("qty", pos.get("netQty", 0)))
                             symbol = pos.get("symbol", "")
                             side_val = pos.get("side", 1)
-                            exit_side = "SELL" if side_val > 0 else "BUY"
+                            net = client._position_net_qty(pos) if hasattr(client, "_position_net_qty") else (
+                                qty if side_val > 0 else -qty
+                            )
+                            exit_side = "SELL" if net > 0 else "BUY"
 
-                            print(f"🔴 {skey} hard exit: {exit_side} {qty} x {symbol} for user {u_id}", flush=True)
+                            # Options buy-only: only close longs via SELL; never open/cover shorts.
+                            if hasattr(client, "_is_option_symbol") and client._is_option_symbol(symbol):
+                                if net <= 0:
+                                    print(f"🔴 {skey} hard exit skip {symbol}: no long option (buy-only)", flush=True)
+                                    continue
+                                exit_side = "SELL"
+                                product = client._position_product(pos) or client.resolve_exit_product(symbol, "MARGIN")
+                            else:
+                                product = client._position_product(pos) if hasattr(client, "_position_product") else "INTRADAY"
+                                product = product or "INTRADAY"
+
+                            print(f"🔴 {skey} hard exit: {exit_side} {qty} x {symbol} ({product}) for user {u_id}", flush=True)
                             await broadcast_log(f"🔴 {skey} Hard Exit: {exit_side} {qty} x {symbol}", "error", user_id=u_id)
 
                             result = await api_queue.enqueue(
@@ -1826,7 +1840,10 @@ async def daily_hard_exit_scheduler():
                                 qty=qty,
                                 side=exit_side,
                                 order_type="MARKET",
-                                product="INTRADAY"
+                                product=product,
+                                is_exit=True,
+                                sl_points=0.0,
+                                target_points=0.0,
                             )
                             print(f"{skey} hard exit result for {symbol}: {result}", flush=True)
                         except Exception as exit_err:
