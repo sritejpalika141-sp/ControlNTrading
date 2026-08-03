@@ -917,14 +917,13 @@ class FyersClient:
                 return p
         return None
 
-    def resolve_exit_product(self, symbol: str, fallback: str = "MARGIN") -> str:
+    def resolve_exit_product(self, symbol: str, fallback: str = "INTRADAY") -> str:
         """Product type for closing an option long — must match the live position book."""
         long_pos = self._find_option_long(symbol, min_qty=1)
         prod = self._position_product(long_pos) if long_pos else ""
         if prod:
             return prod
-        # CO entries often report as CO; square-off typically uses MARGIN/INTRADAY depending on book.
-        return (fallback or "MARGIN").upper()
+        return (fallback or "INTRADAY").upper()
 
     def get_historical(self, symbol: str, resolution: str, days_back: int = 10) -> List[Dict]:
         """
@@ -1639,7 +1638,7 @@ class FyersClient:
             return {"s": "error", "message": str(e), "code": 500}
 
     def place_order(self, symbol: str, qty: int, side: str,
-                    order_type: str = "MARKET", product: str = "NRML",
+                    order_type: str = "MARKET", product: str = "INTRADAY",
                     limit_price: float = 0, stop_price: float = 0,
                     sl_points: float = 12.0, target_points: float = 0.0,
                     is_exit: bool = False) -> Dict:
@@ -1650,6 +1649,9 @@ class FyersClient:
 
         OPTIONS BUY-ONLY POLICY: CE/PE SELL is allowed only as sell-to-close of an existing
         long in the same product book. Sell-to-open / writing puts/calls is rejected.
+
+        INTRADAY-ONLY POLICY: new entries are always productType=INTRADAY (CO/MARGIN/NRML
+        requests are forced). Exits may use the live long's product to flatten legacy books.
         """
         side_int = 1 if str(side).upper() == "BUY" else -1
         is_option = self._is_option_symbol(symbol)
@@ -1666,7 +1668,7 @@ class FyersClient:
             if qty > live_qty > 0:
                 print(f"ℹ️ Clamping option exit qty {qty} → {live_qty} for {symbol}", flush=True)
                 qty = live_qty
-            # Match product book (CO/MARGIN/INTRADAY) so SELL nets the long instead of opening a short.
+            # Match product book so SELL nets the long (legacy CO/MARGIN can still flatten).
             matched = self._position_product(long_pos)
             if matched:
                 product = matched
@@ -1674,6 +1676,14 @@ class FyersClient:
         elif is_option and side_int == 1 and is_exit:
             # BUY is_exit would mean covering a short — not allowed under buy-only.
             return {"success": False, "message": "⛔ Options BUY-to-cover blocked (buy-only; no short options)."}
+
+        # ── INTRADAY-ONLY POLICY (user directive): every NEW trade is INTRADAY ──
+        # Callers may still pass CO/MARGIN/NRML; entries are forced to INTRADAY.
+        # Verified option exits keep the live long's product so prior CO books can close cleanly.
+        if not is_exit:
+            if str(product).upper() not in ("INTRADAY", "MIS"):
+                print(f"ℹ️ Forcing entry product {product} → INTRADAY for {symbol}", flush=True)
+            product = "INTRADAY"
 
         # Check global KILL SWITCH — still allow verified option exits so liquidation works.
         from models import Database
@@ -1897,22 +1907,21 @@ class FyersClient:
 
         # Map product types (Fyers v3 dropped NRML, uses MARGIN for F&O)
         product_map = {"NRML": "MARGIN", "MIS": "INTRADAY"}
-        mapped_product = product_map.get(product.upper(), product.upper())
+        mapped_product = product_map.get(str(product).upper(), str(product).upper())
 
         is_bo = False
         is_co = False
-        # OWNER RULE (28/29-07-26): a CO must stay a CO. The previous code CONVERTED every CO to
-        # INTRADAY + a SEPARATE SELL stop — a naked short on a long option that Fyers margins
-        # enormously (a live crude PUT needed ₹2.76 lakh), so the SL was rejected and the position
-        # was left with NO stop. The CO's stop is a built-in, margin-benefited leg placed atomically
-        # with the buy, and its leg id IS modifiable for the trailing stop (see _get_bo_legs). Keep
-        # SL-bearing entries as CO; if the CO is rejected the order is aborted below (never naked).
-        if product.upper() == "CO" or (sl_points > 0 and target_points <= 0):
+        # INTRADAY-ONLY entries: never auto-upgrade to Cover/Bracket Order.
+        # SL/target (when requested) are placed as separate same-product INTRADAY legs after fill.
+        # Explicit CO/BO is only allowed on verified exits that already matched a live long's book.
+        if is_exit and mapped_product == "CO":
             is_co = True
-            mapped_product = "CO"
-        elif sl_points > 0 and target_points > 0:
+        elif is_exit and mapped_product == "BO":
             is_bo = True
-            mapped_product = "BO"
+        elif not is_exit:
+            mapped_product = "INTRADAY"
+        elif mapped_product not in ("INTRADAY", "MARGIN", "CO", "BO", "CNC"):
+            mapped_product = "INTRADAY"
 
         stop_trigger = 0.0
         target_trigger = 0.0

@@ -105,12 +105,14 @@ def test_sell_qty_clamped_to_long():
     assert c.client.place_order.call_args[0][0]["qty"] == 65
 
 
-def test_co_reject_aborts_without_intraday_sell_fallback():
+def test_entry_forced_to_intraday_even_if_co_requested():
     c = FyersClient(user_id=1)
     c.client = MagicMock()
-    c.client.place_order.return_value = {"s": "error", "code": -99, "message": "CO not allowed"}
+    c.client.place_order.return_value = {"s": "ok", "code": 1101, "id": "ORD3"}
     with patch.object(c, "get_quote", return_value={"lp": 50.0}), \
-         patch.object(c, "_is_success", return_value=False), \
+         patch.object(c, "_is_success", return_value=True), \
+         patch.object(c, "_place_stop_loss", return_value={"success": True, "order_id": "SL1", "sl_price": 38.0}), \
+         patch.object(c, "_get_bo_legs", return_value={}), \
          patch("models.Database.is_kill_switch_active", return_value=False), \
          patch("app.get_user_state", side_effect=Exception("no paper")):
         res = c.place_order(
@@ -118,14 +120,45 @@ def test_co_reject_aborts_without_intraday_sell_fallback():
             qty=65,
             side="BUY",
             order_type="LIMIT",
-            product="CO",
+            product="CO",  # legacy caller — must be forced to INTRADAY
             limit_price=50.0,
             sl_points=12.0,
             target_points=0,
         )
+    assert res.get("success") is True
+    sent = c.client.place_order.call_args[0][0]
+    assert sent["productType"] == "INTRADAY"
+    assert "stopLoss" not in sent  # CO leg not used; separate SL after fill
+
+
+def test_co_reject_aborts_without_intraday_sell_fallback():
+    """Legacy: if an exit somehow targets CO and CO fails, abort (no naked retry)."""
+    c = FyersClient(user_id=1)
+    c.client = MagicMock()
+    c.client.place_order.return_value = {"s": "error", "code": -99, "message": "CO not allowed"}
+    long_pos = {
+        "symbol": "NSE:NIFTY2560025600PE",
+        "netQty": 65,
+        "productType": "CO",
+    }
+    with patch.object(c, "get_positions", return_value=[long_pos]), \
+         patch.object(c, "get_quote", return_value={"lp": 50.0}), \
+         patch.object(c, "_is_success", return_value=False), \
+         patch("models.Database.is_kill_switch_active", return_value=False), \
+         patch("app.get_user_state", side_effect=Exception("no paper")):
+        res = c.place_order(
+            symbol="NSE:NIFTY2560025600PE",
+            qty=65,
+            side="SELL",
+            order_type="LIMIT",
+            product="CO",
+            limit_price=50.0,
+            sl_points=0.0,
+            target_points=0,
+            is_exit=True,
+        )
     assert res["success"] is False
     assert "abort" in res["message"].lower() or "CO rejected" in res["message"]
-    # Only the CO attempt — no INTRADAY retry that would later attach a naked SELL SL
     assert c.client.place_order.call_count == 1
 
 

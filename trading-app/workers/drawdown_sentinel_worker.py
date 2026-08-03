@@ -54,9 +54,9 @@ class DrawdownSentinelWorker:
             if exit_side != "SELL":
                 logger.error(f"Drawdown Sentinel blocked {sym}: options buy-only")
                 return
-            product_type = client.resolve_exit_product(sym, "MARGIN")
+            product_type = client.resolve_exit_product(sym, "INTRADAY")
         else:
-            product_type = "INTRADAY" if "-EQ" in sym else "MARGIN"
+            product_type = "INTRADAY"
         try:
             res = await api_queue.enqueue(
                 1,

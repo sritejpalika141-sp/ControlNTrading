@@ -759,9 +759,9 @@ async def trailing_monitor():
                                         continue
                                     product_type = (
                                         client._position_product(pos) if pos else ""
-                                    ) or client.resolve_exit_product(sym, "MARGIN")
+                                    ) or client.resolve_exit_product(sym, "INTRADAY")
                                 else:
-                                    product_type = "INTRADAY" if "INDEX" not in sym and "-EQ" in sym else "MARGIN"
+                                    product_type = "INTRADAY"
                                 exit_res = await asyncio.to_thread(
                                     client.place_order,
                                     symbol=sym,
@@ -1364,15 +1364,15 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             # Determine product and targets based on strategy
             is_orb = sig.get("strategy") == "Strategy 3: 5-Minute ORB"
 
-            # User explicitly requested ALL strategies to use Cover Orders (CO) exclusively.
-            product_type = "CO"
+            # User directive: ALL strategies place INTRADAY orders only (not CO/MARGIN).
+            product_type = "INTRADAY"
             target_points = 0.0
 
             side = sig.get("side", "BUY")
             strategy_name = sig.get("strategy", "Strategy 2: 9:26 - 180 Buy")
 
             # ── OPTIONS-BUY-ONLY ENFORCEMENT (user directive) ──
-            # Every auto-trade must BUY an OPTION (CE/PE) via Cover Order — never sell/write, and
+            # Every auto-trade must BUY an OPTION (CE/PE) INTRADAY — never sell/write, and
             # never a future/equity/index. Applies to ALL asset classes (index/stock/commodity/
             # currency options all end CE/PE; FUT/-EQ/-INDEX are rejected). Reject off-policy orders
             # rather than place them live.
@@ -1822,9 +1822,8 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             sl_method = sl_data["method"]
             target_points = 0.0
 
-        # Determine market regime for order type
-        # User explicitly requested ALL strategies to use Cover Orders (CO) exclusively.
-        product_type = "CO"
+        # User directive: ALL strategies place INTRADAY orders only (not CO/MARGIN/BO).
+        product_type = "INTRADAY"
 
 
 

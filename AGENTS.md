@@ -701,7 +701,7 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Agent scrips (NewsWorker):** Runs every **30 minutes** inside `sritej-trading` (not `vm_orchestrator`). Needs a live Fyers token to quote-validate picks; without it, injects are skipped (`last_skip_reason` on `/api/market-summary`). After Fyers reconnect or morning token refresh, news+inject is scheduled immediately. Force: `POST /api/scripts/agent-refresh` (authed). Equity window `<15:00 IST`, MCX `09:00–22:00 IST`. Agent scrips purge at 15:30 (equity) / 23:45 (MCX).
 
-**Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). CO reject aborts (no INTRADAY+separate-SELL fallback). Regression: `tests/test_options_buy_only.py`.
+**Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
 
 ### First-time VM prerequisites
 

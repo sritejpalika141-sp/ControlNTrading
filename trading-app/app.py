@@ -1826,7 +1826,7 @@ async def daily_hard_exit_scheduler():
                                     print(f"🔴 {skey} hard exit skip {symbol}: no long option (buy-only)", flush=True)
                                     continue
                                 exit_side = "SELL"
-                                product = client._position_product(pos) or client.resolve_exit_product(symbol, "MARGIN")
+                                product = client._position_product(pos) or client.resolve_exit_product(symbol, "INTRADAY")
                             else:
                                 product = client._position_product(pos) if hasattr(client, "_position_product") else "INTRADAY"
                                 product = product or "INTRADAY"
@@ -3028,7 +3028,7 @@ async def place_order(request: Request, order: OrderRequest):
             qty=order.qty,
             side=order.side,
             order_type=order.order_type,
-            product=order.product,
+            product="INTRADAY",  # user directive: all new trades are INTRADAY only
             limit_price=order.limit_price,
             stop_price=order.stop_price,
             sl_points=order.sl_points,
