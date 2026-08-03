@@ -979,100 +979,57 @@ async def trailing_monitor():
 
 async def calculate_smart_sl(strike_symbol: str, entry_ltp: float, trend: str, client) -> Dict:
     """
-    Stop-loss = last 3-candle swing low on the 1-min OPTION chart, as a distance SUBTRACTED from the
-    buy price — but NEVER tighter than a floor, so a quiet minute can't produce an instant stop-out.
+    Initial stop-loss = lowest of the last 3 candles on the 1-min OPTION chart
+    (same structure the trailing monitor uses). Distance = entry - that low.
 
-    Rule (per owner directive 24/25-07-26; floor restored + progressive lookback added 30-07-26):
-      1. Start with the 3-candle swing-low distance = entry - min(low of last 3 one-min candles).
-      2. If that is TOO TIGHT (below the floor), WIDEN the lookback to 4 then 5 candles — each wider
-         window gives a lower prior low = a naturally wider stop that is still a REAL chart level.
-         Stop as soon as a window clears the floor. This keeps the stop a genuine swing low (owner
-         preference) instead of an abstract number.
-      3. Floor (the "too tight" threshold) = the WIDER of 1.5× the option's avg 1-min range and 12%
-         of the entry premium, min 2.0. Only used as the stop if even the 5-candle low is tighter.
-         NO AI in the order path.
-      4. PREMIUM RISK CAP: never wider than 45% of premium (bounds a single trade's loss, keeps the
-         stop above zero).
-      Per-trade RUPEE risk is bounded separately by the caller (execute_auto_trade skips a trade whose
-      sl_points × qty exceeds the per-trade risk budget).
-      In EVERY path the result is a POSITIVE distance subtracted from the buy price — never an
-      absolute price, never a stop at/above entry.
+    Owner rule (03-08-26): do NOT widen with a % premium / ATR floor — that pushed
+    crude SLs ~12% below entry (e.g. ₹292.9 → ₹257.75) so the 3-candle trail never
+    engaged. Trailing still only RAISES the stop from this initial level.
+
+    Guards only:
+      • positive distance (low must be below entry)
+      • tiny absolute minimum so the broker accepts the order
+      • never wider than 80% of premium (stop stays above zero)
     """
     is_trending = "BULL" in trend.upper() or "BEAR" in trend.upper()
 
     def _pkg(sl_pts: float, method: str) -> Dict:
-        # sl_pts is always a POSITIVE distance; the broker places the stop at (entry - sl_pts).
-        # Floor: normally 1.0, but scaled DOWN for cheap options so a sub-rupee premium (e.g. a
-        # ₹0.30 USDINR/FX option) isn't forced to a 1.0-pt stop that would sit at/below zero and be
-        # rejected. For any premium >= 10 the floor is the usual 1.0 — identical to before.
-        # Cap: stop never wider than 80% of premium, so the stop price always stays above zero
-        # (only ever binds for very cheap options; never touches normal NIFTY/crude SLs).
-        _min = min(1.0, round(entry_ltp * 0.10, 2)) if entry_ltp > 0 else 1.0
-        sl_pts = max(round(sl_pts, 2), _min)
+        _min = 0.5 if entry_ltp >= 5 else max(0.05, round(entry_ltp * 0.05, 2))
+        sl_pts = max(round(float(sl_pts), 2), _min)
         if entry_ltp > 0:
             sl_pts = min(sl_pts, round(entry_ltp * 0.80, 2))
         tgt = round(sl_pts * (2 if is_trending else 1.5), 1)
         return {"sl_points": sl_pts, "target_points": tgt, "method": method}
 
     try:
-        # ── Swing low on the 1-min OPTION chart (PRIMARY — owner directive) ──
-        # 2 days of history so a freshly-ATM / thin strike still yields >=3 candles.
-        atr = 0.0
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 2)
         if candles and len(candles) >= 3:
-            # Volatility gauge = average 1-min high-low range of the last 5 candles. Used ONLY
-            # as a floor so a quiet-minute swing low can't produce an instant stop-out.
-            recent = candles[-5:]
-            if recent:
-                atr = sum((c["high"] - c["low"]) for c in recent) / len(recent)
+            recent = candles[-3:]
+            swing_low = min(c["low"] for c in recent)
+            dist = round(entry_ltp - swing_low, 2)
+            if dist > 0:
+                logger.info(
+                    f"📊 SL {strike_symbol}: 3×1m low={swing_low:.2f} → "
+                    f"{dist:.2f} pts below entry {entry_ltp} [3_candle_1m_low]"
+                )
+                return _pkg(dist, "3_candle_1m_low")
+            # Swing low at/above entry (gap / bad print) — use last closed candle range as distance.
+            last = recent[-1]
+            fallback = round(max(last["high"] - last["low"], entry_ltp * 0.02, 0.5), 2)
+            logger.warning(
+                f"📊 SL {strike_symbol}: 3×1m low {swing_low:.2f} >= entry {entry_ltp} — "
+                f"using last-bar range {fallback:.2f} pts"
+            )
+            return _pkg(fallback, "3_candle_1m_low_fallback_range")
 
-        # VOLATILITY / PREMIUM FLOOR (the "too tight" threshold). The stop must be at least wide
-        # enough to survive one noisy minute. Floor = the WIDER of:
-        #   • 1.5× the option's own average 1-min range (adapts to real volatility), and
-        #   • 12% of the entry premium (scales with price: big for a ₹365 option, small for a ₹15 one),
-        # never below 2.0 absolute.
-        vol_floor = max(round(atr * 1.5, 2), round(entry_ltp * 0.12, 2), 2.0)
-
-        # PROGRESSIVE SWING-LOW LOOKBACK (owner directive 30-07-26): use the 3-candle swing low; if
-        # that distance is TOO TIGHT (below the floor), widen the lookback to 4 then 5 candles. Each
-        # wider window picks a LOWER prior low = a naturally wider stop that is still a REAL chart
-        # level (an actual candle low), which is preferred over an abstract % floor. Stop widening as
-        # soon as a window clears the floor; only fall back to the floor if even the 5-candle low is
-        # still too tight.
-        swing = 0.0
-        swing_n = 0
-        if candles and len(candles) >= 3:
-            for n in (3, 4, 5):
-                if len(candles) < n:
-                    break
-                ll = min(c["low"] for c in candles[-n:])
-                d = round(entry_ltp - ll, 2)  # distance subtracted from the buy price
-                if d > 0:
-                    swing, swing_n = d, n
-                if d >= vol_floor:
-                    break  # wide enough — this window's swing low is the stop
-
-        if swing >= vol_floor:
-            sl, method = swing, f"{swing_n}_candle_swing_low"
-        elif swing > 0:
-            # Even the 5-candle low is tighter than the floor -> use the floor (last resort).
-            sl, method = vol_floor, f"{swing_n}_candle_low_vol_floored"
-        else:
-            sl, method = vol_floor, "vol_floor_no_swing"
-
-        # PREMIUM RISK CAP: never risk more than 45% of the premium on one option (bounds the loss
-        # and keeps the stop above zero). Only binds when the floor/swing is unusually wide.
-        if entry_ltp > 0:
-            sl = min(sl, round(entry_ltp * 0.45, 2))
-
-        logger.info(f"📊 SL {strike_symbol}: swing={swing}({swing_n}c) atr={atr:.1f} floor={vol_floor:.1f} → "
-                    f"{sl:.1f} pts (entry {entry_ltp}) [{method}]")
-        return _pkg(sl, method)
+        # Not enough candles yet — small premium-relative fallback (not the old 12% floor).
+        fb = max(round(entry_ltp * 0.03, 2), 1.0) if entry_ltp > 0 else 5.0
+        logger.warning(f"📊 SL {strike_symbol}: <3 one-min candles — fallback {fb:.2f} pts")
+        return _pkg(fb, "insufficient_candles_fallback")
 
     except Exception as e:
         logger.error(f"Smart SL calculation error: {e}")
-        # Even the error path must not be instant-stopout tight: floor at 12% of premium.
-        return _pkg(max(round(entry_ltp * 0.12, 2), 5.0), "error_fallback")
+        return _pkg(max(round(entry_ltp * 0.03, 2), 2.0) if entry_ltp > 0 else 5.0, "error_fallback")
 
 
 async def _recover_closed_pnl(client, sym):

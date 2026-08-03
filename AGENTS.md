@@ -703,6 +703,8 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
 
+**Initial + trailing SL:** Both use **lowest of last 3 candles on the 1‑min option chart**. Initial SL is `entry − that low` (no 12% premium / ATR widen — that made crude stops ~₹35 wide so trail never engaged). Trail only raises the stop from that level. Tests: `tests/test_smart_sl_3candle.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):
