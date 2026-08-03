@@ -706,7 +706,8 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 - Strategy 1 is **blocked on MCX/CDS** (equity OB/FVG only).
 - Crude EIA = **Wednesday window only**; Evening momentum = **after 17:00 IST only**.
 - Options AUTOLIMIT: no ask+1% chase.
-- Owner stop-bleeding: turn automation OFF / paper ON, disable commodity strategies, remove CRUDE from watchlist until SL attach is proven on MCX.
+- **Commodity strategies default OFF**; on load, all-day ORB/9-EMA/Swing are stripped (EIA/Evening kept if enabled). Re-enable only after paper week.
+- Owner stop-bleeding: turn automation OFF / paper ON, remove CRUDE from watchlist until SL attach is proven on MCX.
 
 **LOCKED — Initial SL + Trailing SL (TSL) — EVERY strategy, no exceptions:**
 

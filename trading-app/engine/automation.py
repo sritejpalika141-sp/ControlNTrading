@@ -108,10 +108,10 @@ class TradingState:
         self.shadow_strategies: list[str] = []
         self.shadow_week_until: str = ""
         self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"]
-        # SEPARATE commodity strategy family (MCX only) — AI-tuned for commodity behaviour (higher
-        # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
-        # independent of the equity strategies above, so tuning one never affects the other.
-        self.commodity_strategies = ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"]
+        # Commodity strategies default OFF (owner stop-bleed 03-08-26). All-day ORB/9-EMA/Swing
+        # on crude was buy-high → SL. Re-enable only after paper week; EIA/Evening are time-gated
+        # in code if turned on manually.
+        self.commodity_strategies = []
         # AI-tunable commodity risk/entry knobs (start from crude defaults; nightly learning refines
         # these from commodity paper-trade performance — the "advised by AI" evolution). Applied to
         # commodity trades only, so equity risk sizing is never affected.
@@ -221,7 +221,7 @@ class TradingState:
                         self.paper_orders = data.get("paper_orders", [])
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
                         self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"])
-                        self.commodity_strategies = data.get("commodity_strategies", ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"])
+                        # commodity_strategies loaded in PERSISTENT block below (survives daily reset)
                         self.commodity_params = data.get("commodity_params", {"sl_multiplier": 1.75, "target_multiplier": 1.75, "breakout_buffer_mult": 1.5})
                         self.strat_orb_triggered = data.get("strat_orb_triggered", False)
                         self.strat_orb_expired = data.get("strat_orb_expired", False)
@@ -267,6 +267,26 @@ class TradingState:
                     self.agent_added_symbols = data.get("agent_added_symbols", [])
                     self.shadow_strategies = data.get("shadow_strategies", [])
                     self.shadow_week_until = data.get("shadow_week_until", "")
+                    # Commodity enablement is configuration (not a daily counter) — always load + strip
+                    # buy-high all-day ORB/9-EMA/Swing. EIA/Evening remain if owner had them on.
+                    self.commodity_strategies = data.get("commodity_strategies", [])
+                    _bleed = {
+                        "Commodity: 5-Minute ORB",
+                        "Commodity: 9-EMA Momentum",
+                        "Commodity: Swing-Pivot Breakout",
+                    }
+                    _before_com = list(self.commodity_strategies or [])
+                    self.commodity_strategies = [s for s in _before_com if s not in _bleed]
+                    if _before_com != self.commodity_strategies:
+                        print(
+                            f"🛡️ Stop-bleed: disabled buy-high commodity strategies "
+                            f"{_before_com} → {self.commodity_strategies}",
+                            flush=True,
+                        )
+                        try:
+                            self.save()
+                        except Exception:
+                            pass
                     _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
                     if _orphans:
                         self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
@@ -1038,7 +1058,12 @@ class TradingState:
         if "active_strategies" in config:
             self.active_strategies = list(config["active_strategies"])
         if "commodity_strategies" in config:
-            self.commodity_strategies = list(config["commodity_strategies"])
+            _bleed = {
+                "Commodity: 5-Minute ORB",
+                "Commodity: 9-EMA Momentum",
+                "Commodity: Swing-Pivot Breakout",
+            }
+            self.commodity_strategies = [s for s in list(config["commodity_strategies"]) if s not in _bleed]
         if "commodity_params" in config and isinstance(config["commodity_params"], dict):
             self.commodity_params = {**getattr(self, "commodity_params", {}), **config["commodity_params"]}
         if "use_ai_oracle" in config:
