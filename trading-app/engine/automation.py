@@ -869,18 +869,12 @@ class TradingState:
         if not symbol:
             return
 
-        # Strategy: prefer from pos dict (explicit), fall back to active trade lookup
-        strategy = (pos.get("strategy") if isinstance(pos, dict) else None)
-        active = None
-        if not strategy:
-            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
-            strategy = active.get("strategy") if active else None
-        if not strategy:
-            print(f"⚠️ _record_trade_outcome_async: no strategy for {symbol} — trade NOT recorded to swarm.", flush=True)
-            return
-
-        if active is None:
-            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
+        # Strategy: prefer from pos dict (explicit), fall back to active trade lookup,
+        # then to OPEN ledger row (STRICT: losses must still reach swarm/continuous_losses).
+        strategy = (pos.get("strategy") if isinstance(pos, dict) else None) or None
+        active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
+        if not strategy and active:
+            strategy = active.get("strategy")
 
         entry_price = float(active.get("entry_price", 0.0)) if active else 0.0
         entry_regime = (active.get("entry_regime") if active else None) or "NEUTRAL"
@@ -902,14 +896,21 @@ class TradingState:
         from models import Database
 
         async def _persist(retry=False):
+            nonlocal strategy, entry_price
             try:
+                strat = strategy
+                if not strat:
+                    strat = await Database.lookup_open_trade_strategy(symbol, user_id=int(self.user_id))
+                if not strat:
+                    print(f"⚠️ _record_trade_outcome_async: no strategy for {symbol} — trade NOT recorded to swarm.", flush=True)
+                    return
                 await Database.record_trade_outcome(
-                    strategy_name=strategy, symbol=symbol,
+                    strategy_name=strat, symbol=symbol,
                     entry_time=entry_time_str, exit_time=exit_time_str,
                     entry_price=entry_price, exit_price=float(exit_price or 0.0),
                     pnl=float(pnl or 0.0), vix=0.0, market_trend=market_trend,
                 )
-                print(f"✅ Trade recorded: {strategy} | {symbol} | Entry ₹{entry_price:.1f} | Exit ₹{exit_price:.1f} | PnL ₹{pnl:.2f}", flush=True)
+                print(f"✅ Trade recorded: {strat} | {symbol} | Entry ₹{entry_price:.1f} | Exit ₹{exit_price:.1f} | PnL ₹{pnl:.2f}", flush=True)
             except Exception as e:
                 if not retry:
                     print(f"⚠️ record_trade_outcome DB write failed, retrying: {e}", flush=True)
