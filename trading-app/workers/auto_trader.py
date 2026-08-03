@@ -146,6 +146,20 @@ def _strat_enabled_for(state, equity_strat_name: str, symbol: str) -> bool:
     return equity_strat_name in getattr(state, "active_strategies", [])
 
 
+def _opt_base(s):
+    """Alpha-prefix of an option/futures symbol, e.g. 'MCX:CRUDEOIL26AUG7500PE' -> 'CRUDEOIL',
+    'NSE:NIFTY50-INDEX' -> 'NIFTY', 'NSE:NIFTY2680424600CE' -> 'NIFTY'. Reliably means "same
+    underlying" for both index/stock options and commodity options."""
+    s = (s or "").upper().split(":")[-1]
+    base = ""
+    for ch in s:
+        if ch.isalpha():
+            base += ch
+        else:
+            break
+    return base
+
+
 def is_symbol_expiry_today(sym: str) -> bool:
     """Checks if the given Fyers option symbol expires today."""
     now = datetime.now(IST)
@@ -1683,23 +1697,24 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             return
 
         # ═══════════════════════════════════════════
-        # GUARD: one open position per underlying (broker-truth)
+        # GUARD: one open position per underlying (broker-truth + in-memory)
         # Prevents a SECOND strike on a symbol we already hold (e.g. SBIN 1050PE + 1040PE both
-        # open when the ATM moved). Checks the broker's LIVE positions, so it holds even if the
-        # in-memory active-trade list is briefly out of sync (the desync we saw). Both the held
-        # position and the new strike are OPTION symbols, so comparing their alpha prefixes
-        # (SBIN / NIFTY / BANKNIFTY …) reliably means "same underlying".
+        # open, or three different-strike CRUDEOIL PE positions from two different strategies —
+        # 03-08-26: this happened live, 3 concurrent same-direction CRUDEOIL positions, because
+        # the broker positions feed can lag a just-placed order by more than the gap between two
+        # strategies' signals). Checks BOTH the broker's LIVE positions AND state.active_auto_trades
+        # (this process's own authoritative record of what it just placed) — the in-memory check
+        # is immune to broker feed lag/staleness, the broker check catches trades placed outside
+        # this process. Both the held position and the new strike are OPTION symbols, so comparing
+        # their alpha prefixes (SBIN / NIFTY / BANKNIFTY / CRUDEOIL …) reliably means "same underlying".
         # ═══════════════════════════════════════════
-        def _opt_base(s):
-            s = (s or "").upper().split(":")[-1]
-            base = ""
-            for ch in s:
-                if ch.isalpha():
-                    base += ch
-                else:
-                    break
-            return base
         _new_base = _opt_base(strike_symbol)
+        if _new_base:
+            for _t in (getattr(state, "active_auto_trades", []) or []):
+                if _opt_base(_t.get("symbol", "")) == _new_base:
+                    logger.info(f"⏭️ Already tracking {_t.get('symbol')} ({_new_base}) — skipping duplicate strike {strike_symbol}.")
+                    await broadcast_log(f"⏭️ Skipped {strike_symbol}: already in a {_new_base} position.", "warning", user_id=client.user_id)
+                    return
         try:
             _live_positions = await api_queue.enqueue(1, client.get_positions)
             for _p in (_live_positions or []):
