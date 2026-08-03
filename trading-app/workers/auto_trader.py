@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Tuple
 
 from state import (
     IST,
@@ -44,6 +44,37 @@ from fyers_client import compute_sl_limit_price, get_price_tick, round_to_tick
 # monitor treats it as closed (feed omission). Long enough to ride out a transient/partial
 # snapshot, short enough that stale entries do not linger indefinitely.
 POSITION_ABSENCE_GRACE_SECONDS = 30
+
+# Strategies that FADE the move (buy PE after gap-up / sell strength). In a one-sided market
+# they fight the trend and bleed — hard-disabled at execute + stripped from active list on load.
+_FADE_STRATEGY_PREFIXES = (
+    "Strategy 5: Optimized Aerospace Mean Reversion",
+    "Strategy 6: Gap Fill Reversal",
+)
+
+def _is_fade_strategy(name: str) -> bool:
+    n = name or ""
+    return any(n.startswith(p) or p in n for p in _FADE_STRATEGY_PREFIXES)
+
+
+async def _is_chase_entry(client, strike_symbol: str, entry_price: float) -> Tuple[bool, str]:
+    """True if entry is at/near the last-5 one-min highs (buy-high / chase after expansion)."""
+    try:
+        candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 1)
+        if not candles or len(candles) < 3 or entry_price <= 0:
+            return False, ""
+        recent = candles[-5:] if len(candles) >= 5 else candles
+        local_high = max(float(c.get("high") or 0) for c in recent)
+        if local_high <= 0:
+            return False, ""
+        # Within 0.8% of the local high = chasing the spike
+        if entry_price >= local_high * 0.992:
+            return True, f"entry ₹{entry_price:.2f} near 5×1m high ₹{local_high:.2f}"
+        return False, ""
+    except Exception as e:
+        logger.warning(f"Anti-chase check failed for {strike_symbol}: {e}")
+        return False, ""
+
 
 # Maps an equity strategy name -> its commodity-family equivalent. A strategy with NO mapping here
 # does NOT run on commodity (MCX/CDS) symbols at all. This is how the equity and commodity strategy
@@ -1106,6 +1137,22 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             return
 
         # ═══════════════════════════════════════════
+        # ANTI-CHASE GATE (owner 03-08-26) — why one-sided markets still lost:
+        # Directional gate lets WITH-trend CE/PE through, but breakout strategies buy AFTER
+        # the move (near the local high). Option premium mean-reverts → SL. Block entries
+        # whose price is already at/near the last-5 one-min highs (buy-high).
+        # Fade strategies (S5/S6) are also disabled on load — they fight one-sided days.
+        # ═══════════════════════════════════════════
+        _fade = _is_fade_strategy(strategy_name)
+        if _fade:
+            logger.info(f"⏭️ Fade strategy blocked ({strategy_name}) — mean-reversion disabled in one-sided policy.")
+            await broadcast_log(
+                f"⏭️ Skipped {strategy_name}: fade/mean-reversion disabled (trend-only policy).",
+                "info", user_id=client.user_id,
+            )
+            return
+
+        # ═══════════════════════════════════════════
         # STRATEGY 2: Direct Option Trade (skip strike selection)
         # ═══════════════════════════════════════════
         if sig.get("is_direct_option"):
@@ -1121,6 +1168,15 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             entry_price = fresh_quote.get("lp", 0) if fresh_quote else 0
             if entry_price <= 0:
                 entry_price = strike_info.get("ltp", sig.get("entry_price", 180))
+
+            _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price)
+            if _chase:
+                logger.info(f"⏭️ Anti-chase: skip {strike_symbol} — {_chase_why}")
+                await broadcast_log(
+                    f"⏭️ Skipped {strike_symbol}: chasing local high ({_chase_why}). Wait for pullback.",
+                    "info", user_id=client.user_id,
+                )
+                return
 
             from engine.execution_gates import passes_microstructure_spread
 
@@ -1577,6 +1633,15 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 f"⚠️ Ignoring use_1m_option_candle high-entry for {strike_symbol} — "
                 f"keeping LTP ₹{entry_price} (buy-high disabled)"
             )
+
+        _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price)
+        if _chase:
+            logger.info(f"⏭️ Anti-chase: skip {strike_symbol} — {_chase_why}")
+            await broadcast_log(
+                f"⏭️ Skipped {strike_symbol}: chasing local high ({_chase_why}). Wait for pullback.",
+                "info", user_id=client.user_id,
+            )
+            return
 
         sl_data = await calculate_smart_sl(strike_symbol, entry_price, current_trend, client)
         sl_points = sl_data["sl_points"]

@@ -107,7 +107,18 @@ class TradingState:
         # Per-strategy paper execution while account stays live (shadow week).
         self.shadow_strategies: list[str] = []
         self.shadow_week_until: str = ""
-        self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"]
+        self.active_strategies = [
+            "Strategy 1: OB + FVG",
+            "Strategy 2: 9:26 - 180 Buy",
+            "Strategy 3: 5-Minute ORB",
+            "Strategy 4: Wisdom-Aligned Pullback",
+            # S5 Aerospace / S6 Gap Fill REMOVED from defaults — they fade one-sided markets
+            "Strategy 7: Swing-Pivot Breakout",
+            "Strategy 8: Smart Money Concepts",
+            "Strategy 9: 9-EMA Momentum Scalper",
+            "Strategy 10: Adaptive ADX Engine",
+            "Strategy 11: FRVP LVN Vacuum",
+        ]
         # Commodity strategies default OFF (owner stop-bleed 03-08-26). All-day ORB/9-EMA/Swing
         # on crude was buy-high → SL. Re-enable only after paper week; EIA/Evening are time-gated
         # in code if turned on manually.
@@ -287,6 +298,24 @@ class TradingState:
                             self.save()
                         except Exception:
                             pass
+                    # Strip fade strategies that fight one-sided markets (Gap / Aerospace mean-rev)
+                    _fade = {
+                        "Strategy 5: Optimized Aerospace Mean Reversion",
+                        "Strategy 6: Gap Fill Reversal",
+                    }
+                    _before_eq = list(getattr(self, "active_strategies", []) or [])
+                    if _before_eq:
+                        self.active_strategies = [s for s in _before_eq if s not in _fade]
+                        if _before_eq != self.active_strategies:
+                            print(
+                                f"🛡️ Stop-bleed: disabled fade strategies "
+                                f"{[s for s in _before_eq if s in _fade]}",
+                                flush=True,
+                            )
+                            try:
+                                self.save()
+                            except Exception:
+                                pass
                     _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
                     if _orphans:
                         self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
