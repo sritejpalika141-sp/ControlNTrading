@@ -11,18 +11,63 @@ from engine.ai_engine import AIEngine
 logger = logging.getLogger("NIGHTLY_LEARNING")
 IST = pytz.timezone('Asia/Kolkata')
 
-# ── SELF-TUNING (owner directive 30/31-07-26) ──
-# Reads REAL win-rates from the executed-trades ledger + 3-month 5-min market structure, and only
-# tunes a strategy with >= MIN_TRADES_FOR_LEARNING real closed trades. Auto-apply rails:
-#   • AUTO_APPLY_MINOR=True (owner directive 31-07-26): once a strategy has >=10 real trades, MINOR
-#     AI parameter changes (<=20% per-param swing) are applied automatically — no approval needed.
-#   • MAJOR changes (>20% swing on any param) STILL go PENDING/approval-required — a large live-money
-#     parameter jump should be eyeballed even in auto mode. Set REQUIRE_APPROVAL_FOR_MAJOR=False to
-#     auto-apply those too (not recommended).
+# ── SELF-TUNING (owner directive 30/31-07-26 + STRICT LOSS LEARNING 03-08-26) ──
+# Reads REAL results from the executed-trades ledger + 3-month 5-min market structure.
+# STRICT RULE (owner): losing trades ALWAYS force AI critique — even a single closed loss
+# bypasses MIN_TRADES_FOR_LEARNING. Aggregate-only tuning (no losses yet) still needs
+# >= MIN_TRADES_FOR_LEARNING closed trades so noise does not rewrite params.
+# Auto-apply rails:
+#   • AUTO_APPLY_MINOR=True: MINOR AI parameter changes (<=20% per-param swing) auto-apply
+#     when learning runs (loss-driven OR enough trades).
+#   • MAJOR changes (>20% swing) STILL go PENDING/approval-required unless
+#     REQUIRE_APPROVAL_FOR_MAJOR=False.
 SELF_TUNING_ENABLED = True
 AUTO_APPLY_MINOR = True
 REQUIRE_APPROVAL_FOR_MAJOR = True
 MIN_TRADES_FOR_LEARNING = 10
+# Max losing-trade rows injected into the AI prompt (keeps tokens bounded).
+MAX_LOSS_TRADES_IN_PROMPT = 25
+
+
+def _format_losing_trades_for_prompt(losing_trades: list) -> str:
+    """Compact, loss-first ledger dump for the nightly AI critique."""
+    if not losing_trades:
+        return "No closed losing trades in the lookback window."
+    lines = []
+    for i, t in enumerate(losing_trades, 1):
+        lines.append(
+            f"{i}. {t.get('trade_date','?')} {t.get('symbol','?')} "
+            f"{t.get('side','?')} qty={t.get('qty','?')} | "
+            f"entry ₹{float(t.get('entry_price') or 0):.2f} → exit ₹{float(t.get('exit_price') or 0):.2f} | "
+            f"PnL ₹{float(t.get('pnl') or 0):.2f} | "
+            f"SL pts={t.get('sl_points')} method={t.get('sl_method')} "
+            f"initial_sl={t.get('initial_sl_price')} final_sl={t.get('final_sl_price')} "
+            f"trails={t.get('sl_trail_count')} | "
+            f"regime={t.get('regime')} trend={t.get('trend')} | "
+            f"entry_reason={t.get('entry_reason') or '-'} | "
+            f"exit_reason={t.get('exit_reason') or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def should_run_self_tuning(total_trades: int, loss_count: int) -> tuple:
+    """Gate for nightly AI param changes.
+    Returns (should_run: bool, reason: str).
+    STRICT: any closed loss (loss_count >= 1) ALWAYS runs learning.
+    Without losses, require >= MIN_TRADES_FOR_LEARNING closed trades.
+    """
+    if not SELF_TUNING_ENABLED:
+        return False, "SELF_TUNING_ENABLED=False"
+    losses = int(loss_count or 0)
+    total = int(total_trades or 0)
+    if losses >= 1:
+        return True, f"STRICT loss-learning ({losses} closed losses)"
+    if total >= MIN_TRADES_FOR_LEARNING:
+        return True, f"aggregate tuning ({total} trades, 0 losses)"
+    return False, (
+        f"no losses and real trades={total} (need ≥{MIN_TRADES_FOR_LEARNING} "
+        "or ≥1 closed loss) — no AI param change"
+    )
 
 
 async def _build_market_context(user_id, days=90, lookback_trades_days=30):
@@ -209,11 +254,19 @@ async def run_nightly_learning(state, user_id: int):
             _p = perf.get(strat, {})
             total = int(_p.get('trades', 0))
             wins = int(_p.get('wins', 0))
+            losses = int(_p.get('losses', 0))
             win_rate = float(_p.get('win_rate', 0.0))
             avg_pnl = float(_p.get('avg_pnl', 0.0))
             total_pnl = float(_p.get('total_pnl', 0.0))
 
-            logger.info(f"📊 {strat} - Win Rate: {win_rate}% ({wins}/{total}, ₹{total_pnl:.0f}) | Status: {status} | Paper: {is_paper_trading}")
+            # Authoritative consecutive-loss streak from ledger (not the possibly-stale counter).
+            ledger_streak = await Database.compute_continuous_loss_streak(strat)
+            cfg['continuous_losses'] = ledger_streak
+
+            logger.info(
+                f"📊 {strat} - Win Rate: {win_rate}% ({wins}/{total}, losses={losses}, "
+                f"₹{total_pnl:.0f}) | streak={ledger_streak} | Status: {status} | Paper: {is_paper_trading}"
+            )
 
             # --- Automated Graduation ---
             if is_paper_trading == 1 and total >= 10 and win_rate >= 65.0:
@@ -228,37 +281,78 @@ async def run_nightly_learning(state, user_id: int):
                     status=status,
                     pending_config_json=cfg.get('pending_config_json'),
                     is_paper_trading=0,
-                    continuous_losses=cfg.get('continuous_losses', 0),
+                    continuous_losses=ledger_streak,
                     asset_class=cfg.get('asset_class', 'EQUITY')
                 )
                 
             # --- Auto-Reenable DISABLED Strategies ---
+            # Only re-enable when the ledger streak is broken (no active consecutive losses).
+            # If still bleeding, keep DISABLED and still run loss-learning below.
             if status == 'DISABLED':
-                logger.info(f"🔧 Diagnosing and Re-enabling DISABLED strategy: {strat}")
-                # We will let the AI critique it below, and then reset it to APPROVED
-                cfg['status'] = 'APPROVED'
-                cfg['continuous_losses'] = 0
+                if ledger_streak == 0:
+                    logger.info(f"🔧 Re-enabling DISABLED strategy (loss streak cleared): {strat}")
+                    cfg['status'] = 'APPROVED'
+                    cfg['continuous_losses'] = 0
+                else:
+                    logger.info(
+                        f"🟥 Keeping {strat} DISABLED — ledger streak={ledger_streak}; "
+                        "STRICT loss-learning will still critique losing trades."
+                    )
 
-            # AI Critique (Self-Improvement). Runs only with REAL data and only PROPOSES (PENDING).
-            if not SELF_TUNING_ENABLED or total < MIN_TRADES_FOR_LEARNING:
-                logger.info(f"🧊 Self-tuning skipped for {strat}: enabled={SELF_TUNING_ENABLED}, "
-                            f"real trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change.")
+            # Sync continuous_losses onto the config row even when we skip AI (keeps dashboard truthful).
+            try:
+                await Database.update_agent_config(
+                    strategy_name=strat,
+                    config_dict=cfg.get('config_json', {}) if isinstance(cfg.get('config_json'), dict)
+                    else (cfg.get('config_json') or {}),
+                    win_rate=win_rate,
+                    total_trades=total,
+                    winning_trades=wins,
+                    status=cfg.get('status', status),
+                    pending_config_json=cfg.get('pending_config_json'),
+                    is_paper_trading=cfg.get('is_paper_trading', is_paper_trading),
+                    continuous_losses=ledger_streak,
+                    asset_class=cfg.get('asset_class', 'EQUITY'),
+                )
+            except Exception as _sync_e:
+                logger.warning(f"continuous_losses sync failed for {strat}: {_sync_e}")
+
+            # AI Critique — STRICT: any closed loss forces learning.
+            run_tune, tune_reason = should_run_self_tuning(total, losses)
+            if not run_tune:
+                logger.info(f"🧊 Self-tuning skipped for {strat}: {tune_reason}")
                 continue
+            logger.info(f"🧠 Self-tuning for {strat}: {tune_reason}")
+
+            losing_trades = await Database.get_losing_trades(
+                days=30, strategy_name=strat, limit=MAX_LOSS_TRADES_IN_PROMPT
+            )
+            loss_block = _format_losing_trades_for_prompt(losing_trades)
             market_regime = getattr(state, "market_regime", "NEUTRAL")
 
             prompt = f"""
-            You are a Quantitative Trading AI reviewing REAL trade results (not a simulation).
+            You are a Quantitative Trading AI. Your PRIMARY job is to LEARN FROM LOSING TRADES.
             Strategy: '{strat}', recent market regime: '{market_regime}'.
-            Real performance over the last 30 days (from the executed-trades ledger):
-              - trades: {total}, win rate: {win_rate}%, total P&L: ₹{total_pnl:.0f}, avg P&L/trade: ₹{avg_pnl:.0f}.
-            3-MONTH 5-MINUTE chart statistics for the underlyings this strategy traded (trend,
-            volatility, daily range, up/down day mix, position in range):
+
+            Real performance over the last 30 days (executed-trades ledger):
+              - trades: {total}, wins: {wins}, LOSSES: {losses}, win rate: {win_rate}%
+              - total P&L: ₹{total_pnl:.0f}, avg P&L/trade: ₹{avg_pnl:.0f}
+              - continuous loss streak (newest → older): {ledger_streak}
+
+            STRICT LOSS REVIEW — analyze EACH losing trade below. Identify root causes
+            (chased entry, late breakout, fade-into-trend, stop too tight/wide, wrong regime,
+            bad exit reason). Parameter changes MUST be justified by these losses.
+            Prefer FEWER LOSSES over more wins.
+
+            LOSING TRADES (newest first):
+            {loss_block}
+
+            3-MONTH 5-MINUTE chart statistics for underlyings traded:
             {candle_context}
 
-            Using the win rate, the P&L, and the 3-month 5-minute market structure above, suggest optimized
-            hyperparameters for tomorrow to improve profitability (fewer losses is preferred over more
-            wins). Return ONLY a valid JSON object with parameters like 'ema_period',
-            'breakout_threshold', 'stop_loss_pct'. Example: {{"ema_period": 10, "stop_loss_pct": 0.5}}
+            Return ONLY a valid JSON object with hyperparameters to reduce future losses
+            (e.g. 'ema_period', 'breakout_threshold', 'stop_loss_pct', 'entry_chase_buffer_pct').
+            Example: {{"ema_period": 10, "stop_loss_pct": 0.5, "entry_chase_buffer_pct": 0.3}}
             """
             
             try:
@@ -308,7 +402,7 @@ async def run_nightly_learning(state, user_id: int):
                                 status='PENDING',
                                 pending_config_json=json_str,
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
-                                continuous_losses=cfg.get('continuous_losses', 0),
+                                continuous_losses=ledger_streak,
                                 asset_class=cfg.get('asset_class', 'EQUITY')
                             )
                             await Database.insert_pending_tuning(
@@ -333,7 +427,7 @@ async def run_nightly_learning(state, user_id: int):
                                 status=cfg['status'],
                                 pending_config_json=cfg.get('pending_config_json'),
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
-                                continuous_losses=cfg.get('continuous_losses', 0),
+                                continuous_losses=ledger_streak,
                                 asset_class=cfg.get('asset_class', 'EQUITY')
                             )
                             msg = f"<b>Minor Optimization Applied</b>\nStrategy: <i>{strat}</i>\nNew Config: <code>{json_str}</code>"
@@ -350,7 +444,7 @@ async def run_nightly_learning(state, user_id: int):
                                 status='PENDING',
                                 pending_config_json=json_str,
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
-                                continuous_losses=cfg.get('continuous_losses', 0),
+                                continuous_losses=ledger_streak,
                                 asset_class=cfg.get('asset_class', 'EQUITY')
                             )
                             await Database.insert_pending_tuning(
@@ -359,14 +453,18 @@ async def run_nightly_learning(state, user_id: int):
                                 old_val=json.dumps(old_config),
                                 proposed_val=json_str,
                                 expectancy_delta=0.0,
-                                reason="Minor optimization proposed by Nightly Learning"
+                                reason="Loss-driven / minor optimization proposed by Nightly Learning"
                             )
-                            msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades. Approve on the Dashboard to apply."
+                            msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades ({losses} losses). Approve on the Dashboard to apply."
                             await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Proposal (Pending)")
                         
                         analysis_text = response.replace(json_str, "").strip()
                         if not analysis_text:
-                            analysis_text = f"Analyzed {strat} in {market_regime} regime. Optimized hyperparameters based on mathematical patterns to improve future win rate."
+                            analysis_text = (
+                                f"STRICT loss review for {strat} in {market_regime}: "
+                                f"{losses} losses / {total} trades (streak={ledger_streak}). "
+                                f"Parameters tuned to reduce repeat losses."
+                            )
                         
                         await Database.insert_learning_log(
                             strategy_name=strat,
@@ -396,10 +494,16 @@ async def run_nightly_learning(state, user_id: int):
                 ai = AIEngine()
                 com_prompt = f"""
                 You are a Quantitative Commodity (MCX) options-trading AI.
+                PRIMARY JOB: learn from LOSING trades.
                 Today the commodity strategy family took {len(com_trades)} paper trades with a {wr}% win rate.
+                Losing trades today: {json.dumps([
+                    {"symbol": t.get("symbol"), "pnl": t.get("pnl")}
+                    for t in com_trades
+                    if (t.get("pnl", 0) or 0) < 0 or t.get("result") == "loss"
+                ], default=str)}.
                 Current commodity parameters: {json.dumps(cur_params)}.
-                Crude/commodity options move ~2-4% intraday (vs index <1%). Suggest refined multipliers to
-                improve tomorrow's win rate. Return ONLY JSON like
+                Crude/commodity options move ~2-4% intraday (vs index <1%). Suggest refined multipliers that
+                REDUCE FUTURE LOSSES. Return ONLY JSON like
                 {{"sl_multiplier": 1.8, "target_multiplier": 2.0, "breakout_buffer_mult": 1.6}}.
                 Keep each value between 1.0 and 3.0.
                 """

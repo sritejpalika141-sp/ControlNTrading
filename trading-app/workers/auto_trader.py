@@ -317,7 +317,18 @@ async def trailing_monitor():
                                 )
                             except Exception as _e:
                                 logger.error(f"Catastrophic force-close error for {sym}: {_e}")
-                            state.record_trade_close("loss", pos={"side": side, "symbol": sym}, exit_price=_fltp, pnl=_fmtm, reason="Catastrophic SL-failure force-close")
+                            _cat_strat = ""
+                            try:
+                                _at = next((t for t in state.active_auto_trades if t.get("symbol") == sym), None)
+                                _cat_strat = (_at or {}).get("strategy", "") or ""
+                            except Exception:
+                                _cat_strat = ""
+                            state.record_trade_close(
+                                "loss",
+                                pos={"side": side, "symbol": sym, "strategy": _cat_strat},
+                                exit_price=_fltp, pnl=_fmtm,
+                                reason="Catastrophic SL-failure force-close",
+                            )
                             state.remove_active_trade(sym)
                             state.save()
 
@@ -696,7 +707,12 @@ async def trailing_monitor():
                                 if exit_res.get("success"):
                                     trade_pnl = (ltp - entry) if side == "BUY" else (entry - ltp)
                                     result_type = "profit" if trade_pnl > 0 else "loss"
-                                    state.record_trade_close(result_type, pos={"side": side, "symbol": sym}, exit_price=ltp, pnl=trade_pnl, reason="Strategy 3 Target Hit")
+                                    state.record_trade_close(
+                                        result_type,
+                                        pos={"side": side, "symbol": sym, "strategy": t.get("strategy", "")},
+                                        exit_price=ltp, pnl=trade_pnl,
+                                        reason="Strategy 3 Target Hit",
+                                    )
                                     await broadcast_log(f"✅ Strategy 3 exit at ₹{ltp}. ⏳ Cooldown: {3 if result_type == 'profit' else 5} minutes.", "success", user_id=u_id, telegram_alert=True)
                                     state.remove_active_trade(sym)
                                 else:

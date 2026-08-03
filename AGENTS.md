@@ -723,6 +723,13 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
 
+**LOCKED — STRICT learn from losing trades:**
+- Nightly self-tuning (`engine/nightly_learning.py`) **always** runs AI critique when a strategy has ≥1 CLOSED loss in the ledger — even if total trades < `MIN_TRADES_FOR_LEARNING` (10). Aggregate-only tuning (0 losses) still needs ≥10 trades.
+- Prompt injects each losing trade (entry/exit/SL/regime/exit_reason) via `Database.get_losing_trades`.
+- `continuous_losses` syncs from ledger streak (`compute_continuous_loss_streak`); breakeven does **not** inflate the streak; 3 consecutive losses still DISABLED.
+- Close paths must pass `strategy` on `record_trade_close` (catastrophic / S3 target fixed); swarm fallback looks up OPEN ledger strategy.
+- Tests: `tests/test_strict_loss_learning.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):
