@@ -20,7 +20,7 @@ def test_gap_constant_is_half():
 def test_compute_sl_limit_price_close_long():
     # SELL to close → limit 0.5 below trigger
     assert compute_sl_limit_price(100.0, exit_side=-1) == 99.5
-    assert abs(compute_sl_limit_price(257.75, exit_side=-1) - 257.25) < 0.001
+    assert abs(compute_sl_limit_price(257.8, exit_side=-1, symbol="MCX:X") - 257.3) < 0.001
 
 
 def test_compute_sl_limit_price_close_short():
@@ -35,7 +35,7 @@ def test_place_stop_loss_uses_half_gap():
     client._is_success = MagicMock(return_value=True)
     client.client.place_order = MagicMock(return_value={"s": "ok", "id": "SL1", "code": 1101})
 
-    # entry 292.9, sl_points 4.9 → trigger 288.0, limit 287.5
+    # entry 292.9, sl_points 4.9 → trigger ~288.0, limit ~287.5
     res = FyersClient._place_stop_loss(
         client, "NSE:NIFTY25AUG24000CE", 25, "BUY", 292.9, sl_points=4.9, product="INTRADAY"
     )

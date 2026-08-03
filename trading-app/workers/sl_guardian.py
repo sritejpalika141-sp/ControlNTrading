@@ -27,8 +27,10 @@ logger = logging.getLogger("SL_GUARDIAN")
 IST = pytz.timezone("Asia/Kolkata")
 
 GUARDIAN_INTERVAL = 10          # seconds between scans
-_PLACED_COOLDOWN = 45           # don't retry the same symbol within N seconds of a placement attempt
-_recent_attempts = {}           # symbol -> last attempt epoch (avoids double-fire before orderbook updates)
+_PLACED_COOLDOWN_OK = 45        # after a successful protective place
+_PLACED_COOLDOWN_FAIL = 8       # retry faster when placement failed (naked risk)
+_recent_attempts = {}           # symbol -> last attempt epoch
+_recent_attempt_ok = {}         # symbol -> bool last attempt succeeded
 
 
 def _has_active_stop(orders, symbol) -> bool:
@@ -95,8 +97,9 @@ async def sl_guardian():
                             continue
                         if _has_active_stop(orders, sym):
                             continue  # already protected — nothing to do
-                        # Cooldown: we just tried this symbol; give the orderbook time to reflect it.
-                        if now - _recent_attempts.get(sym, 0) < _PLACED_COOLDOWN:
+                        # Cooldown: shorter after failure so a naked MCX position is retried quickly.
+                        _cd = _PLACED_COOLDOWN_OK if _recent_attempt_ok.get(sym) else _PLACED_COOLDOWN_FAIL
+                        if now - _recent_attempts.get(sym, 0) < _cd:
                             continue
 
                         qty = abs(int(p.get("qty", 0) or 0))
@@ -119,6 +122,7 @@ async def sl_guardian():
                                                        client._position_product(p) or client.resolve_exit_product(sym, "INTRADAY"))
                         ok = isinstance(res, dict) and (res.get("s") == "ok" or res.get("id"))
                         oid = (res or {}).get("id", "")
+                        _recent_attempt_ok[sym] = bool(ok)
                         if ok:
                             logger.warning(f"🛡️ Guardian placed protective SL for {sym} @ {stop} (id {oid}).")
                             # Register the SL id on the tracked trade so trailing_monitor trails it.

@@ -38,7 +38,7 @@ from engine.strikes import get_strike_recommendations
 from engine.ws_feed import ws_feed
 from engine.risk_orchestrator import orchestrator as risk_orchestrator
 from datetime import timedelta
-from fyers_client import compute_sl_limit_price
+from fyers_client import compute_sl_limit_price, get_price_tick, round_to_tick
 
 # B1: how long a previously-open position must stay absent from the broker feed before the
 # monitor treats it as closed (feed omission). Long enough to ride out a transient/partial
@@ -727,14 +727,14 @@ async def trailing_monitor():
 
                                     # Trail SL up if the new swing low is higher than current SL and below LTP
                                     if lowest_low > current_sl_price and lowest_low < ltp:
-                                        new_sl_price = round(round(lowest_low / 0.05) * 0.05, 2)
+                                        new_sl_price = round_to_tick(lowest_low, get_price_tick(sym))
                                         trail_msg = "Global 3-Candle Trailing"
                                         logger.info(f"🚀 {trail_msg} Milestone Hit for {sym}! LTP: {ltp} | New Low: {lowest_low}")
                                         
                                         if t.get("sl_order_id"):
                                             o_type = t.get("sl_order_type", 4)
                                             # Owner rule: SL-L limit is exactly 0.5 below trigger (close long)
-                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=-1) if o_type == 4 else 0
+                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=-1, symbol=sym) if o_type == 4 else 0
                                             mod_res = await asyncio.to_thread(
                                                 client.modify_order,
                                                 order_id=t["sl_order_id"],
@@ -765,14 +765,14 @@ async def trailing_monitor():
                                         
                                     # Trail SL down if new swing high is lower than current SL
                                     if highest_high < current_sl_price and highest_high > ltp:
-                                        new_sl_price = round(round(highest_high / 0.05) * 0.05, 2)
+                                        new_sl_price = round_to_tick(highest_high, get_price_tick(sym))
                                         trail_msg = "Global 3-Candle Trailing"
                                         logger.info(f"🚀 [SELL] {trail_msg} Milestone Hit for {sym}! LTP: {ltp} | New High: {highest_high}")
                                         
                                         if t.get("sl_order_id"):
                                             o_type = t.get("sl_order_type", 4)
                                             # Owner rule: SL-L limit is exactly 0.5 above trigger (close short)
-                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=1) if o_type == 4 else 0
+                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=1, symbol=sym) if o_type == 4 else 0
                                             mod_res = await asyncio.to_thread(
                                                 client.modify_order,
                                                 order_id=t["sl_order_id"],
@@ -1261,9 +1261,20 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                     "success"
                 )
                 logger.info(f"✅ {strategy_name} trade executed: {result}")
+                if not result.get("sl_order_id"):
+                    logger.error(f"🚨 CRITICAL: {strategy_name} trade WITHOUT Stop Loss! {strike_symbol}")
+                    await broadcast_log(
+                        f"🚨 CRITICAL: Trade {strike_symbol} has NO STOP LOSS! Square off or place SL manually NOW. Msg: {result.get('message', '')}",
+                        "error", user_id=client.user_id, telegram_alert=True
+                    )
             else:
                 logger.error(f"❌ {strategy_name} trade failed: {result.get('message', 'Unknown')}")
                 await broadcast_log(f"❌ {strategy_name} failed: {result.get('message', '')}", "error", user_id=client.user_id)
+                if result.get("emergency_exit"):
+                    await broadcast_log(
+                        f"🚨 Entry for {strike_symbol} was squared off because SL could not be placed — capital protected.",
+                        "error", user_id=client.user_id, telegram_alert=True
+                    )
             return  # Exit — Strategy 2 is done
 
         # ═══════════════════════════════════════════

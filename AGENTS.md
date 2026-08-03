@@ -705,6 +705,7 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 - Rule: BUY option stop = **lowest of last 3 candles on the 1‑min OPTION chart**. Trail only **raises** that stop. Initial distance = `entry − that low`.
 - SL-Limit orders: **trigger vs limit gap = 0.5 only** (`stopPrice − limitPrice = 0.5` when closing a long). Helper: `fyers_client.compute_sl_limit_price`. Applied at place + trail modify.
+- **MCX/CDS tick = 0.1** (NSE = 0.05). Wrong tick was rejecting crude SL while entry filled (naked risk). If SL-L still fails → retry SL-M → **emergency square-off** (never hold unprotected options). Guardian retries naked positions every ~8s on failure.
 - Same logic for Strategy 1–11, ORB, 9:26, Wisdom, Aerospace, Gap Fill, crude/EIA, commodity — signal `sl_points` (20pts, 50% premium, ORB width, −2/VIX clamps, etc.) are **ignored at placement**.
 - Banned overrides (removed): Strategy 1 Variant‑L 1R trail, Strategy 3/9 T1‑breakeven trail + skip‑global‑trail `continue`, Strategy 5/6 FVL+ATR trail, Strategy 1 −2/VIX/10–20 clamp, SL Guardian 12% floor.
 - Allowed separately: hard time exits (S5 bars / S6 13:30) and ORB T2 profit-target **exit** (not trail). Manual broker SL tighten is still respected (trail never loosens).
