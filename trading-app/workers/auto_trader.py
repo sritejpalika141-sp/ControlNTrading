@@ -1852,7 +1852,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             await broadcast_log(f"🛑 Insufficient balance: {strike_symbol} needs ₹{_req:.0f}, have ₹{_av:.0f} — trade skipped.", "error", user_id=client.user_id)
             return
 
-        logger.info(f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points} ({sl_method}) | TGT: {target_points} | Regime: {'TRENDING (CO)' if is_trending else 'RANGE (BO)'}")
+        logger.info(f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points} ({sl_method}) | TGT: {target_points} | Product: INTRADAY")
         await broadcast_log(
             f"🚀 AUTO-TRADE: {sig['type']} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts | TGT: {target_points}pts | Method: {sl_method}",
             "success"
