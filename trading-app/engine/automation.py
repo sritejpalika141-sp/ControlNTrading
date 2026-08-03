@@ -153,6 +153,15 @@ class TradingState:
         # workers/auto_trader.py.
         self.crude_pending_order = None
 
+        # Shadow-trade simulation state (03-08-26 fix): a strategy listed in shadow_strategies gets
+        # its signals recorded here instead of placed at the broker — a fully isolated simulation
+        # (never touches paper_positions/paper_orders/active_auto_trades, never calls
+        # client.place_order) so it cannot cross-contaminate real trades or the existing
+        # paper-trading account state. Lets a strategy accumulate real market-reactive
+        # executed_trades ledger rows, risk-free, toward nightly_learning's data threshold. See
+        # execute_auto_trade() / check_shadow_trades() in workers/auto_trader.py.
+        self.shadow_trades = []
+
         # Pre-Market AI Oracle State
         self.use_ai_oracle = False
         self.ai_daily_bias = ""
@@ -250,6 +259,7 @@ class TradingState:
                         self.strat_7_was_stopout = data.get("strat_7_was_stopout", False)
                         self.strat_7_awaiting_confirmation = data.get("strat_7_awaiting_confirmation", None)
                         self.crude_pending_order = data.get("crude_pending_order", None)
+                        self.shadow_trades = data.get("shadow_trades", [])
 
                         self.use_ai_oracle = data.get("use_ai_oracle", False)
                         self.ai_daily_bias = data.get("ai_daily_bias", "")
@@ -352,6 +362,7 @@ class TradingState:
             "strat_7_was_stopout": getattr(self, "strat_7_was_stopout", False),
             "strat_7_awaiting_confirmation": getattr(self, "strat_7_awaiting_confirmation", None),
             "crude_pending_order": getattr(self, "crude_pending_order", None),
+            "shadow_trades": getattr(self, "shadow_trades", []),
             "strat_10_trades_today": getattr(self, "strat_10_trades_today", 0),
             "strat_9_trades_today": getattr(self, "strat_9_trades_today", 0),
             "strat_9_consec_sl": getattr(self, "strat_9_consec_sl", 0),

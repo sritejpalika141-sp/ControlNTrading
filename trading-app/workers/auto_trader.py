@@ -1159,6 +1159,41 @@ async def _record_entry_to_ledger(client, underlying, strike_symbol, side, qty, 
         logger.warning(f"ledger entry-record skipped for {strike_symbol}: {e}")
 
 
+async def _execute_shadow_trade(client, state, strategy_name, strike_symbol, entry_price, sl_points,
+                                 sl_method, target_points, qty, underlying, regime, trend, entry_reason=""):
+    """SHADOW MODE (03-08-26): records a shadow-listed strategy's signal as a fully SIMULATED trade.
+    Writes the ENTRY ledger row directly and tracks it in state.shadow_trades for
+    check_shadow_trades() to close later — it NEVER calls client.place_order and NEVER touches
+    active_auto_trades / paper_positions / paper_orders, so it cannot cross-contaminate real trades,
+    the account's live/paper broker state, or any of the real order-management systems (SL Guardian,
+    trailing_monitor, the position-cleanup loop). Purpose: let a strategy with no real track record
+    yet accumulate genuine market-reactive executed_trades ledger rows, risk-free, toward
+    nightly_learning's MIN_TRADES_FOR_LEARNING gate."""
+    try:
+        now = datetime.now(IST)
+        sl_price = round(entry_price - sl_points, 2)
+        target_price = round(entry_price + target_points, 2) if target_points else None
+        await _record_entry_to_ledger(
+            client, underlying, strike_symbol, "BUY", qty, entry_price, sl_points, sl_method,
+            target_points, "SHADOW", regime, trend, f"SHADOW-{int(now.timestamp())}", strategy_name,
+            entry_reason=f"[SHADOW] {entry_reason}")
+        state.shadow_trades.append({
+            "symbol": strike_symbol, "underlying": underlying, "strategy": strategy_name,
+            "side": "BUY", "entry_price": entry_price, "sl_price": sl_price,
+            "target_price": target_price, "qty": qty, "entry_time": now.timestamp(),
+        })
+        state.save()
+        logger.info(f"👻 SHADOW TRADE: {strategy_name} BUY {strike_symbol} @ ₹{entry_price} | "
+                    f"SL ₹{sl_price} | TGT {f'₹{target_price}' if target_price else 'none'} — "
+                    f"simulated, no real order placed.")
+        await broadcast_log(
+            f"👻 Shadow (paper): {strategy_name} BUY {strike_symbol} @ ₹{entry_price} — no real order placed.",
+            "info", user_id=client.user_id,
+        )
+    except Exception as e:
+        logger.error(f"Shadow trade recording failed for {strike_symbol}: {e}")
+
+
 async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
     """Execute an automated trade based on confirmed signal with smart SL.
     POLICY: Only BUY trades on CE/PE options. SELL trades are blocked."""
@@ -1828,6 +1863,20 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             await broadcast_log(f"⏭️ Skipped {strike_symbol}: {_qreason}.", "info", user_id=client.user_id)
             return
 
+        # SHADOW MODE (03-08-26): a strategy on state.shadow_strategies records this as a fully
+        # simulated trade (ledger entry + state.shadow_trades) and returns here — it never reaches
+        # the broker. See _execute_shadow_trade()/check_shadow_trades() for why this is isolated
+        # from real order management rather than reusing the account-wide paper_trading toggle.
+        if state.is_shadow_strategy(sig.get("strategy", "")):
+            await _execute_shadow_trade(
+                client, state, strategy_name=sig.get("strategy", ""), strike_symbol=strike_symbol,
+                entry_price=entry_price, sl_points=sl_points, sl_method=sl_method,
+                target_points=target_points, qty=qty, underlying=symbol,
+                regime=getattr(state, "market_regime", "NEUTRAL"), trend=current_trend,
+                entry_reason=sig.get("reason", "") or sig.get("signal_reason", ""),
+            )
+            return
+
         # FINAL BALANCE GATE — do not send if the broker can't afford this exact order.
         _ok, _req, _av = await _affordable_to_place(client, strike_symbol, qty, "BUY", product_type, entry_price, sl_points)
         if not _ok:
@@ -1954,6 +2003,48 @@ async def automation_loop():
     logger.info("🤖 Automation Loop Started (VIBE Swarm Mode - Concurrent).")
     
     # Helper Tasks for Concurrent Execution
+    async def check_shadow_trades(client, state, u_id):
+        """SHADOW MODE (03-08-26): closes simulated trades (from _execute_shadow_trade) when price
+        crosses SL/target, or force-closes after a max hold window so nothing lingers untracked
+        forever. Fully self-contained — only ever reads/writes state.shadow_trades and the ledger,
+        never touches the broker, active_auto_trades, or paper_positions/paper_orders."""
+        shadow_trades = getattr(state, "shadow_trades", None)
+        if not shadow_trades:
+            return
+        MAX_SHADOW_HOLD_SECONDS = 6 * 3600  # generous — covers any single session incl. crude evening
+        from models import Database
+        now_ts = datetime.now(IST).timestamp()
+        remaining = []
+        changed = False
+        for t in shadow_trades:
+            try:
+                sym = t["symbol"]
+                quote = await api_queue.enqueue(3, client.get_quote, sym)
+                ltp = float(quote.get("lp", 0)) if quote else 0.0
+                exit_price = None
+                exit_reason = None
+                if ltp > 0 and ltp <= t["sl_price"]:
+                    exit_price, exit_reason = ltp, "Shadow SL hit"
+                elif ltp > 0 and t.get("target_price") and ltp >= t["target_price"]:
+                    exit_price, exit_reason = ltp, "Shadow target hit"
+                elif now_ts - t.get("entry_time", now_ts) > MAX_SHADOW_HOLD_SECONDS:
+                    exit_price = ltp if ltp > 0 else t["entry_price"]
+                    exit_reason = "Shadow max-hold timeout"
+                if exit_price is not None:
+                    pnl = round((exit_price - t["entry_price"]) * t.get("qty", 0), 2)
+                    ok = await Database.record_trade_exit(sym, exit_price, pnl, exit_reason, user_id=u_id)
+                    logger.info(f"👻 SHADOW CLOSE: {t.get('strategy')} {sym} @ ₹{exit_price} "
+                                f"| PnL ₹{pnl:.2f} ({exit_reason}) | ledger={'ok' if ok else 'no OPEN row found'}")
+                    changed = True
+                else:
+                    remaining.append(t)
+            except Exception as _te:
+                logger.error(f"Shadow trade check failed for {t.get('symbol')}: {_te}")
+                remaining.append(t)
+        if changed:
+            state.shadow_trades = remaining
+            state.save()
+
     async def eval_strat_2(client, state, u_id):
         try:
             analysis_nifty = await get_analysis("NSE:NIFTY50-INDEX", client=client)
@@ -2370,7 +2461,8 @@ async def automation_loop():
                 tasks = [
                     eval_strat_2(client, state, u_id),
                     eval_strat_3(client, state, u_id),
-                    eval_strat_5(client, state, u_id)
+                    eval_strat_5(client, state, u_id),
+                    check_shadow_trades(client, state, u_id),
                 ]
                 
                 for symbol in state.active_symbols:
@@ -2383,7 +2475,15 @@ async def automation_loop():
                 MAX_CYCLE_SECS = 180  # 3 minutes max per cycle
                 _cycle_t0 = time.time()
                 try:
-                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=MAX_CYCLE_SECS)
+                    # return_exceptions=True (03-08-26 hardening): every task here already has its
+                    # own top-level try/except, so this is defense-in-depth only — without it, a
+                    # future task added to this list without its own guard could silently cancel
+                    # every other strategy AND every symbol's entire evaluation for the whole cycle
+                    # (exactly the class of bug found and fixed elsewhere today).
+                    _results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=MAX_CYCLE_SECS)
+                    for _r in _results:
+                        if isinstance(_r, Exception):
+                            logger.error(f"Automation cycle task error for user {u_id}: {_r}")
                 except asyncio.TimeoutError:
                     logger.warning(
                         f"⏱️ Automation cycle TIMEOUT after {MAX_CYCLE_SECS}s for user {u_id} "
