@@ -83,8 +83,25 @@ async def sl_guardian():
                     # entry is a stale phantom blocking its strategy from re-entering). Grace period
                     # guards against transient feed blips.
                     _dropped = st.reconcile_active_trades({p.get("symbol") for p in open_pos})
-                    if _dropped:
-                        logger.warning(f"🧹 Guardian reconciled stale trades (position closed): {_dropped}")
+                    for _t in _dropped:
+                        _sym = _t.get("symbol")
+                        # 03-08-26 fix: reconcile_active_trades only used to silently drop the entry
+                        # here — no exit_price/pnl was ever recorded, so the executed_trades ledger
+                        # kept the row OPEN forever and loss_trades_today never incremented, even
+                        # though the position had genuinely closed (real money, real loss/win) at the
+                        # broker. Recover the real P&L the same way auto_trader's own cleanup loop
+                        # does (Issue 3 fix) and record the close properly exactly once.
+                        try:
+                            from workers.auto_trader import _recover_closed_pnl
+                            _pnl, _exit_px, _src = await _recover_closed_pnl(client, _sym)
+                        except Exception as _e:
+                            logger.error(f"🛡️ Guardian: PnL recovery failed for {_sym}: {_e}")
+                            _pnl, _exit_px, _src = 0.0, 0.0, "unknown"
+                        _result = "profit" if _pnl > 0 else "loss" if _pnl < 0 else "breakeven"
+                        _pos_info = {"side": _t.get("side", "BUY"), "symbol": _sym, "strategy": _t.get("strategy", "")}
+                        st.record_trade_close(result=_result, pos=_pos_info, exit_price=_exit_px, pnl=_pnl,
+                                               reason=f"Guardian reconcile — broker feed confirms closed (source={_src})")
+                        logger.warning(f"🧹 Guardian reconciled stale trade {_sym}: recovered PnL ₹{_pnl:.2f} (source={_src}) and recorded close.")
                     if not open_pos:
                         continue
                     _scanned += len(open_pos)

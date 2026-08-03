@@ -30,6 +30,9 @@ pytz
 pyyaml>=5.1
 aiosqlite==0.20.0
 
+# Data analysis (Strategy 7 swing-pivot, backtesting, chart generation)
+pandas>=2.0.0
+
 # Ultra-Low Latency optimizations
 uvloop>=0.21.0
 orjson>=3.10.0

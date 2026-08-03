@@ -607,7 +607,10 @@ class TradingState:
         Crude were all frozen this way). This reconciler compares tracked trades against the broker's
         actual open positions and removes any that have been missing beyond a grace period. The grace
         (per-entry `_missing_since` stamp) prevents a transient feed blip from clearing a live trade.
-        Returns the list of removed symbols."""
+        Returns the list of removed trade dicts (NOT just symbols — 03-08-26 fix: callers need
+        entry_price/side/strategy to recover the real P&L and call record_trade_close(), otherwise
+        the trade vanishes from the executed_trades ledger and loss_trades_today with no outcome
+        ever recorded, even though the position genuinely closed and the broker-side PnL is real)."""
         import time as _t
         now = _t.time()
         open_set = set(open_symbols or [])
@@ -623,7 +626,7 @@ class TradingState:
                     t["_missing_since"] = now    # first time seen missing → start grace, keep
                     kept.append(t)
                 elif now - first_missing >= grace_seconds:
-                    removed.append(sym)          # missing beyond grace → drop the phantom
+                    removed.append(t)            # missing beyond grace → drop the phantom
                 else:
                     kept.append(t)               # still within grace
         if removed:

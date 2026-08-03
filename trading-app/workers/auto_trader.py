@@ -2140,10 +2140,21 @@ async def automation_loop():
                 except Exception as _ce:
                     logger.error(f"Crude strategy error for {symbol}: {_ce}")
 
-            # Execute all symbol-level strategies simultaneously
+            # Execute all symbol-level strategies simultaneously. return_exceptions=True is required
+            # here (03-08-26 fix): without it, ANY single strategy raising (e.g. a missing dependency
+            # inside one strategy module, as happened with Strategy 7 / pandas) aborts the whole
+            # gather() and silently skips EVERY other strategy for this symbol on this tick too —
+            # not just the one that failed.
             import asyncio
-            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_11(), run_strat_1(), run_crude_strats())
-            
+            _strat_names = ["Strategy 4", "Strategy 6", "Strategy 7", "Strategy 8", "Strategy 9", "Strategy 10", "Strategy 11", "Strategy 1", "Crude strats"]
+            _results = await asyncio.gather(
+                run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_11(), run_strat_1(), run_crude_strats(),
+                return_exceptions=True
+            )
+            for _name, _res in zip(_strat_names, _results):
+                if isinstance(_res, Exception):
+                    logger.error(f"{_name} error for {symbol}: {_res}")
+
         except Exception as e:
             logger.error(f"Error in Symbol loop for {symbol}: {e}")
 
