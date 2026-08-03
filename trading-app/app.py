@@ -2992,6 +2992,46 @@ async def get_orders(request: Request):
     return await api_queue.enqueue(1, client.get_orders)
 
 
+@app.get("/api/nightly-learning-status")
+async def get_nightly_learning_status(request: Request):
+    """Real per-strategy progress toward nightly_learning's MIN_TRADES_FOR_LEARNING gate (03-08-26)
+    — lets progress be checked anytime without querying the DB by hand. Reuses the exact same
+    Database calls nightly_learning.py itself uses, so these numbers always match what it will
+    actually decide when it runs."""
+    client = await get_current_client(request)
+    state = get_user_state(client.user_id)
+    from engine.nightly_learning import MIN_TRADES_FOR_LEARNING, SELF_TUNING_ENABLED
+
+    all_strategies = await Database.get_all_agent_configs()
+    perf = await Database.get_strategy_performance(days=30)
+
+    rows = []
+    for cfg in all_strategies:
+        strat = cfg.get("strategy_name")
+        if not strat:
+            continue
+        p = perf.get(strat, {})
+        trades = int(p.get("trades", 0))
+        rows.append({
+            "strategy": strat,
+            "real_closed_trades": trades,
+            "wins": int(p.get("wins", 0)),
+            "losses": int(p.get("losses", 0)),
+            "win_rate": p.get("win_rate", 0.0),
+            "total_pnl": p.get("total_pnl", 0.0),
+            "trades_needed": max(0, MIN_TRADES_FOR_LEARNING - trades),
+            "ready_for_tuning": trades >= MIN_TRADES_FOR_LEARNING,
+        })
+    rows.sort(key=lambda r: r["real_closed_trades"], reverse=True)
+
+    return {
+        "min_trades_for_learning": MIN_TRADES_FOR_LEARNING,
+        "self_tuning_enabled": SELF_TUNING_ENABLED,
+        "nightly_learning_last_ran": getattr(state, "nightly_learning_date", "") or None,
+        "strategies": rows,
+    }
+
+
 # ===== GLOBAL DATA WORKER =====
 # _get_market_phase, POLL_CONFIG, and market_data_worker live in workers/market_worker.py
 
