@@ -978,6 +978,35 @@ async def get_scripts(request: Request):
     state = get_user_state(client.user_id)
     return {"success": True, "scripts": state.active_symbols, "enabled": getattr(state, "enabled_symbols", ["NSE:NIFTY50-INDEX"])}
 
+
+@app.post("/api/scripts/agent-refresh")
+async def agent_refresh_scripts(request: Request):
+    """Force an immediate NewsWorker cycle (AI picks → validate → inject scrips).
+
+    Use after Fyers reconnect or when the 30-minute timer has not yet fired.
+    Requires an authenticated session; injection still needs a live Fyers token.
+    """
+    user_id = await resolve_authenticated_user_id(request)
+    if not user_id:
+        return JSONResponse({"success": False, "message": "Unauthorized"}, 401)
+    try:
+        await news_worker.update_summary()
+        summary = news_worker.last_summary
+        state = get_user_state(user_id)
+        return {
+            "success": True,
+            "high_conviction_asset": summary.get("high_conviction_asset"),
+            "commodity_pick": summary.get("commodity_pick"),
+            "last_injected": summary.get("last_injected"),
+            "last_skip_reason": summary.get("last_skip_reason"),
+            "scripts": state.active_symbols,
+            "agent_added": getattr(state, "agent_added_symbols", []),
+        }
+    except Exception as e:
+        logger.exception("agent-refresh failed: %s", e)
+        return JSONResponse({"success": False, "message": str(e)}, 500)
+
+
 @app.post("/api/scripts/toggle-auto-trade")
 async def toggle_script_auto_trade(request: Request):
     data = await request.json()
@@ -1177,6 +1206,12 @@ async def _exchange_fyers_auth_code(user_id, auth_code: str) -> Dict:
         except Exception as ws_err:
             print(f"❌ Error restarting WS Feed: {ws_err}", flush=True)
 
+        # Token is live — do not wait up to 30m for NewsWorker; inject AI scrips now.
+        try:
+            news_worker.schedule_refresh_after_auth("fyers_auth_code_exchange")
+        except Exception as _nr:
+            print(f"⚠️ Post-auth news refresh schedule skipped: {_nr}", flush=True)
+
     return res
 
 
@@ -1301,6 +1336,12 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                     pass
         except Exception as e:
             print(f"❌ Auto-refresh error for user {uid}: {e}", flush=True)
+
+    # After morning/startup token refresh, run news agent so scrips appear without waiting 30m.
+    try:
+        news_worker.schedule_refresh_after_auth(f"fyers_token_refresh:{reason}")
+    except Exception as _nr:
+        print(f"⚠️ Post-refresh news schedule skipped: {_nr}", flush=True)
 
 
 async def fyers_token_refresh_scheduler():

@@ -699,6 +699,8 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Fyers Connect:** UI opens `/fyers/auth` (not a missing `get_master_fyers_creds`). Creds resolve user → master (`get_master_app_credentials`) → env. OAuth `oauth_verifier` cookie is Secure only on HTTPS — plain HTTP `:8000` must not force Secure or browsers drop the cookie. Manual paste via `/api/submit-auth-code` remains the fallback when redirect URI is the Fyers default HTML page. Regression: `tests/test_fyers_auth_redirect.py`.
 
+**Agent scrips (NewsWorker):** Runs every **30 minutes** inside `sritej-trading` (not `vm_orchestrator`). Needs a live Fyers token to quote-validate picks; without it, injects are skipped (`last_skip_reason` on `/api/market-summary`). After Fyers reconnect or morning token refresh, news+inject is scheduled immediately. Force: `POST /api/scripts/agent-refresh` (authed). Equity window `<15:00 IST`, MCX `09:00–22:00 IST`. Agent scrips purge at 15:30 (equity) / 23:45 (MCX).
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):
