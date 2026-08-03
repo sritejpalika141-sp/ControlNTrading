@@ -685,15 +685,17 @@
   <script>
     async function connectFyers() {
       // Prefer server-side redirect so PKCE verifier cookie is set on this browser session.
-      const loginWin = window.open('/fyers/auth', '_blank');
-      if (!loginWin) {
-        alert("Popup window was blocked! Please allow popups for this site.");
-        return;
-      }
+      // Same-tab navigation is more reliable than a popup (popups can be blocked; cookies
+      // stay on the initiating document). Manual auth-code paste remains available via modal.
       document.getElementById('accountModal').style.display='none';
       document.getElementById('authModal').classList.remove('hidden');
       document.getElementById('authUrlInput').value = '';
       document.getElementById('authUrlInput').focus();
+      const loginWin = window.open('/fyers/auth', '_blank');
+      if (!loginWin) {
+        // Popup blocked — fall back to same-tab navigation.
+        window.location.href = '/fyers/auth';
+      }
     }
     // Welcome badge is handled dynamically by app.js updateAuthUI() via /api/auth-status
     // showing admin crown or user badge based on role.

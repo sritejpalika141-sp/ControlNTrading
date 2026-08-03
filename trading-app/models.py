@@ -523,7 +523,11 @@ class Database:
         
     @staticmethod
     def get_master_app_credentials_sync():
-        """Synchronous version for FyersClient initialization."""
+        """Synchronous version for FyersClient initialization.
+
+        Must decrypt DB values the same way as get_master_app_credentials(); credentials
+        are stored encrypted via update_fyers_creds.
+        """
         conn = sqlite3.connect(Database.DB_NAME)
         conn.row_factory = sqlite3.Row
         try:
@@ -531,8 +535,11 @@ class Database:
             cursor.execute("SELECT fyers_client_id, fyers_secret FROM users WHERE is_admin=1 AND is_active=1 LIMIT 1")
             row = cursor.fetchone()
             if row and row['fyers_client_id'] and row['fyers_secret']:
-                return (row['fyers_client_id'], row['fyers_secret'])
-            return ("", "")
+                client_id = decrypt_val(row['fyers_client_id']) or ""
+                secret = decrypt_val(row['fyers_secret']) or ""
+                if client_id and secret:
+                    return (client_id, secret)
+            return (os.getenv("FYERS_CLIENT_ID", ""), os.getenv("FYERS_SECRET_KEY", ""))
         finally:
             conn.close()
 

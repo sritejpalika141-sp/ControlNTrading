@@ -697,6 +697,8 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Production (read-only checks):** `http://35.234.213.226:8000` — deploy via GitHub Actions on push to `main`.
 
+**Fyers Connect:** UI opens `/fyers/auth` (not a missing `get_master_fyers_creds`). Creds resolve user → master (`get_master_app_credentials`) → env. OAuth `oauth_verifier` cookie is Secure only on HTTPS — plain HTTP `:8000` must not force Secure or browsers drop the cookie. Manual paste via `/api/submit-auth-code` remains the fallback when redirect URI is the Fyers default HTML page. Regression: `tests/test_fyers_auth_redirect.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):

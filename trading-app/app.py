@@ -682,58 +682,83 @@ async def get_fyers_login_url(request: Request):
     if not client_id or not secret:
         return JSONResponse({"error": "No Master App ID configured. Admin must set up Fyers API keys first."}, 400)
 
-    from fyers_apiv3 import fyersModel
-    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
-    session = fyersModel.SessionModel(
-        client_id=client_id,
-        secret_key=secret,
-        redirect_uri=redirect_url,
-        response_type='code',
-        grant_type='authorization_code'
-    )
-    url = session.generate_authcode()
-    # Set PKCE verifier cookie on the JSON response (same defense as /fyers/auth redirect).
-    from urllib.parse import quote as _urlquote
-    resp = JSONResponse({"url": ""})
-    oauth_state = generate_oauth_state(user_id, response=resp)
-    final_url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-    resp.body = json.dumps({"url": final_url}).encode("utf-8")
-    resp.headers["content-length"] = str(len(resp.body))
-    return resp
+    try:
+        from fyers_apiv3 import fyersModel
+        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+        session = fyersModel.SessionModel(
+            client_id=client_id,
+            secret_key=secret,
+            redirect_uri=redirect_url,
+            response_type='code',
+            grant_type='authorization_code'
+        )
+        url = session.generate_authcode()
+        from urllib.parse import quote as _urlquote
+        # Build cookie carrier first, then return JSON with the same Set-Cookie headers.
+        cookie_carrier = JSONResponse({"url": ""})
+        oauth_state = generate_oauth_state(user_id, response=cookie_carrier, request=request)
+        final_url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+        return _json_with_cookies({"url": final_url}, cookie_carrier)
+    except Exception as e:
+        logger.exception("fyers login_url failed: %s", e)
+        return JSONResponse({"error": f"Failed to build Fyers login URL: {e}"}, 500)
+
+
+def _json_with_cookies(payload: dict, cookie_source: Response) -> JSONResponse:
+    """Return JSONResponse copying Set-Cookie headers from an earlier Response."""
+    out = JSONResponse(payload)
+    for key, value in cookie_source.raw_headers:
+        if key.lower() == b"set-cookie":
+            out.raw_headers.append((key, value))
+    return out
 
 
 @app.get("/fyers/auth")
-async def fyers_auth_redirect(request: Request, response: Response):
+async def fyers_auth_redirect(request: Request):
     """
     Server-side redirect to Fyers OAuth with PKCE-style verifier cookie.
     This endpoint sets the verifier cookie and redirects to the Fyers auth URL.
     Frontend should navigate to this URL instead of calling /fyers/auth-url + redirect.
     """
-    user_id = await resolve_authenticated_user_id(request)
-    if not user_id:
-        return RedirectResponse(url="/login?reason=session_expired")
+    try:
+        user_id = await resolve_authenticated_user_id(request)
+        if not user_id:
+            return RedirectResponse(url="/login?reason=session_expired")
 
-    from fyers_apiv3 import fyersModel
-    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
-    master_creds = Database.get_master_fyers_creds()
-    client_id = master_creds[0] if master_creds else ""
-    secret = master_creds[1] if master_creds else ""
-    
-    if not client_id or not secret:
-        return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
-    
-    session = fyersModel.SessionModel(
-        client_id=client_id,
-        secret_key=secret,
-        redirect_uri=redirect_url,
-        response_type='code',
-        grant_type='authorization_code'
-    )
-    url = session.generate_authcode()
-    from urllib.parse import quote as _urlquote
-    oauth_state = generate_oauth_state(user_id, response=response)
-    url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-    return RedirectResponse(url=url)
+        user = await Database.get_user_by_id(user_id)
+        if not user:
+            return RedirectResponse(url="/login?reason=session_expired")
+
+        # Same credential resolution as /api/fyers/login_url (user keys → master → env).
+        # NOTE: Database.get_master_fyers_creds never existed; that AttributeError caused
+        # the UI "Internal Error" when clicking Connect Fyers.
+        master_creds = await Database.get_master_app_credentials()
+        client_id = user.get("fyers_client_id") or master_creds[0]
+        secret = user.get("fyers_secret") or master_creds[1]
+
+        if not client_id or not secret:
+            return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
+
+        from fyers_apiv3 import fyersModel
+        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+        session = fyersModel.SessionModel(
+            client_id=client_id,
+            secret_key=secret,
+            redirect_uri=redirect_url,
+            response_type='code',
+            grant_type='authorization_code'
+        )
+        url = session.generate_authcode()
+        from urllib.parse import quote as _urlquote
+        redirect = RedirectResponse(url="/", status_code=302)
+        oauth_state = generate_oauth_state(user_id, response=redirect, request=request)
+        url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+        redirect.headers["location"] = url
+        return redirect
+    except Exception as e:
+        logger.exception("/fyers/auth failed: %s", e)
+        safe = str(e)[:80].replace(" ", "+")
+        return RedirectResponse(url=f"/?msg=Fyers+connect+failed:+{safe}")
 
 
 @app.get("/fyers/callback")
