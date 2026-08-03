@@ -1579,11 +1579,11 @@ class FyersClient(BaseBroker):
 
         if entry_side == "BUY":
             sl_trigger = round(round((entry_price - sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price - sl_points - 1) / 0.05) * 0.05, 2)
+            sl_limit = round(round((entry_price - sl_points - 0.5) / 0.05) * 0.05, 2)
             sl_side = -1  # SELL
         else:
             sl_trigger = round(round((entry_price + sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price + sl_points + 1) / 0.05) * 0.05, 2)
+            sl_limit = round(round((entry_price + sl_points + 0.5) / 0.05) * 0.05, 2)
             sl_side = 1  # BUY
 
         sl_order = {

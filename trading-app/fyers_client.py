@@ -32,6 +32,18 @@ load_dotenv(ENV_PATH)
 
 logger = logging.getLogger("FYERS_CLIENT")
 
+# Owner rule (03-08-26): for SL-Limit (type 4), |stopPrice − limitPrice| must be 0.5 only.
+# Closing a long (SELL SL): limit = trigger − 0.5. Closing a short (BUY SL): limit = trigger + 0.5.
+SL_TRIGGER_LIMIT_GAP = 0.5
+
+
+def compute_sl_limit_price(stop_trigger: float, exit_side: int) -> float:
+    """SL-L limit price 0.5 away from trigger. exit_side: -1=SELL (close long), +1=BUY (close short)."""
+    # SELL exit → limit below trigger; BUY exit → limit above trigger
+    raw = float(stop_trigger) - SL_TRIGGER_LIMIT_GAP if exit_side < 0 else float(stop_trigger) + SL_TRIGGER_LIMIT_GAP
+    return round(round(raw / 0.05) * 0.05, 2)
+
+
 class FyersClient:
     """Wrapper around Fyers API v3 for trading operations."""
 
@@ -1742,13 +1754,15 @@ class FyersClient:
                 sl_trigger = 0.0
                 if sl_points > 0:
                     sl_trigger = round(round((entry_price - sl_points if side_int == 1 else entry_price + sl_points) / 0.05) * 0.05, 2)
+                    # Paper SL-L: same 0.5 trigger/limit gap as live (_place_stop_loss)
+                    sl_limit = compute_sl_limit_price(sl_trigger, exit_side=-side_int)
                     sl_order = {
                         "id": sl_order_id,
                         "symbol": symbol,
                         "qty": qty,
                         "side": -side_int,
                         "type": 4, # Stop Limit
-                        "limitPrice": sl_trigger,
+                        "limitPrice": sl_limit,
                         "stopPrice": sl_trigger,
                         "status": 6, # PENDING
                         "orderDateTime": datetime.now(IST).strftime("%d-%b-%Y %H:%M:%S"),
@@ -2080,23 +2094,24 @@ class FyersClient:
                          product: str = "MARGIN") -> Dict:
         """
         Place a stop loss order (SL-Limit, type=4).
-        For BUY entry → SL is SELL at entry - sl_points
-        For SELL entry → SL is BUY at entry + sl_points
+        For BUY entry → SL is SELL at entry - sl_points (limit = trigger − 0.5)
+        For SELL entry → SL is BUY at entry + sl_points (limit = trigger + 0.5)
+        Owner rule: trigger/limit gap is exactly SL_TRIGGER_LIMIT_GAP (0.5).
         """
         if not self.client:
             return {"success": False, "message": "Not authenticated"}
 
         if entry_side == "BUY":
             sl_trigger = round(round((entry_price - sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price - sl_points - 1) / 0.05) * 0.05, 2)
             sl_side = -1  # SELL to close the long just bought
+            sl_limit = compute_sl_limit_price(sl_trigger, exit_side=sl_side)
         else:
             # Buy-only options: never place a BUY stop that would cover/open a short option.
             if self._is_option_symbol(symbol):
                 return {"success": False, "message": "options SELL-entry SL blocked (buy-only policy)"}
             sl_trigger = round(round((entry_price + sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price + sl_points + 1) / 0.05) * 0.05, 2)
             sl_side = 1  # BUY
+            sl_limit = compute_sl_limit_price(sl_trigger, exit_side=sl_side)
 
         sl_order = {
             "symbol": symbol,

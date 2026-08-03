@@ -38,6 +38,7 @@ from engine.strikes import get_strike_recommendations
 from engine.ws_feed import ws_feed
 from engine.risk_orchestrator import orchestrator as risk_orchestrator
 from datetime import timedelta
+from fyers_client import compute_sl_limit_price
 
 # B1: how long a previously-open position must stay absent from the broker feed before the
 # monitor treats it as closed (feed omission). Long enough to ride out a transient/partial
@@ -732,12 +733,14 @@ async def trailing_monitor():
                                         
                                         if t.get("sl_order_id"):
                                             o_type = t.get("sl_order_type", 4)
+                                            # Owner rule: SL-L limit is exactly 0.5 below trigger (close long)
+                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=-1) if o_type == 4 else 0
                                             mod_res = await asyncio.to_thread(
                                                 client.modify_order,
                                                 order_id=t["sl_order_id"],
                                                 order_type=o_type,
                                                 stop_price=new_sl_price,
-                                                limit_price=new_sl_price - 1.0 if o_type == 4 else 0,
+                                                limit_price=_lim,
                                                 qty=active_qty
                                             )
                                             if mod_res.get("success"):
@@ -768,12 +771,14 @@ async def trailing_monitor():
                                         
                                         if t.get("sl_order_id"):
                                             o_type = t.get("sl_order_type", 4)
+                                            # Owner rule: SL-L limit is exactly 0.5 above trigger (close short)
+                                            _lim = compute_sl_limit_price(new_sl_price, exit_side=1) if o_type == 4 else 0
                                             mod_res = await asyncio.to_thread(
                                                 client.modify_order,
                                                 order_id=t["sl_order_id"],
                                                 order_type=o_type,
                                                 stop_price=new_sl_price,
-                                                limit_price=new_sl_price + 1.0 if o_type == 4 else 0,
+                                                limit_price=_lim,
                                                 qty=active_qty
                                             )
                                             if mod_res.get("success"):
