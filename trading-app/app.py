@@ -713,27 +713,39 @@ async def fyers_auth_redirect(request: Request, response: Response):
     if not user_id:
         return RedirectResponse(url="/login?reason=session_expired")
 
-    from fyers_apiv3 import fyersModel
-    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
-    master_creds = Database.get_master_fyers_creds()
-    client_id = master_creds[0] if master_creds else ""
-    secret = master_creds[1] if master_creds else ""
-    
-    if not client_id or not secret:
-        return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
-    
-    session = fyersModel.SessionModel(
-        client_id=client_id,
-        secret_key=secret,
-        redirect_uri=redirect_url,
-        response_type='code',
-        grant_type='authorization_code'
-    )
-    url = session.generate_authcode()
-    from urllib.parse import quote as _urlquote
-    oauth_state = generate_oauth_state(user_id, response=response)
-    url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-    return RedirectResponse(url=url)
+    # 04-08-26 fix: this route had no top-level guard, so any unexpected failure here (like the
+    # Database.get_master_fyers_creds() typo that used to live below — that method never existed)
+    # surfaced as a raw, unstyled "Internal Server Error" the instant Connect Fyers was clicked,
+    # before the user ever reached Fyers' own login page. Wrapped so any future failure here
+    # degrades to a readable redirect instead of a raw crash.
+    try:
+        from fyers_apiv3 import fyersModel
+        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+        master_creds = await Database.get_master_app_credentials()
+        client_id = master_creds[0] if master_creds else ""
+        secret = master_creds[1] if master_creds else ""
+
+        if not client_id or not secret:
+            return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
+
+        session = fyersModel.SessionModel(
+            client_id=client_id,
+            secret_key=secret,
+            redirect_uri=redirect_url,
+            response_type='code',
+            grant_type='authorization_code'
+        )
+        url = session.generate_authcode()
+        if not url:
+            return RedirectResponse(url="/?msg=Fyers+login+failed:+could+not+generate+auth+URL")
+        from urllib.parse import quote as _urlquote
+        oauth_state = generate_oauth_state(user_id, response=response)
+        url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+        return RedirectResponse(url=url)
+    except Exception as e:
+        print(f"❌ /fyers/auth failed: {e}", flush=True)
+        safe_msg = str(e)[:80].replace(" ", "+")
+        return RedirectResponse(url=f"/?msg=Fyers+login+failed:+{safe_msg}")
 
 
 @app.get("/fyers/callback")
