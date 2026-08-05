@@ -5,7 +5,7 @@ Trades the volatility spike around the weekly EIA (US Energy Information Adminis
 inventory report, released Wednesdays ~10:30 AM ET (~20:00 IST in summer). OUTSIDE that Wednesday
 window — and on any non-Wednesday — this strategy always emits NO TRADE.
 
-The exact release/window is read from the CRUDE_OIL_OPTIONS registry risk_config ("eia_window"),
+The exact release/window is read from the COMMODITY_OPTIONS registry risk_config ("eia_window"),
 so it is tunable without touching this file. ⚠️ The default window is PROVISIONAL — confirm the exact
 EIA release-time convention (and IST DST offset) before live-small enablement.
 
@@ -20,7 +20,7 @@ import pytz
 
 logger = logging.getLogger("CRUDE_EIA")
 IST = pytz.timezone("Asia/Kolkata")
-_ASSET = "CRUDE_OIL_OPTIONS"
+_ASSET = "COMMODITY_OPTIONS"
 
 # 03-08-26 fix: a 1-candle range breakout is meaningless noise on a choppy/range-bound session —
 # require the breakout distance to be at least this many times the recent average candle range

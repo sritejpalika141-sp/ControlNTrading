@@ -28,15 +28,18 @@ TARGET_POINTS = 40.0     # Target points → ~1:2 RR
 
 
 
-async def evaluate_926_strategy(client, state, current_trend="NEUTRAL"):
+async def evaluate_926_strategy(client, state, current_trend="NEUTRAL", now=None):
     """
     Strategy 2: 9:26 - 9:35 - 183 Buy
     Selects CE/PE nearest to 183 (below) at 9:26 AM.
     Triggers a BUY if either hits 183 before 9:35 AM.
     Strictly aligns with the market trend. Blocks entirely if NEUTRAL.
     Returns a signal dict or None.
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
-    now = datetime.now(IST)
+    now = now or datetime.now(IST)
     current_time_str = now.strftime("%H:%M:%S")
 
     # 1. Check if Strategy 2 is active in settings

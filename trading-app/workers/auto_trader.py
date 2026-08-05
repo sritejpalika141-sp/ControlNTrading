@@ -487,6 +487,9 @@ async def trailing_monitor():
                     sym = t["symbol"]
                     quote = quotes.get(sym, {})
                     ltp = quote.get("lp", 0)
+                    logger.info(f"🔍 TEMP-DEBUG trailing tick: sym={sym} ltp={ltp} sl_price={t.get('sl_price')} "
+                                f"target_price={t.get('target_price')} side={t.get('side')} paper_trading={state.paper_trading} "
+                                f"in_ws_quotes={sym in quotes} missing={sym in missing_symbols}")
 
                     if ltp == 0:
                         continue
@@ -505,6 +508,39 @@ async def trailing_monitor():
                             traded_qty = getattr(state, "stock_lots", 1) * get_lot_size(sym)
                     # Prefer the real open position qty from broker if available
                     active_qty = abs(pos.get("qty", traded_qty)) if pos else traded_qty
+
+                    # ═══════════════════════════════════════════
+                    # PAPER-MODE SL/TARGET AUTO-FILL (04-08-26 fix)
+                    # A real broker SL/target order auto-executes the instant price crosses it —
+                    # every trailing block below only ever MOVES that resting order via
+                    # client.modify_order(). Paper mode has no broker to do that autonomous
+                    # execution, so a paper position's SL/TSL was being trailed correctly but never
+                    # actually closed, no matter how far price ran past it (observed live: a paper
+                    # NIFTY position ran to -₹4,238 unrealized with its SL still PENDING at a price
+                    # crossed long ago). Simulates the fill by placing the closing paper order
+                    # directly once LTP crosses the trade's current sl_price/target_price — reuses
+                    # the SAME client.place_order() paper-mode branch a real exit would use, so the
+                    # existing CLEANUP COMPLETED TRADES block above picks it up next tick exactly
+                    # like any other completed trade (ledger, cooldown, broadcast — all unchanged).
+                    # ═══════════════════════════════════════════
+                    if state.paper_trading:
+                        cur_sl = t.get("sl_price")
+                        cur_tgt = t.get("target_price")
+                        hit_sl = bool(cur_sl) and ((ltp <= cur_sl) if side == "BUY" else (ltp >= cur_sl))
+                        hit_tgt = bool(cur_tgt) and ((ltp >= cur_tgt) if side == "BUY" else (ltp <= cur_tgt))
+                        if hit_sl or hit_tgt:
+                            _reason = "Paper SL hit" if hit_sl else "Paper target hit"
+                            logger.info(f"📄 {_reason} for {sym}: LTP {ltp} vs SL {cur_sl} / TGT {cur_tgt} — closing paper position.")
+                            try:
+                                from engine.api_queue import api_queue as _apiq
+                                await _apiq.enqueue(
+                                    1, client.place_order, symbol=sym, qty=active_qty,
+                                    side=("SELL" if side == "BUY" else "BUY"), order_type="MARKET",
+                                    product="INTRADAY"
+                                )
+                            except Exception as _pe:
+                                logger.error(f"Paper SL/target close failed for {sym}: {_pe}")
+                            continue
 
                     # ── Strategy 1 (OB+FVG) — Variant L exit: breakeven at +1R, then trail by 1R ──
                     # Backtest over 68 trading days (confluence-only signals, 2 trades/day cap):
@@ -2257,7 +2293,7 @@ async def automation_loop():
                         "sig_strategy": sig.get("strategy", strategy_name),
                         "reason": sig.get("reason", ""),
                         "confidence": sig.get("confidence", 80),
-                        "asset_class": sig.get("asset_class", "CRUDE_OIL_OPTIONS"),
+                        "asset_class": sig.get("asset_class", "COMMODITY_OPTIONS"),
                         "signal_price": signal_price,
                         "entry_trigger": entry_trigger,
                         "candles_at_signal": len(candles_5m),

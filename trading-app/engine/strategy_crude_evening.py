@@ -4,7 +4,7 @@ Crude evening-session momentum strategy (multi-asset Phase 2).
 Active only after ~17:00 IST (the US pre-market/open linkage window, when crude tracks its
 international move most strongly). Outside that window it always emits NO TRADE.
 
-Window start is read from the CRUDE_OIL_OPTIONS registry risk_config ("evening_session_start"),
+Window start is read from the COMMODITY_OPTIONS registry risk_config ("evening_session_start"),
 and the session must still be open (before the crude hard-exit). Returns the directional-signal
 shape consumed by the shared execute path; strike/SL/qty resolution is downstream.
 """
@@ -16,7 +16,7 @@ from engine.asset_classes import get_asset_class
 
 logger = logging.getLogger("CRUDE_EVENING")
 IST = pytz.timezone("Asia/Kolkata")
-_ASSET = "CRUDE_OIL_OPTIONS"
+_ASSET = "COMMODITY_OPTIONS"
 
 # 03-08-26 fix: pure 3-candle momentum-continuation entries were buying right after the move had
 # already happened (near the extreme), which loses hard on the frequent choppy/range-bound crude

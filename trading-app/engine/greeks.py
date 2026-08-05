@@ -34,6 +34,15 @@ def _bs_price(spot, strike, t, r, iv, is_call):
     return strike * math.exp(-r * t) * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
 
 
+def bs_price(spot, strike, t_years, iv, is_call, r=RISK_FREE_RATE):
+    """Public forward Black-Scholes price (04-08-26, added for engine/backtest_engine.py): given an
+    assumed/estimated IV, returns the theoretical option price. The inverse of implied_vol() below —
+    that one solves IV from a real market price; this one prices an option when no real market price
+    exists yet (e.g. simulating a historical option premium from the underlying's price path, where
+    Fyers has no historical option-chain data to query). Returns None on bad input, never raises."""
+    return _bs_price(spot, strike, t_years, r, iv, is_call)
+
+
 def implied_vol(price, spot, strike, t_years, is_call, r=RISK_FREE_RATE):
     """Invert the Black-Scholes price for implied volatility via bisection (price is monotonic in
     IV, so bisection is robust). Returns IV as a decimal (e.g. 0.18 = 18%), or None if unsolvable."""

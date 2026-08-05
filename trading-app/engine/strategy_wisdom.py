@@ -82,14 +82,17 @@ def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
             
     return float(rsi_val)
 
-async def evaluate_wisdom_strategy(client, state, symbol: str, candles_5m: List[Dict], candles_1h: List[Dict], candles_daily: List[Dict], vix: float = 15.0) -> Optional[Dict]:
+async def evaluate_wisdom_strategy(client, state, symbol: str, candles_5m: List[Dict], candles_1h: List[Dict], candles_daily: List[Dict], vix: float = 15.0, now: Optional[datetime] = None) -> Optional[Dict]:
     """
     Evaluates the Wisdom-Aligned Pullback strategy.
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     if "Strategy 4: Wisdom-Aligned Pullback" not in state.active_strategies:
         return None
 
-    now = datetime.now(IST)
+    now = now or datetime.now(IST)
     current_time_str = now.strftime("%H:%M:%S")
 
     # Only trade between 9:20 and 15:00

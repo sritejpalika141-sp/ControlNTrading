@@ -6,17 +6,20 @@ import pytz
 IST = pytz.timezone('Asia/Kolkata')
 logger = logging.getLogger("DASHBOARD")
 
-async def evaluate_strategy_10(symbol: str, spot: float, candles_5m: List[Dict], analysis: Dict[str, Any], client: Any, state: Any) -> Tuple[bool, Dict[str, Any]]:
+async def evaluate_strategy_10(symbol: str, spot: float, candles_5m: List[Dict], analysis: Dict[str, Any], client: Any, state: Any, now=None) -> Tuple[bool, Dict[str, Any]]:
     """
     Evaluates Strategy 10: Adaptive ADX Engine
     Returns (True, signal_dict) if a trade is found.
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     from engine.key_levels import _adx, _rsi, _ema
-    
+
     if "Strategy 10: Adaptive ADX Engine" not in getattr(state, "active_strategies", []):
         return False, {}
-        
-    now = datetime.now(IST)
+
+    now = now or datetime.now(IST)
     
     # Run periodically (e.g. at the close of 5m candles, similar to Strategy 9)
     if not (now.minute % 5 == 0 and now.second < 20):

@@ -1061,6 +1061,8 @@ class TradingState:
             self.active_strategies = list(config["active_strategies"])
         if "commodity_strategies" in config:
             self.commodity_strategies = list(config["commodity_strategies"])
+        if "shadow_strategies" in config:
+            self.shadow_strategies = list(config["shadow_strategies"])
         if "commodity_params" in config and isinstance(config["commodity_params"], dict):
             self.commodity_params = {**getattr(self, "commodity_params", {}), **config["commodity_params"]}
         if "use_ai_oracle" in config:

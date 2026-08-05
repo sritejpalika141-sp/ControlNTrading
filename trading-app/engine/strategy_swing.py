@@ -31,13 +31,16 @@ def is_in_no_trade_time(t):
         return True
     return False
 
-async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbols, client, state, is_commodity=False):
+async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbols, client, state, is_commodity=False, now=None):
     """
     Evaluates Strategy 7: Intraday Swing-Pivot Breakout with optimizations:
     - Double Close Confirmation
     - Candle Quality Filter (body >= 50% range)
     - Structural Trailing SL (HL for CE, LH for PE)
     - Max 2 trades per day
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     if len(candles_5m) < 15:
         return False, None
@@ -57,7 +60,7 @@ async def evaluate_swing_pivot_strategy(spot, candles_5m, analysis, active_symbo
     
     # Filter to today's candles only to build the intraday structure
     tz = pytz.timezone('Asia/Kolkata')
-    now_ist = datetime.now(tz)
+    now_ist = now or datetime.now(tz)
     today_date = now_ist.date()
     df['date'] = df['Datetime'].dt.date
     day_df = df[df['date'] == today_date].copy()

@@ -84,11 +84,14 @@ async def get_live_3m_candles(client):
         _3m_cache["ts"] = now + 45
     return [], []
 
-async def evaluate_strat5_strategy(client, state):
+async def evaluate_strat5_strategy(client, state, now=None):
     """
     Strategy 5: Optimized Aerospace Mean Reversion
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
-    now = datetime.now(IST)
+    now = now or datetime.now(IST)
     current_time_str = now.strftime("%H:%M:%S")
     
     # 1. Trading Window Constraint (Midday Block removed as requested)

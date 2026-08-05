@@ -11,11 +11,14 @@ from engine.ai_engine import AIEngine
 logger = logging.getLogger("NIGHTLY_LEARNING")
 IST = pytz.timezone('Asia/Kolkata')
 
-# ── SELF-TUNING (owner directive 30/31-07-26) ──
-# Reads REAL win-rates from the executed-trades ledger + 3-month 5-min market structure, and only
-# tunes a strategy with >= MIN_TRADES_FOR_LEARNING real closed trades. Auto-apply rails:
-#   • AUTO_APPLY_MINOR=True (owner directive 31-07-26): once a strategy has >=10 real trades, MINOR
-#     AI parameter changes (<=20% per-param swing) are applied automatically — no approval needed.
+# ── SELF-TUNING (owner directive 30/31-07-26; data source switched to backtest 04-08-26) ──
+# Reads win-rates from engine/backtest_runner.py's saved backtest_results (Option A, owner
+# directive 04-08-26 — see the comment at the get_backtest_performance() call site below for why)
+# + 3-month 5-min market structure, and only tunes a strategy with >= MIN_TRADES_FOR_LEARNING
+# backtested trades. Auto-apply rails:
+#   • AUTO_APPLY_MINOR=True (owner directive 31-07-26): once a strategy has >=10 (now backtested)
+#     trades, MINOR AI parameter changes (<=20% per-param swing) are applied automatically — no
+#     approval needed.
 #   • MAJOR changes (>20% swing on any param) STILL go PENDING/approval-required — a large live-money
 #     parameter jump should be eyeballed even in auto mode. Set REQUIRE_APPROVAL_FOR_MAJOR=False to
 #     auto-apply those too (not recommended).
@@ -195,12 +198,21 @@ async def run_nightly_learning(state, user_id: int):
             logger.info("No strategies found in DB. Skipping learning.")
             return
 
-        # REAL per-strategy performance from the executed-trades ledger (authoritative), not the
-        # legacy swarm_agent_configs counters the old broken recorder left at 0.
-        perf = await Database.get_strategy_performance(days=30)
+        # Per-strategy performance from engine/backtest_runner.py's saved results (owner directive
+        # 04-08-26, "Option A"): most strategies had 0 real closed trades even after ledger recording
+        # was fixed, so the MIN_TRADES_FOR_LEARNING gate below was permanently stuck at "skipped" for
+        # nearly everyone. run_backtests.py replays every strategy's REAL live evaluate_* function
+        # against real historical underlying data (Black-Scholes-modeled premiums — see
+        # engine/backtest_engine.py's module docstring for exactly what that does and doesn't model)
+        # and saves win/loss/trade counts here. This REPLACES the real-trade ledger as the data
+        # source nightly_learning tunes against — it is not a supplement. The previous source,
+        # Database.get_strategy_performance(days=30) (the real executed_trades ledger), is still the
+        # authoritative record of actual live/paper P&L for dashboards — just no longer what this
+        # function reads to decide tuning.
+        perf = await Database.get_backtest_performance()
         # 3-month 5-minute chart context (stats) for the underlyings actually traded (shared).
         candle_context = await _build_market_context(user_id, days=90)
-        logger.info(f"🌙 Nightly learning: real perf for {len(perf)} strategies; 3mo 5-min context:\n{candle_context}")
+        logger.info(f"🌙 Nightly learning: backtest perf for {len(perf)} strategies; 3mo 5-min context:\n{candle_context}")
 
         for cfg in all_strategies:
             strat = cfg['strategy_name']
@@ -247,9 +259,15 @@ async def run_nightly_learning(state, user_id: int):
             market_regime = getattr(state, "market_regime", "NEUTRAL")
 
             prompt = f"""
-            You are a Quantitative Trading AI reviewing REAL trade results (not a simulation).
+            You are a Quantitative Trading AI reviewing BACKTESTED trade results — real historical
+            underlying price data replayed through this strategy's actual live entry logic, with
+            option premiums Black-Scholes-MODELED (not literal historical broker quotes) and a
+            uniform simplified SL/target rule (not each strategy's exact live trailing algorithm).
+            Treat this as a directional/entry-quality signal, not an exact live P&L guarantee —
+            weight it accordingly (e.g. prefer robust, broadly-supported parameter changes over
+            narrow ones that look great only because of this backtest's specific simplifications).
             Strategy: '{strat}', recent market regime: '{market_regime}'.
-            Real performance over the last 30 days (from the executed-trades ledger):
+            Backtested performance (from engine/backtest_runner.py, most recent run):
               - trades: {total}, win rate: {win_rate}%, total P&L: ₹{total_pnl:.0f}, avg P&L/trade: ₹{avg_pnl:.0f}.
             3-MONTH 5-MINUTE chart statistics for the underlyings this strategy traded (trend,
             volatility, daily range, up/down day mix, position in range):

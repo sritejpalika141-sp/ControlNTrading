@@ -370,10 +370,16 @@ Then output your final JSON signal decision.
 from engine.technical_indicators import calculate_adx, calculate_ema as _calculate_ema
 from engine.strategy9_filters import MIN_ADX_15M, adx_gate_passes, session_allows_entry
 
-async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analysis: dict, client, state) -> Tuple[bool, dict]:
+async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analysis: dict, client, state, now=None) -> Tuple[bool, dict]:
     """
     Evaluates Strategy 9 (AI-driven 5-Minute 9 EMA Retest)
     Returns (True, signal_dict) if a trade is found.
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged). NOTE: the session gate below
+    (is_market_open/get_market_phase) still checks the REAL wall clock, not `now` — those are
+    shared live-clock utilities out of scope to change here, so a backtest run outside real
+    market hours will under-report Strategy 9 signals. Documented limitation, not a bug.
     """
     is_commodity = symbol.startswith(("MCX:", "CDS:"))
 
@@ -397,7 +403,7 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
         if phase not in ("market", "post_close"):
             return False, {}
 
-    now = datetime.now(IST)
+    now = now or datetime.now(IST)
 
     # ONLY RUN ON 5-MINUTE CANDLE CLOSES (e.g. 10:05:00 to 10:05:15)
     # This prevents exhausting LLM API limits by calling it every second.

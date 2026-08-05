@@ -393,6 +393,28 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+        # backtest_results (04-08-26): output of engine/backtest_runner.py — deliberately a
+        # SEPARATE table from executed_trades (real live/paper fills) and shadow_trades (isolated
+        # paper simulation) so "real", "shadow-simulated", and "backtested" data can never be
+        # silently conflated. One row per strategy per backtest run (run_date), so history of
+        # past runs is kept, not overwritten — nightly_learning reads the LATEST row per strategy.
+        c.execute('''CREATE TABLE IF NOT EXISTS backtest_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_name TEXT NOT NULL,
+            symbol TEXT,
+            run_date TEXT NOT NULL,
+            window_days INTEGER,
+            trades INTEGER,
+            wins INTEGER,
+            losses INTEGER,
+            win_rate REAL,
+            total_pnl REAL,
+            avg_pnl REAL,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_strat_date ON backtest_results(strategy_name, run_date)")
+
         # First-run admin setup — NO hardcoded default credential (Phase 1 Item C1).
         # Only create the admin from an explicit INITIAL_ADMIN_PASSWORD env var; never fall
         # back to a guessable default. On the existing live DB this is a no-op (admin exists).
@@ -1084,6 +1106,56 @@ class Database:
                         }
         except Exception as e:
             logger.warning(f"get_strategy_performance failed: {e}")
+        return out
+
+    @staticmethod
+    async def save_backtest_result(strategy_name: str, symbol: str, run_date: str, window_days: int,
+                                    trades: int, wins: int, losses: int, win_rate: float,
+                                    total_pnl: float, avg_pnl: float, note: str = "") -> bool:
+        """Persist one strategy's backtest_runner.py output. Appends a new row per run (does not
+        overwrite prior runs) — get_backtest_performance() reads the latest per strategy."""
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                await conn.execute("""
+                    INSERT INTO backtest_results
+                        (strategy_name, symbol, run_date, window_days, trades, wins, losses,
+                         win_rate, total_pnl, avg_pnl, note)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (strategy_name, symbol, run_date, window_days, trades, wins, losses,
+                      win_rate, total_pnl, avg_pnl, note))
+                await conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"save_backtest_result failed for {strategy_name}: {e}")
+            return False
+
+    @staticmethod
+    async def get_backtest_performance() -> dict:
+        """Latest backtest_results row per strategy, in the SAME {strategy: {trades, wins, losses,
+        win_rate, total_pnl, avg_pnl}} shape as get_strategy_performance() — so nightly_learning.py
+        can read from either source without changing its own logic."""
+        out = {}
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute("""
+                    SELECT b.strategy_name, b.trades, b.wins, b.losses, b.win_rate, b.total_pnl, b.avg_pnl, b.run_date
+                      FROM backtest_results b
+                      INNER JOIN (
+                          SELECT strategy_name, MAX(run_date) AS max_date
+                            FROM backtest_results GROUP BY strategy_name
+                      ) latest ON b.strategy_name = latest.strategy_name AND b.run_date = latest.max_date
+                """) as cur:
+                    async for r in cur:
+                        d = dict(r)
+                        out[d["strategy_name"]] = {
+                            "trades": int(d["trades"] or 0), "wins": int(d["wins"] or 0),
+                            "losses": int(d["losses"] or 0), "win_rate": float(d["win_rate"] or 0.0),
+                            "total_pnl": float(d["total_pnl"] or 0.0), "avg_pnl": float(d["avg_pnl"] or 0.0),
+                            "run_date": d["run_date"],
+                        }
+        except Exception as e:
+            logger.warning(f"get_backtest_performance failed: {e}")
         return out
 
     @staticmethod

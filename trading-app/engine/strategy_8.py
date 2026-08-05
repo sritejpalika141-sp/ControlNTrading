@@ -20,18 +20,21 @@ def is_trade_window(t):
     if dtime(14, 15) <= t <= dtime(15, 0): return True
     return False
 
-async def evaluate_strategy_8(symbol: str, spot: float, candles_1m: List[Dict], candles_5m: List[Dict], analysis: Dict, client, state) -> tuple[bool, Optional[Dict]]:
+async def evaluate_strategy_8(symbol: str, spot: float, candles_1m: List[Dict], candles_5m: List[Dict], analysis: Dict, client, state, now=None) -> tuple[bool, Optional[Dict]]:
     """
     Evaluates Strategy 8 (SMC) rules on the provided candle data.
     Runs every minute (1M Execution).
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     if "Strategy 8: Smart Money Concepts" not in state.active_strategies:
         return False, None
 
     if getattr(state, "strat_8_triggered", False):
         return False, None
-        
-    now = datetime.now(IST)
+
+    now = now or datetime.now(IST)
     current_time_only = now.time()
     
     # Check EOD Exit Condition

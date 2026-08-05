@@ -7,16 +7,19 @@ from engine.technical_indicators import candle_ist_date
 
 logger = logging.getLogger(__name__)
 
-async def evaluate_gap_fill_strategy(spot: float, candles_5m: List[Dict], analysis: Dict, active_symbols: List[str] = None, client=None, state=None) -> Tuple[bool, Dict]:
+async def evaluate_gap_fill_strategy(spot: float, candles_5m: List[Dict], analysis: Dict, active_symbols: List[str] = None, client=None, state=None, now: datetime = None) -> Tuple[bool, Dict]:
     """
     Evaluates Strategy 6: Gap Fill Strategy (Complete Rewrite)
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     if not candles_5m or not analysis or not state or not client:
         return False, {}
 
     # Check Time Cutoffs
     ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
+    now = now or datetime.now(ist)
     
     # Force Exit Time (handled in auto_trader normally, but good to block entries too)
     if now.hour > 13 or (now.hour == 13 and now.minute >= 30):

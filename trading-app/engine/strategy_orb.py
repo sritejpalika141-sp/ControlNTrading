@@ -38,10 +38,13 @@ LOT_SIZES = {
 }
 
 
-async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dict], candles_daily: List[Dict] = None, vix: float = 15.0) -> Optional[Dict]:
+async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dict], candles_daily: List[Dict] = None, vix: float = 15.0, now: Optional[datetime] = None) -> Optional[Dict]:
     """
     Evaluates the 15-Minute ORB breakout strategy rules on the provided candle data.
     Runs strictly after 9:30 AM IST. Requires a full 5m candle close outside the range.
+
+    `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
+    live callers never pass this, so live behavior is unchanged).
     """
     # 1. Active checks
     import state as global_state
@@ -61,7 +64,7 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
     if getattr(state, "strat_orb_triggered", False):
         return None
 
-    now = datetime.now(IST)
+    now = now or datetime.now(IST)
     current_time_str = now.strftime("%H:%M:%S")
 
     # Session window: NSE ORB is morning-only; commodity ORB follows MCX open+first-hour style window.
