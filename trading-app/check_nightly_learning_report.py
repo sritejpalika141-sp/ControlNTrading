@@ -46,15 +46,19 @@ def load_env():
             os.environ.setdefault(k, v)
 
 
-def nightly_learning_completed_today(today_str: str) -> bool:
-    """Look for tonight's success line in dashboard.log — the same 'Nightly Learning Complete'
-    line the real run always prints on success, regardless of what it decided per strategy."""
+def nightly_learning_completed_today(today_str: str, yesterday_str: str) -> bool:
+    """Look for the 'Nightly Learning Complete' success line in dashboard.log, dated either
+    today OR yesterday. 05-08-26 bug fix: the run itself fires once MCX closes (~23:30 IST) and
+    can complete either just before or just after midnight, but this checker's cron window
+    (23:00-00:50) spans that boundary — a tick running after midnight computes "today" as the
+    NEW date and would never match a completion line still timestamped the PREVIOUS day. Checking
+    both dates closes that gap without needing to know which side of midnight the run landed on."""
     if not os.path.exists(DASHBOARD_LOG):
         return False
     try:
         with open(DASHBOARD_LOG, "r", errors="ignore") as f:
             for line in f:
-                if today_str in line and "Nightly Learning Complete" in line:
+                if "Nightly Learning Complete" in line and (today_str in line or yesterday_str in line):
                     return True
     except Exception:
         pass
@@ -97,7 +101,7 @@ def build_report(today_str: str, yesterday_str: str) -> str:
         line = f"• <b>{strat}</b>: {trades} backtested trades, {win_rate:.1f}% win, {pnl:+.0f} pts — gate {gate} ({MIN_TRADES_FOR_LEARNING} needed)"
         if trades >= MIN_TRADES_FOR_LEARNING and cfg:
             last_upd = (cfg.get("last_updated") or "")[:10]
-            if last_upd == today_str:
+            if last_upd in (today_str, yesterday_str):
                 if cfg.get("pending_config_json"):
                     line += "\n   → 🟡 AI suggested a MAJOR change — pending your approval."
                     any_pending = True
@@ -148,7 +152,7 @@ def main():
         print(f"Already sent today's report ({sent_marker} exists) — nothing to do.")
         return
 
-    if not nightly_learning_completed_today(today_str):
+    if not nightly_learning_completed_today(today_str, yesterday_str):
         print(f"Nightly learning has not completed yet as of {now.strftime('%H:%M:%S')} IST — will retry next tick.")
         return
 
