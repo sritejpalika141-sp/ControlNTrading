@@ -245,16 +245,93 @@ async def run_nightly_learning(state, user_id: int):
                 )
                 
             # --- Auto-Reenable DISABLED Strategies ---
+            # 06-08-26 fix: this used to only mutate the local `cfg` dict and rely on the AI
+            # critique block further down to actually persist it — so a strategy stayed DISABLED
+            # forever on any night the AI failed (which, per the last two nights, is EVERY night).
+            # Persist immediately; this is a status flip, not a numeric suggestion, so it needs no
+            # AI involvement at all.
             if status == 'DISABLED':
                 logger.info(f"🔧 Diagnosing and Re-enabling DISABLED strategy: {strat}")
-                # We will let the AI critique it below, and then reset it to APPROVED
                 cfg['status'] = 'APPROVED'
                 cfg['continuous_losses'] = 0
+                status = 'APPROVED'
+                await Database.update_agent_config(
+                    strategy_name=strat,
+                    config_dict=cfg.get('config_json', {}),
+                    win_rate=win_rate,
+                    total_trades=total,
+                    winning_trades=wins,
+                    status='APPROVED',
+                    pending_config_json=cfg.get('pending_config_json'),
+                    is_paper_trading=cfg.get('is_paper_trading', 1),
+                    continuous_losses=0,
+                    asset_class=cfg.get('asset_class', 'EQUITY')
+                )
+                logger.info(f"🔧 {strat} re-enabled (status=APPROVED, persisted).")
 
-            # AI Critique (Self-Improvement). Runs only with REAL data and only PROPOSES (PENDING).
+            # ═══════════════════════════════════════════
+            # STRICT RULE-BASED capital protection (owner directive 06-08-26): "AI provider should
+            # not stop any nightly learning ... it is only seeing the technical analysis and
+            # updating the strategies." This block is the PRIMARY nightly-learning action and uses
+            # ONLY the backtest numbers already computed above (trades/win_rate/total_pnl) — no AI
+            # call, no text generation, fully deterministic. It runs and can take effect regardless
+            # of whether the AI critique below succeeds or fails.
+            #
+            # Uses NET backtested PnL, not win rate, as the deciding signal — win rate alone is
+            # misleading for breakout/momentum strategies with an asymmetric payoff (e.g. Crude EIA
+            # Volatility backtested at 11.1% win but +839 pts net, because its wins are much bigger
+            # than its losses; a naive win-rate cutoff would have wrongly flagged it).
+            #
+            # A strategy that backtests net-LOSING over a real sample (>= MIN_TRADES_FOR_LEARNING)
+            # is moved into shadow mode (simulated-only, engine/backtest_runner.py's isolated
+            # simulator from 04-08-26) — not fully disabled, so it keeps proving/disproving itself
+            # risk-free rather than being permanently written off on one backtest window.
+            # ═══════════════════════════════════════════
+            if total >= MIN_TRADES_FOR_LEARNING:
+                shadow_list = list(getattr(state, "shadow_strategies", None) or [])
+                already_shadowed = strat in shadow_list
+                if total_pnl <= 0 and not already_shadowed:
+                    shadow_list.append(strat)
+                    state.shadow_strategies = shadow_list
+                    state.save()
+                    reason = (f"Backtest net-losing over {total} trades (₹{total_pnl:.0f} total, "
+                              f"{win_rate}% win, ₹{avg_pnl:.0f} avg/trade) — moved to shadow mode "
+                              f"to protect capital.")
+                    logger.warning(f"🛡️ RULE-BASED (no AI): {strat} -> SHADOW. {reason}")
+                    try:
+                        await Database.insert_learning_log(
+                            strategy_name=strat,
+                            llm_analysis=f"[STRICT RULE-BASED, no AI involved] {reason}",
+                            old_config=json.dumps({"shadow": already_shadowed}),
+                            new_config=json.dumps({"shadow": True}),
+                        )
+                    except Exception as _le:
+                        logger.warning(f"insert_learning_log failed for {strat}: {_le}")
+                    try:
+                        async with aiosqlite.connect(Database.DB_NAME) as conn:
+                            cursor = await conn.execute("SELECT webhook_url FROM user_states WHERE user_id=?", (user_id,))
+                            row = await cursor.fetchone()
+                            webhook_url = row[0] if row else os.getenv("TELEGRAM_WEBHOOK", "")
+                        from engine.notifier import send_webhook_alert
+                        await send_webhook_alert(
+                            webhook_url, f"Strategy: <i>{strat}</i>\n{reason}",
+                            title="🛡️ Nightly Learning — Moved to Shadow (rule-based, no AI)")
+                    except Exception as _e:
+                        logger.warning(f"Shadow-move alert failed for {strat}: {_e}")
+                elif total_pnl > 0:
+                    logger.info(f"✅ RULE-BASED (no AI): {strat} backtest net-positive "
+                                f"(₹{total_pnl:.0f} over {total} trades) — no status change needed.")
+                elif already_shadowed:
+                    logger.info(f"🛡️ RULE-BASED (no AI): {strat} still net-losing/shadowed — no change "
+                                f"(promotion back to live is handled by the graduation rule above, not here).")
+
+            # AI Critique (Self-Improvement) — BEST-EFFORT ADDITION on top of the strict rule above,
+            # never a requirement for tonight's run to have had an effect. Runs only with REAL data
+            # and only PROPOSES (PENDING) or auto-applies MINOR numeric suggestions.
             if not SELF_TUNING_ENABLED or total < MIN_TRADES_FOR_LEARNING:
-                logger.info(f"🧊 Self-tuning skipped for {strat}: enabled={SELF_TUNING_ENABLED}, "
-                            f"real trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change.")
+                logger.info(f"🧊 AI self-tuning skipped for {strat}: enabled={SELF_TUNING_ENABLED}, "
+                            f"real trades={total} (need ≥{MIN_TRADES_FOR_LEARNING}) — no AI param change "
+                            f"(this does NOT affect the rule-based action above).")
                 continue
             market_regime = getattr(state, "market_regime", "NEUTRAL")
 
