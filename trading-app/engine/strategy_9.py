@@ -508,12 +508,38 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             "consecutive_sl_hits": getattr(state, "strat_9_consec_sl", 0),
         }
         
-        user_prompt = build_user_prompt(snapshot)
-        ai_engine = AIEngine()
-        response = await ai_engine.run_trading_agent(SYSTEM_PROMPT, user_prompt)
-        
-        sig_type = response.get("signal_type")
-        would_execute = sig_type in ["CE_BUY", "PE_BUY"]
+        # ═══════════════════════════════════════════
+        # PRIMARY DECISION (owner directive 07-08-26): "AI provider should not stop or affect the
+        # strategies. AI should confirm ... by seeing the trend." The deterministic technical
+        # signal (EMA9 retest + ADX trend gate, engine/strategy_9.py's own
+        # _rules_only_signal_from_candles — the SAME rule engine/backtest_runner.py replays) is now
+        # the ONLY thing that decides CE/PE/no-trade here. It is computed first and unconditionally
+        # — never blocked, delayed, or overridden by AI availability or opinion.
+        # ═══════════════════════════════════════════
+        rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=now)
+
+        # AI CONFIRMATION — purely observational. Best-effort call to compare the AI's read against
+        # the technical decision above; logged to strategy9_llm_shadow.jsonl for visibility, but it
+        # has NO power to create, block, delay, or modify the trade decision. If every AI provider
+        # is down (the norm the last several days), this entire block is a no-op with zero effect.
+        ai_response = {}
+        try:
+            user_prompt = build_user_prompt(snapshot)
+            ai_engine = AIEngine()
+            _raw = await ai_engine.run_trading_agent(SYSTEM_PROMPT, user_prompt)
+            ai_response = _raw if isinstance(_raw, dict) else {}
+        except Exception as _ai_err:
+            logger.info(f"Strategy 9: AI confirmation unavailable for {symbol} (no effect on trade "
+                        f"decision — technical signal stands): {_ai_err}")
+            ai_response = {}
+
+        ai_sig_type = ai_response.get("signal_type")
+        ai_dir = "CALL" if ai_sig_type == "CE_BUY" else "PUT" if ai_sig_type == "PE_BUY" else None
+        confirmation = "UNAVAILABLE" if not ai_response else (
+            "AGREE" if (rules_sig and ai_dir == rules_sig.get("type")) else
+            "DISAGREE" if ai_dir else "NO_OPINION"
+        )
+
         try:
             _shadow = False
             if hasattr(state, "is_shadow_strategy"):
@@ -524,63 +550,39 @@ async def evaluate_strategy_9(symbol: str, spot: float, candles_5m: list, analys
             _log_strategy9_llm_shadow(
                 symbol=symbol,
                 snapshot=snapshot,
-                response=response if isinstance(response, dict) else {},
-                would_execute=would_execute,
+                response=ai_response,
+                would_execute=bool(rules_sig),
                 paper_or_shadow=bool(getattr(state, "paper_trading", False) or _shadow),
             )
         except Exception as _shadow_err:
             logger.debug(f"Strategy 9 shadow log skipped: {_shadow_err}")
 
-        if would_execute:
-            direction = "CALL" if sig_type == "CE_BUY" else "PUT"
-            
-            signal_dict = {
-                "type": direction,
-                "strategy": "Strategy 9: 9-EMA Momentum Scalper",
-                "time": now.strftime("%H:%M"),
-                "confidence": 85 if response.get("confidence") == "HIGH" else 60,
-                "spot": spot,
-                "reason": response.get("notes", "AI Agent generated signal"),
-                "sl": response.get("sl_underlying", spot - 15 if direction=="CALL" else spot + 15),
-                "target_1": response.get("target_1_underlying", spot + 15 if direction=="CALL" else spot - 15),
-                "target_2": spot + 30 if direction=="CALL" else spot - 30, # default T2
-            }
-            
-            # Increment trades today
-            tt = getattr(state, "strat_9_trades_today", 0)
-            setattr(state, "strat_9_trades_today", tt + 1)
-            state.save()
-            
-            return True, signal_dict
-            
-        elif sig_type == "SKIP_DAY":
-            logger.info(f"Strategy 9 AI decided to SKIP DAY: {response.get('reason')}")
-            
-        elif sig_type == "NO_SIGNAL":
-            reason = str(response.get("reason") or "").lower()
-            ai_dead = any(
-                tok in reason
-                for tok in ("busy", "rate limited", "failed", "unavailable", "no ai", "all ai")
-            )
-            if ai_dead:
-                rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=now)
-                if rules_sig:
-                    logger.info(f"Strategy 9 rules-only fallback fired for {symbol}: {rules_sig['type']}")
-                    tt = getattr(state, "strat_9_trades_today", 0)
-                    setattr(state, "strat_9_trades_today", tt + 1)
-                    state.save()
-                    return True, rules_sig
+        if not rules_sig:
+            return False, {}
+
+        rules_sig["ai_confirmation"] = confirmation
+        rules_sig["reason"] = f"{rules_sig['reason']} | AI confirmation: {confirmation}"
+        logger.info(f"Strategy 9 technical signal for {symbol}: {rules_sig['type']} "
+                    f"(AI confirmation: {confirmation})")
+
+        tt = getattr(state, "strat_9_trades_today", 0)
+        setattr(state, "strat_9_trades_today", tt + 1)
+        state.save()
+        return True, rules_sig
 
     except Exception as e:
-        logger.error(f"Strategy 9 Agent error: {e}")
+        logger.error(f"Strategy 9 error: {e}")
         try:
-            rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=datetime.now(IST))
+            rules_sig = _rules_only_signal_from_candles(candles_5m, spot=spot, now=now or datetime.now(IST))
             if rules_sig:
-                logger.info(f"Strategy 9 rules-only fallback after error for {symbol}: {rules_sig['type']}")
+                logger.info(f"Strategy 9 technical signal (post-error) for {symbol}: {rules_sig['type']}")
+                tt = getattr(state, "strat_9_trades_today", 0)
+                setattr(state, "strat_9_trades_today", tt + 1)
+                state.save()
                 return True, rules_sig
         except Exception as _re:
-            logger.debug(f"Strategy 9 rules fallback failed: {_re}")
-        
+            logger.debug(f"Strategy 9 technical-signal recovery failed: {_re}")
+
     return False, {}
 
 
