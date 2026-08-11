@@ -96,13 +96,29 @@ class NewsWorker:
             pass
         return None
 
-    def _is_quotable(self, client, symbol: str) -> bool:
-        """True only if the symbol returns a live last-price > 0 — the same gate nightly_learning uses."""
+    def _is_quotable(self, client, symbol: str) -> tuple:
+        """(is_quotable, ltp) — true only if the symbol returns a live last-price > 0, the same
+        gate nightly_learning uses. Also returns the LTP so callers can feed it straight into an
+        option-chain check without a second quote fetch."""
         if client is None or not symbol:
-            return False
+            return False, 0.0
         try:
             q = client.get_quote(symbol)
-            return bool(q and q.get("lp", 0) > 0)
+            lp = float(q.get("lp", 0)) if q else 0.0
+            return (lp > 0), lp
+        except Exception:
+            return False, 0.0
+
+    def _has_option_chain(self, client, symbol: str, spot: float) -> bool:
+        """True only if Fyers returns at least one real CE or PE strike for this underlying.
+        The app is options-buy-only (never trades the underlying directly), so a symbol with no
+        listed F&O contracts can never actually be traded — injecting it just fills a watchlist
+        slot and WS-feed capacity with something the auto-trader will never act on."""
+        if client is None or not symbol or spot <= 0:
+            return False
+        try:
+            oc = client.get_option_chain_strikes(spot, num_strikes=2, base_symbol=symbol)
+            return bool(oc and (oc.get("calls") or oc.get("puts")))
         except Exception:
             return False
 
@@ -132,9 +148,16 @@ class NewsWorker:
             if not exact_symbol:
                 return
 
-            if not self._is_quotable(val_client, exact_symbol):
+            is_quotable, ltp = self._is_quotable(val_client, exact_symbol)
+            if not is_quotable:
                 logger.warning(f"⏭️ Skipped unquotable {kind} injection: {exact_symbol} "
                                f"(from '{asset}') — not added to watch")
+                return
+
+            if not self._has_option_chain(val_client, exact_symbol, ltp):
+                logger.warning(f"⏭️ Skipped {kind} injection: {exact_symbol} (from '{asset}') has "
+                               f"no listed option chain — options-buy-only policy means it could "
+                               f"never be traded, so not added to watch")
                 return
 
             logger.info(f"🔥 AI {kind} pick: {asset} → injecting VALID {exact_symbol} "
