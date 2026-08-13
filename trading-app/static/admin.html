@@ -333,7 +333,7 @@
             🧠 AI Swarm
         </div>
         <div class="nav-item" onclick="switchTab('aiStrategiesAdminTab', this); fetchAdminStrategies();">
-            🤖 AI Strategies (Upgrades)
+            🤖 AI Strategy Proposals & Upgrades
         </div>
         
         <div class="sidebar-footer">
@@ -555,15 +555,22 @@
             </div>
         </div>
 
-        <!-- Tab 5: AI Strategies (Upgrades) -->
+        <!-- Tab 5: AI Strategies (Upgrades & Pending Proposals) -->
         <div id="aiStrategiesAdminTab" class="tab-content">
             <div class="top-header">
-                <h1 class="section-title">🤖 AI Strategies (Upgrades)</h1>
-                <button class="btn-primary" onclick="throw new Error('Test Bug: UI Error from Refresh button');fetchAdminStrategies()">Refresh Data</button>
+                <h1 class="section-title">🤖 Pending AI Strategy Proposals & Upgrades</h1>
+                <button class="btn-primary" onclick="fetchAdminStrategies()">Refresh Data</button>
             </div>
             
+            <div class="card" style="margin-bottom: 1.5rem; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2);">
+                <h3 style="margin: 0 0 8px 0; font-size: 1.05rem; color: var(--accent);">💡 Strategy Research & Approval Pipeline</h3>
+                <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);">
+                    When the background <strong>AI Strategy Researcher</strong> discovers or tunes a strategy with high backtest win rates (>55%), proposed upgrades appear below with yellow highlight badges for one-click approval.
+                </p>
+            </div>
+
             <div class="card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
-                <h2 style="border: none; color: var(--text-muted); font-size: 1rem; margin-bottom: 1.5rem;">Review & Manage Strategy Configurations</h2>
+                <h2 style="border: none; color: var(--text); font-size: 1.1rem; margin-bottom: 1rem;">Active & Proposed Strategy Configurations</h2>
                 <div id="adminStrategiesContainer" class="swarm-grid">
                     <!-- Loaded dynamically via fetchAdminStrategies() -->
                 </div>
@@ -968,6 +975,11 @@
                             ? `<details style="margin-top: 15px;"><summary style="cursor:pointer;color:var(--accent);font-size:0.85rem;font-weight:600;">View Latest Learning</summary><div style="margin-top:10px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;border:1px solid var(--border);white-space:pre-wrap;font-size:0.8rem;color:var(--text-muted);">${agent.latest_insight}</div></details>` 
                             : '<div style="margin-top: 15px; font-size:0.8rem; color:var(--text-muted);">No learning data yet. Runs at 4:00 PM.</div>';
                             
+                        // Provenance badge: are these stats from a backtest run or real live trades?
+                        const sourceLabel = agent.stats_source === 'live' ? 'live' : 'backtest';
+                        const sourceBadgeColor = agent.stats_source === 'live' ? 'var(--success)' : 'var(--text-muted)';
+                        const sourceBadge = `<div style="font-size: 0.65rem; color: ${sourceBadgeColor}; margin-top: 2px;">(${sourceLabel})</div>`;
+
                         let card = document.createElement('div');
                         card.className = 'agent-card';
                         card.innerHTML = `
@@ -983,10 +995,12 @@
                                 <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
                                     <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 3px;">Win Rate</div>
                                     <div style="font-size: 1.2rem; font-weight: 700; color: ${((agent.win_rate || 0) >= 50) ? 'var(--success)' : 'var(--danger)'};">${(agent.win_rate || 0).toFixed(1)}%</div>
+                                    ${sourceBadge}
                                 </div>
                                 <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
                                     <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 3px;">Total Trades</div>
                                     <div style="font-size: 1.2rem; font-weight: 700; color: var(--text);">${agent.total_trades || 0}</div>
+                                    ${sourceBadge}
                                 </div>
                             </div>
                             
@@ -1026,8 +1040,8 @@
                                 <span class="badge ${isPending ? 'badge-danger' : 'badge-success'}" style="${isPending ? 'background:rgba(234,179,8,0.2); color:#facc15;' : ''}">${cfg.status}</span>
                             </div>
                             <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;">
-                                <div><strong>Win Rate:</strong> ${cfg.win_rate}%</div>
-                                <div><strong>Trades:</strong> ${cfg.total_trades} (${cfg.winning_trades}W)</div>
+                                <div><strong>Win Rate:</strong> ${cfg.win_rate}% <span style="color:var(--text-muted); font-size:0.75rem;">(${cfg.stats_source === 'live' ? 'live' : 'backtest'})</span></div>
+                                <div><strong>Trades:</strong> ${cfg.total_trades} (${cfg.winning_trades}W) <span style="color:var(--text-muted); font-size:0.75rem;">(${cfg.stats_source === 'live' ? 'live' : 'backtest'})</span></div>
                                 <div><strong>Asset:</strong> ${cfg.asset_class} | ${cfg.is_paper_trading ? 'Paper' : 'Live'}</div>
                             </div>
                             ${isPending && cfg.pending_config_json ? `

@@ -3342,7 +3342,11 @@ function renderStrategies(agents) {
   agents.forEach(agent => {
     const isPending = agent.status === 'PENDING';
     const winRateColor = (agent.win_rate >= 50) ? 'var(--success)' : 'var(--danger)';
-    
+    // Provenance badge: are these stats from a backtest run or real live trades?
+    const sourceLabel = agent.stats_source === 'live' ? 'live' : 'backtest';
+    const sourceBadgeColor = agent.stats_source === 'live' ? 'var(--success)' : 'var(--text-muted)';
+    const sourceBadge = `<div style="font-size: 0.65rem; color: ${sourceBadgeColor}; margin-top: 2px;">(${sourceLabel})</div>`;
+
     let pendingBanner = '';
     let pendingActions = '';
     
@@ -3374,10 +3378,12 @@ function renderStrategies(agents) {
           <div style="background: rgba(0,0,0,0.15); padding: 10px; border-radius: 6px;">
             <div style="font-size: 0.7rem; color: var(--text-muted);">Win Rate</div>
             <div style="font-size: 1.2rem; font-weight: bold; color: ${winRateColor};">${(agent.win_rate || 0).toFixed(1)}%</div>
+            ${sourceBadge}
           </div>
           <div style="background: rgba(0,0,0,0.15); padding: 10px; border-radius: 6px;">
             <div style="font-size: 0.7rem; color: var(--text-muted);">Total Trades</div>
             <div style="font-size: 1.2rem; font-weight: bold;">${agent.total_trades || 0}</div>
+            ${sourceBadge}
           </div>
         </div>
         

@@ -292,7 +292,8 @@ class Database:
             pending_config_json TEXT,
             is_paper_trading BOOLEAN DEFAULT 1,
             continuous_losses INTEGER DEFAULT 0,
-            asset_class TEXT DEFAULT 'EQUITY'
+            asset_class TEXT DEFAULT 'EQUITY',
+            stats_source TEXT DEFAULT 'live'
         )''')
 
         # Migration: add status and pending_config_json to existing swarm_agent_configs
@@ -309,6 +310,29 @@ class Database:
             c.execute("ALTER TABLE swarm_agent_configs ADD COLUMN continuous_losses INTEGER DEFAULT 0")
             c.execute("ALTER TABLE swarm_agent_configs ADD COLUMN asset_class TEXT DEFAULT 'EQUITY'")
             print("🆕 Migrated swarm_agent_configs table: added is_paper_trading, continuous_losses, asset_class columns", flush=True)
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add stats_source provenance column (strategy-self-improvement, 11-08-26)
+        try:
+            c.execute("ALTER TABLE swarm_agent_configs ADD COLUMN stats_source TEXT DEFAULT 'live'")
+            # One-time backfill, guarded by the ALTER above (which can only succeed once, making
+            # this idempotent by construction). Every pre-existing row was last written by
+            # nightly_learning's backtest-sourced update_agent_config() calls — confirmed on the
+            # live DB 13-08-26: the rows holding non-zero stats match backtest_results trade counts
+            # exactly (Strategy 8: 159 vs backtest 158, Strategy 9: 79 vs 79, Crude EIA: 63 vs 63),
+            # while only 24 real executed_trades exist in total. Marking them 'backtest' rather than
+            # letting the column DEFAULT 'live' stand is what makes the Strategy 8 case (SPEC AC#5)
+            # non-misleading.
+            #
+            # NOTE: this replaces the PLAN's `... WHERE stats_source='live' AND last_updated <
+            # '2026-08-11'` date-gated form. That literal cutoff was written on 11-08-26 assuming
+            # same-day EXECUTE; EXECUTE ran 13-08-26, by which point nightly_learning had rewritten
+            # the backtest-derived rows at 2026-08-11 15:18 — i.e. NOT `< '2026-08-11'` — so the
+            # date form tagged the exact rows SPEC AC#5 targets as 'live', the opposite of intent.
+            # The ALTER-guarded form is date-free and cannot later mis-flip a genuinely live row.
+            c.execute("UPDATE swarm_agent_configs SET stats_source='backtest'")
+            print("🆕 Migrated swarm_agent_configs table: added stats_source column (existing rows backfilled as 'backtest')", flush=True)
         except sqlite3.OperationalError:
             pass
 
@@ -414,6 +438,15 @@ class Database:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )''')
         c.execute("CREATE INDEX IF NOT EXISTS idx_backtest_strat_date ON backtest_results(strategy_name, run_date)")
+
+        # backtest_refresh_status (strategy-self-improvement, 11-08-26): single-row status of the
+        # nightly run_backtests_cron.py refresh, so a silent refresh failure is visible to a human.
+        c.execute('''CREATE TABLE IF NOT EXISTS backtest_refresh_status (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_status TEXT,
+            last_run_at TEXT,
+            last_error TEXT
+        )''')
 
         # First-run admin setup — NO hardcoded default credential (Phase 1 Item C1).
         # Only create the admin from an explicit INITIAL_ADMIN_PASSWORD env var; never fall
@@ -846,7 +879,7 @@ class Database:
         return [dict(row) for row in rows]
 
     @staticmethod
-    async def update_agent_config(strategy_name: str, config_dict: dict, win_rate: float, total_trades: int, winning_trades: int, status: str = 'APPROVED', pending_config_json: str = None, is_paper_trading: int = 1, continuous_losses: int = 0, asset_class: str = 'EQUITY'):
+    async def update_agent_config(strategy_name: str, config_dict: dict, win_rate: float, total_trades: int, winning_trades: int, status: str = 'APPROVED', pending_config_json: str = None, is_paper_trading: int = 1, continuous_losses: int = 0, asset_class: str = 'EQUITY', stats_source: str = 'live'):
         import json
         timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
         config_json = json.dumps(config_dict)
@@ -858,8 +891,8 @@ class Database:
             pending_config_json = json.dumps(pending_config_json)
         async with aiosqlite.connect(Database.DB_NAME) as conn:
             await conn.execute("""
-                INSERT INTO swarm_agent_configs (strategy_name, config_json, last_updated, win_rate, total_trades, winning_trades, status, pending_config_json, is_paper_trading, continuous_losses, asset_class)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO swarm_agent_configs (strategy_name, config_json, last_updated, win_rate, total_trades, winning_trades, status, pending_config_json, is_paper_trading, continuous_losses, asset_class, stats_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(strategy_name) DO UPDATE SET
                     config_json = excluded.config_json,
                     last_updated = excluded.last_updated,
@@ -870,8 +903,9 @@ class Database:
                     pending_config_json = excluded.pending_config_json,
                     is_paper_trading = excluded.is_paper_trading,
                     continuous_losses = excluded.continuous_losses,
-                    asset_class = excluded.asset_class
-            """, (strategy_name, config_json, timestamp, win_rate, total_trades, winning_trades, status, pending_config_json, is_paper_trading, continuous_losses, asset_class))
+                    asset_class = excluded.asset_class,
+                    stats_source = excluded.stats_source
+            """, (strategy_name, config_json, timestamp, win_rate, total_trades, winning_trades, status, pending_config_json, is_paper_trading, continuous_losses, asset_class, stats_source))
             await conn.commit()
 
     @staticmethod
@@ -982,7 +1016,7 @@ class Database:
             strategy_name=strategy_name, config_dict=config_dict, win_rate=win_rate,
             total_trades=total_trades, winning_trades=winning_trades, status=status,
             pending_config_json=pending_config_json, is_paper_trading=is_paper_trading,
-            continuous_losses=continuous_losses, asset_class=asset_class
+            continuous_losses=continuous_losses, asset_class=asset_class, stats_source='live'
         )
 
     # ─────────────────────────────────────────────────────────────────────────────
@@ -1128,6 +1162,40 @@ class Database:
         except Exception as e:
             logger.warning(f"save_backtest_result failed for {strategy_name}: {e}")
             return False
+
+    @staticmethod
+    async def set_backtest_refresh_status(status: str, error: str = "") -> bool:
+        """Upsert the single-row backtest_refresh_status (id=1) — visible signal for the nightly
+        run_backtests_cron.py refresh outcome (strategy-self-improvement, 11-08-26)."""
+        try:
+            last_run_at = datetime.now(IST).isoformat()
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                await conn.execute("""
+                    INSERT INTO backtest_refresh_status (id, last_status, last_run_at, last_error)
+                    VALUES (1, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        last_status = excluded.last_status,
+                        last_run_at = excluded.last_run_at,
+                        last_error = excluded.last_error
+                """, (status, last_run_at, error))
+                await conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"set_backtest_refresh_status failed: {e}")
+            return False
+
+    @staticmethod
+    async def get_backtest_refresh_status() -> Optional[Dict]:
+        """Read the single-row backtest_refresh_status, or None if never written."""
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute("SELECT * FROM backtest_refresh_status WHERE id=1") as c:
+                    row = await c.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.warning(f"get_backtest_refresh_status failed: {e}")
+            return None
 
     @staticmethod
     async def get_backtest_performance() -> dict:

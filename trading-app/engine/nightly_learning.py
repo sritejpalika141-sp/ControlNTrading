@@ -241,7 +241,8 @@ async def run_nightly_learning(state, user_id: int):
                     pending_config_json=cfg.get('pending_config_json'),
                     is_paper_trading=0,
                     continuous_losses=cfg.get('continuous_losses', 0),
-                    asset_class=cfg.get('asset_class', 'EQUITY')
+                    asset_class=cfg.get('asset_class', 'EQUITY'),
+                    stats_source='backtest'
                 )
                 
             # --- Auto-Reenable DISABLED Strategies ---
@@ -265,7 +266,8 @@ async def run_nightly_learning(state, user_id: int):
                     pending_config_json=cfg.get('pending_config_json'),
                     is_paper_trading=cfg.get('is_paper_trading', 1),
                     continuous_losses=0,
-                    asset_class=cfg.get('asset_class', 'EQUITY')
+                    asset_class=cfg.get('asset_class', 'EQUITY'),
+                    stats_source='backtest'
                 )
                 logger.info(f"🔧 {strat} re-enabled (status=APPROVED, persisted).")
 
@@ -404,7 +406,8 @@ async def run_nightly_learning(state, user_id: int):
                                 pending_config_json=json_str,
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
                                 continuous_losses=cfg.get('continuous_losses', 0),
-                                asset_class=cfg.get('asset_class', 'EQUITY')
+                                asset_class=cfg.get('asset_class', 'EQUITY'),
+                                stats_source='backtest'
                             )
                             await Database.insert_pending_tuning(
                                 strategy_name=strat,
@@ -429,7 +432,8 @@ async def run_nightly_learning(state, user_id: int):
                                 pending_config_json=cfg.get('pending_config_json'),
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
                                 continuous_losses=cfg.get('continuous_losses', 0),
-                                asset_class=cfg.get('asset_class', 'EQUITY')
+                                asset_class=cfg.get('asset_class', 'EQUITY'),
+                                stats_source='backtest'
                             )
                             msg = f"<b>Minor Optimization Applied</b>\nStrategy: <i>{strat}</i>\nNew Config: <code>{json_str}</code>"
                             await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Optimized")
@@ -446,7 +450,8 @@ async def run_nightly_learning(state, user_id: int):
                                 pending_config_json=json_str,
                                 is_paper_trading=cfg.get('is_paper_trading', 1),
                                 continuous_losses=cfg.get('continuous_losses', 0),
-                                asset_class=cfg.get('asset_class', 'EQUITY')
+                                asset_class=cfg.get('asset_class', 'EQUITY'),
+                                stats_source='backtest'
                             )
                             await Database.insert_pending_tuning(
                                 strategy_name=strat,
