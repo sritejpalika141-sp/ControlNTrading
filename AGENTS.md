@@ -730,6 +730,13 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 - Close paths must pass `strategy` on `record_trade_close` (catastrophic / S3 target fixed); swarm fallback looks up OPEN ledger strategy.
 - Tests: `tests/test_strict_loss_learning.py`.
 
+**AI strategy builder / researcher (wired):**
+- Researcher (`strategy_researcher.py` / `sritej-researcher`) writes `engine/strategy_auto_*.py`, evidence-gates, registers `AI_strategy_N` with `config_json.module_file`.
+- Runtime: `engine/ai_strategy_registry.py` loads those modules; `auto_trader` evaluates enabled `AI_strategy_*` in `active_strategies` (paper-forced until graduated).
+- Quarantine on FAIL returns early (no rewrite loop on missing file).
+- Hindsight optimizer (`workers/hindsight_optimizer_worker.py`) tunes `entry_confidence_floor` / `strike_offset` / `chase_buffer_pct` from each new CLOSED ledger trade (losses tighten).
+- Tests: `tests/test_ai_strategy_wiring.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):

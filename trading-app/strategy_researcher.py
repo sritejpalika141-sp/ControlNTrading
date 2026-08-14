@@ -283,6 +283,8 @@ async def run_learning_cycle():
                             os.makedirs(qdir, exist_ok=True)
                             os.replace(filepath, os.path.join(qdir, filename))
                             print(f"🚫 REJECTED by evidence gate — quarantined to strategies_rejected/{filename}")
+                            # Do NOT run the profitability rewrite loop on a missing/quarantined file.
+                            return
                         else:
                             print(f"🏅 PASSED the evidence gate — {filename} kept as a PAPER-ONLY candidate. "
                                   f"It is NOT auto-enabled for live trading; promote it manually after review.")
@@ -293,10 +295,11 @@ async def run_learning_cycle():
                         try:
                             qdir = os.path.join(APP_DIR, "strategies_rejected")
                             os.makedirs(qdir, exist_ok=True)
-                            os.replace(filepath, os.path.join(qdir, filename))
+                            if os.path.exists(filepath):
+                                os.replace(filepath, os.path.join(qdir, filename))
                         except Exception:
                             pass
-
+                        return
                     # Report the outcome so discoveries are visible instead of silent.
                     try:
                         hook = get_webhook_url()
@@ -339,7 +342,12 @@ async def run_learning_cycle():
                                     
                                     await Database.update_agent_config(
                                         strategy_name=ai_strategy_name,
-                                        config_dict={},
+                                        config_dict={
+                                            "module_file": filename,
+                                            "source_repo": f"{owner}/{name}",
+                                            "paper_trade_only": True,
+                                            "evaluate_hint": "evaluate_auto_*",
+                                        },
                                         win_rate=0.0,
                                         total_trades=0,
                                         winning_trades=0,

@@ -1261,8 +1261,16 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 return
 
             logger.info(f"🚀 {strategy_name} TRADE: {sig['type']} {side} {strike_symbol} @ ₹{entry_price} | SL: {sl_points}pts ({sl_method}) | TGT: {target_points}pts | Product: {product_type}")
-            shadow_exec = state.is_shadow_strategy(strategy_name) and not state.paper_trading
-            if shadow_exec:
+            # AI / researcher strategies stay paper until graduated (is_paper_trading=0).
+            force_ai_paper = bool(sig.get("paper_trade_only")) or str(strategy_name or "").startswith("AI_strategy_")
+            shadow_exec = (state.is_shadow_strategy(strategy_name) or force_ai_paper) and not state.paper_trading
+            if force_ai_paper and not state.paper_trading:
+                await broadcast_log(
+                    f"🧪 AI paper: {strategy_name} {side} {strike_symbol} — live account unchanged until graduated.",
+                    "info",
+                    user_id=client.user_id,
+                )
+            elif shadow_exec:
                 await broadcast_log(
                     f"👻 Shadow (paper): {strategy_name} {side} {strike_symbol} — live account unchanged.",
                     "info",
@@ -2029,10 +2037,45 @@ async def automation_loop():
                 except Exception as _ce:
                     logger.error(f"Crude strategy error for {symbol}: {_ce}")
 
+            async def run_ai_strategies():
+                # Strategy Researcher candidates (AI_strategy_N ↔ engine/strategy_auto_*.py).
+                # Paper-only until graduated; must be enabled in state.active_strategies.
+                try:
+                    active = getattr(state, "active_strategies", []) or []
+                    if not any(str(s).startswith("AI_strategy_") for s in active):
+                        return
+                    if not candles_5m:
+                        return
+                    from engine.ai_strategy_registry import evaluate_enabled_ai_strategies
+                    cd = analysis.get("candles_daily", [])
+                    hits = await evaluate_enabled_ai_strategies(
+                        client, state, symbol, candles_5m, candles_daily=cd, vix=15.0,
+                    )
+                    for ai_name, sig in hits:
+                        can_trade, reason = state.can_trade(
+                            ai_name, signal_type=sig.get("type", "CALL"), symbol=symbol
+                        )
+                        if not can_trade:
+                            logger.info(f"⏭️ {ai_name} blocked: {reason}")
+                            continue
+                        logger.info(
+                            f"🤖 AI strategy signal: {ai_name} {sig.get('type')} {symbol} "
+                            f"(paper={sig.get('paper_trade_only')}) — {sig.get('reason', '')}"
+                        )
+                        await risk_orchestrator.propose_trade(
+                            ai_name, symbol, sig, {"trend": "NEUTRAL"}, client, state
+                        )
+                        break  # one AI signal per symbol per loop
+                except Exception as _ai_e:
+                    logger.error(f"AI strategy eval error for {symbol}: {_ai_e}")
+
             # Execute all symbol-level strategies simultaneously
             import asyncio
-            await asyncio.gather(run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(), run_strat_9(), run_strat_10(), run_strat_11(), run_strat_1(), run_crude_strats())
-            
+            await asyncio.gather(
+                run_strat_4(), run_strat_6(), run_strat_7(), run_strat_8(),
+                run_strat_9(), run_strat_10(), run_strat_11(), run_strat_1(),
+                run_crude_strats(), run_ai_strategies(),
+            )
         except Exception as e:
             logger.error(f"Error in Symbol loop for {symbol}: {e}")
 
