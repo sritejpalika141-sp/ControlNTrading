@@ -1387,6 +1387,7 @@ class FyersClient(BaseBroker):
 
             if side_int == 1:  # BUY — use ask price + 1% buffer (wider for throttled markets)
                 raw = (ask if ask > 0 else ltp) * 1.01
+                # NOTE: live path is fyers_client.py — options there do NOT use ask+1% chase.
             else:  # SELL — use bid price - 1% buffer
                 raw = (bid if bid > 0 else ltp) * 0.99
 
@@ -1579,11 +1580,11 @@ class FyersClient(BaseBroker):
 
         if entry_side == "BUY":
             sl_trigger = round(round((entry_price - sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price - sl_points - 1) / 0.05) * 0.05, 2)
+            sl_limit = round(round((entry_price - sl_points - 0.5) / 0.05) * 0.05, 2)
             sl_side = -1  # SELL
         else:
             sl_trigger = round(round((entry_price + sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price + sl_points + 1) / 0.05) * 0.05, 2)
+            sl_limit = round(round((entry_price + sl_points + 0.5) / 0.05) * 0.05, 2)
             sl_side = 1  # BUY
 
         sl_order = {

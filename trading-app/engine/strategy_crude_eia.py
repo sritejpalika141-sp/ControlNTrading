@@ -47,10 +47,31 @@ def generate_signal(candles=None, now: datetime = None, asset_class: str = _ASSE
     if now is None:
         now = datetime.now(IST)
 
-    # Per owner directive (22-07-26): this range-breakout strategy now runs the FULL MCX session,
-    # not only the Wednesday EIA-release window. The Wednesday gate and the intra-day window gate
-    # have been removed; it evaluates whenever crude candles are available and the market is open
-    # (session open/close is enforced upstream by the automation loop's is_market_open check).
+    # Restored (03-08-26): EIA edge is Wednesday release only — full-session breakouts
+    # were buying every range expansion (buy-high) and bleeding capital Mon–Fri.
+    if now.weekday() != 2:  # 0=Mon … 2=Wed
+        return _no_trade("Not Wednesday EIA day")
+
+    # Provisional IST window around EIA (~20:00 IST summer). Outside = no trade.
+    start_s, end_s = "19:30", "21:00"
+    try:
+        from engine.asset_classes import get_asset_class
+        ac = get_asset_class(asset_class)
+        win = (getattr(ac, "risk_config", None) or {}).get("eia_window")
+        if win and len(win) >= 2:
+            start_s, end_s = win[0], win[1]
+    except Exception:
+        pass
+    try:
+        sh, sm = map(int, str(start_s).split(":")[:2])
+        eh, em = map(int, str(end_s).split(":")[:2])
+        start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+        if not (start <= now <= end):
+            return _no_trade(f"Outside EIA window {start_s}-{end_s} IST")
+    except Exception:
+        return _no_trade("EIA window parse error")
+
     if not candles or len(candles) < 3:
         return _no_trade("Insufficient candle data")
 

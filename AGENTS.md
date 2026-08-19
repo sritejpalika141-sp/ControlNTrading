@@ -697,6 +697,46 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 
 **Production (read-only checks):** `http://35.234.213.226:8000` — deploy via GitHub Actions on push to `main`.
 
+**Fyers Connect:** UI opens `/fyers/auth` (not a missing `get_master_fyers_creds`). Creds resolve user → master (`get_master_app_credentials`) → env. OAuth `oauth_verifier` cookie is Secure only on HTTPS — plain HTTP `:8000` must not force Secure or browsers drop the cookie. Manual paste via `/api/submit-auth-code` remains the fallback when redirect URI is the Fyers default HTML page. Regression: `tests/test_fyers_auth_redirect.py`.
+
+**Agent scrips (NewsWorker):** Runs every **30 minutes** inside `sritej-trading` (not `vm_orchestrator`). Needs a live Fyers token to quote-validate picks; without it, injects are skipped (`last_skip_reason` on `/api/market-summary`). After Fyers reconnect or morning token refresh, news+inject is scheduled immediately. Force: `POST /api/scripts/agent-refresh` (authed). Equity window `<15:00 IST`, MCX `09:00–22:00 IST`. Agent scrips purge at 15:30 (equity) / 23:45 (MCX).
+
+**LOCKED — Do not buy the high:**
+- Strategy 1 must **never** set entry = 1m candle HIGH (disabled). Entry = LTP.
+- Strategy 1 is **blocked on MCX/CDS** (equity OB/FVG only).
+- Crude EIA = **Wednesday window only**; Evening momentum = **after 17:00 IST only**.
+- Options AUTOLIMIT: no ask+1% chase.
+- **Commodity strategies default OFF**; on load, all-day ORB/9-EMA/Swing are stripped (EIA/Evening kept if enabled). Re-enable only after paper week.
+- Owner stop-bleeding: turn automation OFF / paper ON, remove CRUDE from watchlist until SL attach is proven on MCX.
+
+**LOCKED — Initial SL + Trailing SL (TSL) — EVERY strategy, no exceptions:**
+
+- Rule: BUY option stop = **lowest of last 3 candles on the 1‑min OPTION chart**. Trail only **raises** that stop. Initial distance = `entry − that low`.
+- SL-Limit orders: **trigger vs limit gap = 0.5 only** (`stopPrice − limitPrice = 0.5` when closing a long). Helper: `fyers_client.compute_sl_limit_price`. Applied at place + trail modify.
+- **MCX/CDS tick = 0.1** (NSE = 0.05). Wrong tick was rejecting crude SL while entry filled (naked risk). If SL-L still fails → retry SL-M → **emergency square-off** (never hold unprotected options). Guardian retries naked positions every ~8s on failure.
+- Same logic for Strategy 1–11, ORB, 9:26, Wisdom, Aerospace, Gap Fill, crude/EIA, commodity — signal `sl_points` (20pts, 50% premium, ORB width, −2/VIX clamps, etc.) are **ignored at placement**.
+- Banned overrides (removed): Strategy 1 Variant‑L 1R trail, Strategy 3/9 T1‑breakeven trail + skip‑global‑trail `continue`, Strategy 5/6 FVL+ATR trail, Strategy 1 −2/VIX/10–20 clamp, SL Guardian 12% floor.
+- Allowed separately: hard time exits (S5 bars / S6 13:30) and ORB T2 profit-target **exit** (not trail). Manual broker SL tighten is still respected (trail never loosens).
+- Code: `CANONICAL_SL_*` + `calculate_smart_sl` + global block in `trailing_monitor` (`workers/auto_trader.py`). Guardian: `workers/sl_guardian.py`.
+- Tests: `tests/test_smart_sl_3candle.py`, `tests/test_sl_tsl_lock.py`.
+- **Do not reintroduce strategy-specific SL/TSL without explicit owner approval.**
+
+**Options policy:** **BUY CE/PE only** (bearish = buy PE, not sell/write). Broker `place_order` rejects option SELL unless a matching long exists and forces the long’s `productType` (avoids INTRADAY SELL vs CO long = accidental short). **Entries are always INTRADAY** (CO/MARGIN/NRML requests are forced). CO reject abort no longer applies to new entries (separate INTRADAY SL legs). Regression: `tests/test_options_buy_only.py`.
+
+**LOCKED — STRICT learn from losing trades:**
+- Nightly self-tuning (`engine/nightly_learning.py`) **always** runs AI critique when a strategy has ≥1 CLOSED loss in the ledger — even if total trades < `MIN_TRADES_FOR_LEARNING` (10). Aggregate-only tuning (0 losses) still needs ≥10 trades.
+- Prompt injects each losing trade (entry/exit/SL/regime/exit_reason) via `Database.get_losing_trades`.
+- `continuous_losses` syncs from ledger streak (`compute_continuous_loss_streak`); breakeven does **not** inflate the streak; 3 consecutive losses still DISABLED.
+- Close paths must pass `strategy` on `record_trade_close` (catastrophic / S3 target fixed); swarm fallback looks up OPEN ledger strategy.
+- Tests: `tests/test_strict_loss_learning.py`.
+
+**AI strategy builder / researcher (wired):**
+- Researcher (`strategy_researcher.py` / `sritej-researcher`) writes `engine/strategy_auto_*.py`, evidence-gates, registers `AI_strategy_N` with `config_json.module_file`.
+- Runtime: `engine/ai_strategy_registry.py` loads those modules; `auto_trader` evaluates enabled `AI_strategy_*` in `active_strategies` (paper-forced until graduated).
+- Quarantine on FAIL returns early (no rewrite loop on missing file).
+- Hindsight optimizer (`workers/hindsight_optimizer_worker.py`) tunes `entry_confidence_floor` / `strike_offset` / `chase_buffer_pct` from each new CLOSED ledger trade (losses tighten).
+- Tests: `tests/test_ai_strategy_wiring.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):

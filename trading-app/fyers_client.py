@@ -32,6 +32,33 @@ load_dotenv(ENV_PATH)
 
 logger = logging.getLogger("FYERS_CLIENT")
 
+# Owner rule (03-08-26): for SL-Limit (type 4), |stopPrice − limitPrice| must be 0.5 only.
+# Closing a long (SELL SL): limit = trigger − 0.5. Closing a short (BUY SL): limit = trigger + 0.5.
+SL_TRIGGER_LIMIT_GAP = 0.5
+
+
+def get_price_tick(symbol: str) -> float:
+    """Instrument tick: MCX/CDS options & futures use 0.1; NSE equity/index options use 0.05."""
+    s = (symbol or "").upper()
+    if s.startswith("MCX:") or s.startswith("CDS:"):
+        return 0.1
+    return 0.05
+
+
+def round_to_tick(price: float, tick: float = 0.05) -> float:
+    if not tick or tick <= 0:
+        tick = 0.05
+    return round(round(float(price) / tick) * tick, 2)
+
+
+def compute_sl_limit_price(stop_trigger: float, exit_side: int, symbol: str = "") -> float:
+    """SL-L limit price 0.5 away from trigger, rounded to the instrument tick.
+    exit_side: -1=SELL (close long), +1=BUY (close short)."""
+    tick = get_price_tick(symbol)
+    raw = float(stop_trigger) - SL_TRIGGER_LIMIT_GAP if exit_side < 0 else float(stop_trigger) + SL_TRIGGER_LIMIT_GAP
+    return round_to_tick(raw, tick)
+
+
 class FyersClient:
     """Wrapper around Fyers API v3 for trading operations."""
 
@@ -835,11 +862,27 @@ class FyersClient:
         'LimitPrice not a valid tick multiple' rejection that left the CO position unprotected. The
         stop_price (trigger) is rounded to the instrument tick (0.1 for MCX/CDS, 0.05 for NSE).
         exit_side = -1 (SELL) to close a long option; +1 (BUY) to close a short. Returns the raw
-        Fyers response ({'s':'ok','id':...} on success)."""
+        Fyers response ({'s':'ok','id':...} on success).
+
+        BUY-ONLY OPTIONS: SELL protective stops are allowed only when a matching long CE/PE exists;
+        productType is forced to that long's product so we never open a naked INTRADAY short vs a CO long.
+        """
         try:
             client = self._get_active_client()
             if not client:
                 return {"s": "error", "message": "no active broker client"}
+
+            if self._is_option_symbol(symbol) and int(exit_side) == -1:
+                long_pos = self._find_option_long(symbol, min_qty=1)
+                if not long_pos:
+                    msg = "options SL SELL blocked: no matching long CE/PE (buy-only)"
+                    print(f"⛔ {msg}: {symbol}", flush=True)
+                    return {"s": "error", "message": msg}
+                product_type = self._position_product(long_pos) or product_type
+                # Never exceed the long qty (would create a residual short)
+                long_qty = abs(self._position_net_qty(long_pos))
+                qty = min(int(qty), long_qty) if long_qty > 0 else int(qty)
+
             tick = 0.1 if (symbol.startswith("MCX:") or symbol.startswith("CDS:")) else 0.05
             trig = round(round(float(stop_price) / tick) * tick, 2)
             data = {
@@ -858,6 +901,56 @@ class FyersClient:
             return resp if isinstance(resp, dict) else {"s": "error", "message": str(resp)}
         except Exception as e:
             return {"s": "error", "message": str(e)}
+
+    @staticmethod
+    def _is_option_symbol(symbol: str) -> bool:
+        s = (symbol or "").upper()
+        return s.endswith("CE") or s.endswith("PE")
+
+    @staticmethod
+    def _position_net_qty(pos: Dict) -> int:
+        """Signed net qty: +long / -short. Prefers Fyers netQty when present."""
+        if not pos:
+            return 0
+        if pos.get("netQty") is not None:
+            try:
+                return int(pos.get("netQty") or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            qty = abs(int(pos.get("qty", 0) or 0))
+            side = int(pos.get("side", 1) or 1)
+            return qty if side > 0 else -qty
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _position_product(pos: Dict) -> str:
+        if not pos:
+            return ""
+        return str(pos.get("productType") or pos.get("product") or "").upper()
+
+    def _find_option_long(self, symbol: str, min_qty: int = 1) -> Optional[Dict]:
+        """Return an open long CE/PE position for symbol with net qty >= min_qty, else None."""
+        try:
+            positions = self.get_positions() or []
+        except Exception:
+            positions = []
+        for p in positions:
+            if str(p.get("symbol", "")) != symbol:
+                continue
+            net = self._position_net_qty(p)
+            if net >= int(min_qty):
+                return p
+        return None
+
+    def resolve_exit_product(self, symbol: str, fallback: str = "INTRADAY") -> str:
+        """Product type for closing an option long — must match the live position book."""
+        long_pos = self._find_option_long(symbol, min_qty=1)
+        prod = self._position_product(long_pos) if long_pos else ""
+        if prod:
+            return prod
+        return (fallback or "INTRADAY").upper()
 
     def get_historical(self, symbol: str, resolution: str, days_back: int = 10) -> List[Dict]:
         """
@@ -1572,29 +1665,67 @@ class FyersClient:
             return {"s": "error", "message": str(e), "code": 500}
 
     def place_order(self, symbol: str, qty: int, side: str,
-                    order_type: str = "MARKET", product: str = "NRML",
+                    order_type: str = "MARKET", product: str = "INTRADAY",
                     limit_price: float = 0, stop_price: float = 0,
-                    sl_points: float = 12.0, target_points: float = 0.0) -> Dict:
+                    sl_points: float = 12.0, target_points: float = 0.0,
+                    is_exit: bool = False) -> Dict:
         """
         Place an order.
         For MARKET orders: auto-fetches LTP and places as LIMIT with buffer
         (Fyers Algo apps require Market Price Protection — no true market orders).
+
+        OPTIONS BUY-ONLY POLICY: CE/PE SELL is allowed only as sell-to-close of an existing
+        long in the same product book. Sell-to-open / writing puts/calls is rejected.
+
+        INTRADAY-ONLY POLICY: new entries are always productType=INTRADAY (CO/MARGIN/NRML
+        requests are forced). Exits may use the live long's product to flatten legacy books.
         """
-        # Check global KILL SWITCH
+        side_int = 1 if str(side).upper() == "BUY" else -1
+        is_option = self._is_option_symbol(symbol)
+
+        # ── Options buy-only: never open a short CE/PE ──
+        if is_option and side_int == -1:
+            long_pos = self._find_option_long(symbol, min_qty=1)
+            if not long_pos:
+                msg = ("⛔ Options SELL blocked: no matching long CE/PE to close "
+                       "(buy-only policy — cannot sell-to-open / write options).")
+                print(f"{msg} symbol={symbol}", flush=True)
+                return {"success": False, "message": msg}
+            live_qty = abs(self._position_net_qty(long_pos))
+            if qty > live_qty > 0:
+                print(f"ℹ️ Clamping option exit qty {qty} → {live_qty} for {symbol}", flush=True)
+                qty = live_qty
+            # Match product book so SELL nets the long (legacy CO/MARGIN can still flatten).
+            matched = self._position_product(long_pos)
+            if matched:
+                product = matched
+            is_exit = True
+        elif is_option and side_int == 1 and is_exit:
+            # BUY is_exit would mean covering a short — not allowed under buy-only.
+            return {"success": False, "message": "⛔ Options BUY-to-cover blocked (buy-only; no short options)."}
+
+        # ── INTRADAY-ONLY POLICY (user directive): every NEW trade is INTRADAY ──
+        # Callers may still pass CO/MARGIN/NRML; entries are forced to INTRADAY.
+        # Verified option exits keep the live long's product so prior CO books can close cleanly.
+        if not is_exit:
+            if str(product).upper() not in ("INTRADAY", "MIS"):
+                print(f"ℹ️ Forcing entry product {product} → INTRADAY for {symbol}", flush=True)
+            product = "INTRADAY"
+
+        # Check global KILL SWITCH — still allow verified option exits so liquidation works.
         from models import Database
-        if Database.is_kill_switch_active():
+        if Database.is_kill_switch_active() and not (is_option and side_int == -1 and is_exit):
             print(f"🛑 [KILL SWITCH ACTIVE] Order rejected: {symbol} {side} {qty}")
             return {"success": False, "message": "SYSTEM LOCKED: Global Kill-Switch is active."}
 
         # POSITION SIZING: If qty is 0 or not provided, calculate based on risk.
         # Lazy import — see the note at the top of this file: importing from `state` at module
         # level creates a circular import (state.py imports FyersClient from here).
-        if qty <= 0 and limit_price > 0:
+        if qty <= 0 and limit_price > 0 and side_int == 1:
             from state import calculate_position_size
             qty = calculate_position_size(self.user_id, limit_price, sl_points, symbol)
             print(f"📊 POSITION SIZING: Calculated qty={qty} for {symbol} (risk={sl_points}pts)")
 
-        side_int = 1 if side.upper() == "BUY" else -1
         sl_order_type = 0
 
         # Check paper trading
@@ -1637,14 +1768,19 @@ class FyersClient:
                 # Create pending SL / Target orders
                 sl_trigger = 0.0
                 if sl_points > 0:
-                    sl_trigger = round(round((entry_price - sl_points if side_int == 1 else entry_price + sl_points) / 0.05) * 0.05, 2)
+                    tick = get_price_tick(symbol)
+                    sl_trigger = round_to_tick(
+                        entry_price - sl_points if side_int == 1 else entry_price + sl_points, tick
+                    )
+                    # Paper SL-L: same 0.5 trigger/limit gap as live (_place_stop_loss)
+                    sl_limit = compute_sl_limit_price(sl_trigger, exit_side=-side_int, symbol=symbol)
                     sl_order = {
                         "id": sl_order_id,
                         "symbol": symbol,
                         "qty": qty,
                         "side": -side_int,
                         "type": 4, # Stop Limit
-                        "limitPrice": sl_trigger,
+                        "limitPrice": sl_limit,
                         "stopPrice": sl_trigger,
                         "status": 6, # PENDING
                         "orderDateTime": datetime.now(IST).strftime("%d-%b-%Y %H:%M:%S"),
@@ -1776,13 +1912,17 @@ class FyersClient:
                 logger.warning(f"⚠️ Cannot get any price for {symbol}. Order cannot be placed.")
                 return {"success": False, "message": f"Could not fetch live price for {symbol} to calculate Limit Buffer. Is WebSocket active?"}
 
-            if side_int == 1:  # BUY — use ask price + 1% buffer (wider for throttled markets)
-                raw = (ask if ask > 0 else ltp) * 1.01
+            if side_int == 1:  # BUY
+                # Options: NEVER chase ask+1% (was buying tops). Cap at ask/LTP.
+                if self._is_option_symbol(symbol):
+                    raw = ask if ask > 0 else ltp
+                else:
+                    raw = (ask if ask > 0 else ltp) * 1.01
             else:  # SELL — use bid price - 1% buffer
                 raw = (bid if bid > 0 else ltp) * 0.99
 
-            # Round to tick size 0.05
-            limit_price = round(round(raw / 0.05) * 0.05, 2)
+            # Round to instrument tick (MCX 0.1 / NSE 0.05)
+            limit_price = round_to_tick(raw, get_price_tick(symbol))
 
             # Force LIMIT type (type=1) since algo apps don't allow true MARKET
             actual_type = 1  # LIMIT order
@@ -1790,9 +1930,9 @@ class FyersClient:
         else:
             type_map = {"MARKET": 2, "LIMIT": 1, "STOP": 3, "STOPLIMIT": 4}
             actual_type = type_map.get(order_type.upper(), 1)
-            # Round limit price to tick
+            # Round limit price to instrument tick
             if limit_price > 0:
-                limit_price = round(round(limit_price / 0.05) * 0.05, 2)
+                limit_price = round_to_tick(limit_price, get_price_tick(symbol))
                 
                 # Fyers rejects actual_type=2 (MARKET) if limit_price > 0
                 if actual_type == 2:
@@ -1803,22 +1943,21 @@ class FyersClient:
 
         # Map product types (Fyers v3 dropped NRML, uses MARGIN for F&O)
         product_map = {"NRML": "MARGIN", "MIS": "INTRADAY"}
-        mapped_product = product_map.get(product.upper(), product.upper())
+        mapped_product = product_map.get(str(product).upper(), str(product).upper())
 
         is_bo = False
         is_co = False
-        # OWNER RULE (28/29-07-26): a CO must stay a CO. The previous code CONVERTED every CO to
-        # INTRADAY + a SEPARATE SELL stop — a naked short on a long option that Fyers margins
-        # enormously (a live crude PUT needed ₹2.76 lakh), so the SL was rejected and the position
-        # was left with NO stop. The CO's stop is a built-in, margin-benefited leg placed atomically
-        # with the buy, and its leg id IS modifiable for the trailing stop (see _get_bo_legs). Keep
-        # SL-bearing entries as CO; if the CO is rejected the order is aborted below (never naked).
-        if product.upper() == "CO" or (sl_points > 0 and target_points <= 0):
+        # INTRADAY-ONLY entries: never auto-upgrade to Cover/Bracket Order.
+        # SL/target (when requested) are placed as separate same-product INTRADAY legs after fill.
+        # Explicit CO/BO is only allowed on verified exits that already matched a live long's book.
+        if is_exit and mapped_product == "CO":
             is_co = True
-            mapped_product = "CO"
-        elif sl_points > 0 and target_points > 0:
+        elif is_exit and mapped_product == "BO":
             is_bo = True
-            mapped_product = "BO"
+        elif not is_exit:
+            mapped_product = "INTRADAY"
+        elif mapped_product not in ("INTRADAY", "MARGIN", "CO", "BO", "CNC"):
+            mapped_product = "INTRADAY"
 
         stop_trigger = 0.0
         target_trigger = 0.0
@@ -1869,17 +2008,15 @@ class FyersClient:
             resp = self.client.place_order(order_data)
             print(f"📥 Response: {resp}")
 
-            # If CO rejected (e.g. tick error or CO restricted for strike), retry as INTRADAY
-            # with server-side trailing_monitor monitoring exact position quantity.
+            # If CO rejected — ABORT. Do NOT fall back to INTRADAY + separate SELL stop:
+            # that pending short does not net a CO long and can open a naked short PE/CE
+            # (buy-only violation). Match engine/brokers/fyers.py abort policy.
             if not self._is_success(resp) and is_co:
-                print(f"⚠️ CO Rejected ({resp.get('message')}). Retrying as INTRADAY with server-side SL/TSL sentinel.")
-                is_co = False
-                mapped_product = "INTRADAY"
-                order_data["productType"] = mapped_product
-                order_data.pop("stopLoss", None)
-                order_data.pop("takeProfit", None)
-                resp = self.client.place_order(order_data)
-                print(f"📥 Fallback Response: {resp}")
+                print(f"⚠️ CO Rejected — aborting order (no naked entry / no separate SELL SL): {resp.get('message')}", flush=True)
+                return {
+                    "success": False,
+                    "message": f"CO rejected, order aborted (no SL possible): {resp.get('message', 'unknown')}",
+                }
 
             # Fallback if BO fails or is rejected
             if not self._is_success(resp) and is_bo:
@@ -1889,6 +2026,9 @@ class FyersClient:
                 order_data["productType"] = mapped_product
                 order_data.pop("stopLoss", None)
                 order_data.pop("takeProfit", None)
+                # BUY-only: never fall back to a SELL entry
+                if side_int == -1 and self._is_option_symbol(symbol):
+                    return {"success": False, "message": "BO rejected; options SELL entry blocked (buy-only)."}
                 resp = self.client.place_order(order_data)
                 print(f"📥 Fallback Response: {resp}")
 
@@ -1920,7 +2060,9 @@ class FyersClient:
                     "sl_price": stop_trigger
                 }
             else:
-                # === AUTO STOP LOSS ===
+                # === AUTO STOP LOSS (INTRADAY separate leg) ===
+                # Never leave an options long naked: SL-L → SL-M retry → emergency square-off.
+                sl_order_type = 0
                 if sl_points > 0:
                     sl_result = self._place_stop_loss(
                         symbol=symbol,
@@ -1930,6 +2072,67 @@ class FyersClient:
                         sl_points=sl_points,
                         product=mapped_product,
                     )
+                    if sl_result.get("success"):
+                        sl_order_type = 4
+                    else:
+                        # SL-L often fails on MCX when prices aren't on 0.1 tick, or before the
+                        # long appears in positions. Retry SL-M (no limitPrice) up to 3 times.
+                        print(f"⚠️ SL-L failed ({sl_result.get('message')}) — retrying SL-M for {symbol}", flush=True)
+                        import time as _time
+                        stop_abs = (entry_price - sl_points) if side.upper() == "BUY" else (entry_price + sl_points)
+                        stop_abs = round_to_tick(stop_abs, get_price_tick(symbol))
+                        exit_side = -1 if side.upper() == "BUY" else 1
+                        for _attempt in range(3):
+                            _time.sleep(0.7)
+                            raw = self.place_stop_loss(
+                                symbol, qty, stop_abs, exit_side=exit_side, product_type=mapped_product
+                            )
+                            ok = isinstance(raw, dict) and (
+                                raw.get("s") == "ok" or raw.get("id") or str(raw.get("code")) in ("1101", "200")
+                            )
+                            if ok and raw.get("id"):
+                                sl_result = {
+                                    "success": True,
+                                    "order_id": raw.get("id", ""),
+                                    "sl_price": stop_abs,
+                                    "message": f"SL-M at ₹{stop_abs}",
+                                }
+                                sl_order_type = 3
+                                print(f"🛡️ SL-M fallback OK for {symbol} id={raw.get('id')}", flush=True)
+                                break
+                            print(f"⚠️ SL-M attempt {_attempt+1}/3 failed for {symbol}: {raw}", flush=True)
+
+                        if not sl_result.get("success"):
+                            # FAIL-CLOSED: square off immediately — never hold an unprotected option.
+                            print(
+                                f"🚨 CRITICAL: SL failed after retries for {symbol} — emergency MARKET exit",
+                                flush=True,
+                            )
+                            try:
+                                self.place_order(
+                                    symbol=symbol,
+                                    qty=qty,
+                                    side="SELL" if side.upper() == "BUY" else "BUY",
+                                    order_type="MARKET",
+                                    product=mapped_product,
+                                    sl_points=0.0,
+                                    target_points=0.0,
+                                    is_exit=True,
+                                )
+                            except Exception as _ex:
+                                print(f"🚨 Emergency exit also failed for {symbol}: {_ex}", flush=True)
+                            return {
+                                "success": False,
+                                "order_id": main_order_id,
+                                "sl_order_id": "",
+                                "tgt_order_id": "",
+                                "sl_order_type": 0,
+                                "emergency_exit": True,
+                                "message": (
+                                    f"Entry filled but SL failed — position squared off. "
+                                    f"SL error: {sl_result.get('message', 'unknown')}"
+                                ),
+                            }
 
                 if sl_result.get("success"):
                     sl_msg = f" | SL placed at ₹{sl_result.get('sl_price', '?')}"
@@ -1955,7 +2158,7 @@ class FyersClient:
                 sl_order_type = 3
             elif is_bo:
                 sl_order_type = 4
-            elif sl_points > 0:
+            elif sl_points > 0 and not locals().get("sl_order_type"):
                 sl_order_type = 4
 
             return {
@@ -1963,7 +2166,7 @@ class FyersClient:
                 "order_id": main_order_id,
                 "sl_order_id": sl_result.get("order_id", ""),
                 "tgt_order_id": tgt_result.get("order_id", "") if 'tgt_result' in locals() else "",
-                "sl_order_type": sl_order_type,
+                "sl_order_type": sl_order_type if 'sl_order_type' in locals() else 0,
                 "message": f"Order placed at ₹{entry_price}{sl_msg}{target_msg}",
             }
 
@@ -1976,20 +2179,26 @@ class FyersClient:
                          product: str = "MARGIN") -> Dict:
         """
         Place a stop loss order (SL-Limit, type=4).
-        For BUY entry → SL is SELL at entry - sl_points
-        For SELL entry → SL is BUY at entry + sl_points
+        For BUY entry → SL is SELL at entry - sl_points (limit = trigger − 0.5)
+        For SELL entry → SL is BUY at entry + sl_points (limit = trigger + 0.5)
+        Owner rule: trigger/limit gap is exactly SL_TRIGGER_LIMIT_GAP (0.5).
         """
         if not self.client:
             return {"success": False, "message": "Not authenticated"}
 
         if entry_side == "BUY":
-            sl_trigger = round(round((entry_price - sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price - sl_points - 1) / 0.05) * 0.05, 2)
-            sl_side = -1  # SELL
+            tick = get_price_tick(symbol)
+            sl_trigger = round_to_tick(entry_price - sl_points, tick)
+            sl_side = -1  # SELL to close the long just bought
+            sl_limit = compute_sl_limit_price(sl_trigger, exit_side=sl_side, symbol=symbol)
         else:
-            sl_trigger = round(round((entry_price + sl_points) / 0.05) * 0.05, 2)
-            sl_limit = round(round((entry_price + sl_points + 1) / 0.05) * 0.05, 2)
+            # Buy-only options: never place a BUY stop that would cover/open a short option.
+            if self._is_option_symbol(symbol):
+                return {"success": False, "message": "options SELL-entry SL blocked (buy-only policy)"}
+            tick = get_price_tick(symbol)
+            sl_trigger = round_to_tick(entry_price + sl_points, tick)
             sl_side = 1  # BUY
+            sl_limit = compute_sl_limit_price(sl_trigger, exit_side=sl_side, symbol=symbol)
 
         sl_order = {
             "symbol": symbol,
@@ -2103,16 +2312,20 @@ class FyersClient:
         Modify an existing order.
         order_type: 1 for LIMIT (Target), 4 for SL-LIMIT (Stop Loss)
         """
-        # Determine actual order type from orderbook/cache
+        # Determine actual order type + symbol (for MCX/NSE tick) from orderbook/cache
         actual_type = order_type
+        order_symbol = ""
         try:
             orders = self.get_orders()
             matching_order = next((o for o in orders if str(o.get("id")) == str(order_id)), None)
             if matching_order:
                 actual_type = matching_order.get("type", order_type)
+                order_symbol = matching_order.get("symbol", "") or ""
                 print(f"🔍 Found order {order_id} in orderbook. Type: {actual_type}")
         except Exception as e:
             print(f"⚠️ Error fetching order type: {e}")
+
+        tick = get_price_tick(order_symbol)
 
         if actual_type == 3:
             order_type = 3
@@ -2126,9 +2339,9 @@ class FyersClient:
                 for o in state.paper_orders:
                     if o["id"] == order_id:
                         if limit_price > 0 and o.get("type") != 3:
-                            o["limitPrice"] = round(round(limit_price / 0.05) * 0.05, 2)
+                            o["limitPrice"] = round_to_tick(limit_price, get_price_tick(o.get("symbol", "")))
                         if stop_price > 0:
-                            o["stopPrice"] = round(round(stop_price / 0.05) * 0.05, 2)
+                            o["stopPrice"] = round_to_tick(stop_price, get_price_tick(o.get("symbol", "")))
                         if qty > 0:
                             o["qty"] = qty
                         o["message"] = "Order Modified (Paper Mode)"
@@ -2148,11 +2361,11 @@ class FyersClient:
         if actual_type == 3:
             data["limitPrice"] = 0.0
         
-        # Format prices to valid tick sizes if provided
+        # Format prices to valid tick sizes if provided (MCX=0.1, NSE=0.05)
         if limit_price > 0 and actual_type != 3:
-            data["limitPrice"] = round(round(limit_price / 0.05) * 0.05, 2)
+            data["limitPrice"] = round_to_tick(limit_price, tick)
         if stop_price > 0:
-            data["stopPrice"] = round(round(stop_price / 0.05) * 0.05, 2)
+            data["stopPrice"] = round_to_tick(stop_price, tick)
         if qty > 0:
             data["qty"] = qty
 

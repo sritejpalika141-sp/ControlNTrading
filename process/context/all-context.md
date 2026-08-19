@@ -197,6 +197,7 @@ process/
 **State Management:** Heavy use of in-memory dictionaries (e.g. `USER_CONTEXTS` in `app.py`) for live trading states, cached funds, and active positions.
 **Auth Caching:** Fyers API responses are cached in `fyers_client.py` for 5 minutes to prevent rate-limit bans (Error 429).
 **Background Workers:** Background loops (`automation_loop`, `market_data_worker`, `trailing_monitor`) run continuously using Python's `asyncio` to manage live trading.
+**LOCKED SL/TSL (owner 03-08-26):** Initial stop and trailing stop are identical for every strategy — lowest of last 3 one-minute **option** candles; trail only raises. Implemented only in `workers/auto_trader.py` (`calculate_smart_sl` + global trail). No strategy-specific SL/TSL overrides. See `AGENTS.md` §Cursor Cloud.
 **Database Access:** `models.py` uses `aiosqlite` for asynchronous DB writes to prevent blocking the FastAPI event loop.
 **Session Auth (added by security-remediation Phase 1, commit `0e1b78c`):** User sessions use a
 signed cookie (`itsdangerous.URLSafeTimedSerializer`, keyed by `SECRET_KEY`) instead of a raw

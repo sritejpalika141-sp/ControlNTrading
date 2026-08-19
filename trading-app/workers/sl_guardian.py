@@ -27,8 +27,10 @@ logger = logging.getLogger("SL_GUARDIAN")
 IST = pytz.timezone("Asia/Kolkata")
 
 GUARDIAN_INTERVAL = 10          # seconds between scans
-_PLACED_COOLDOWN = 45           # don't retry the same symbol within N seconds of a placement attempt
-_recent_attempts = {}           # symbol -> last attempt epoch (avoids double-fire before orderbook updates)
+_PLACED_COOLDOWN_OK = 45        # after a successful protective place
+_PLACED_COOLDOWN_FAIL = 8       # retry faster when placement failed (naked risk)
+_recent_attempts = {}           # symbol -> last attempt epoch
+_recent_attempt_ok = {}         # symbol -> bool last attempt succeeded
 
 
 def _has_active_stop(orders, symbol) -> bool:
@@ -43,8 +45,8 @@ def _has_active_stop(orders, symbol) -> bool:
 
 
 async def _compute_stop(client, symbol, entry, ltp, side_long):
-    """Protective stop price using the same floored 3→4→5-candle swing-low logic as entries.
-    Falls back to a 12%-of-premium floor. Always returns a stop on the correct side of LTP."""
+    """Protective stop using LOCKED canonical calculate_smart_sl (last-3×1m option low).
+    Fallback is a tight 3% premium distance — never the old 12% widen."""
     sl_pts = None
     try:
         from workers.auto_trader import calculate_smart_sl
@@ -53,7 +55,7 @@ async def _compute_stop(client, symbol, entry, ltp, side_long):
     except Exception as e:
         logger.warning(f"Guardian SL calc failed for {symbol}: {e}")
     if not sl_pts or sl_pts <= 0:
-        sl_pts = max(round(entry * 0.12, 1), 8.0)
+        sl_pts = max(round(entry * 0.03, 1), 1.0) if entry > 0 else 5.0
     stop = round(entry - sl_pts, 1) if side_long else round(entry + sl_pts, 1)
     # Ensure the trigger is on the correct side of the current price (below LTP for a long).
     ref = ltp or entry
@@ -112,8 +114,9 @@ async def sl_guardian():
                             continue
                         if _has_active_stop(orders, sym):
                             continue  # already protected — nothing to do
-                        # Cooldown: we just tried this symbol; give the orderbook time to reflect it.
-                        if now - _recent_attempts.get(sym, 0) < _PLACED_COOLDOWN:
+                        # Cooldown: shorter after failure so a naked MCX position is retried quickly.
+                        _cd = _PLACED_COOLDOWN_OK if _recent_attempt_ok.get(sym) else _PLACED_COOLDOWN_FAIL
+                        if now - _recent_attempts.get(sym, 0) < _cd:
                             continue
 
                         qty = abs(int(p.get("qty", 0) or 0))
@@ -132,9 +135,11 @@ async def sl_guardian():
                         exit_side = -1 if side_long else 1
                         logger.warning(f"🛡️ Guardian: NAKED position {sym} (entry {entry}, ltp {ltp}) — "
                                        f"placing protective SL-M @ {stop} ({sl_pts}pts).")
-                        res = await asyncio.to_thread(client.place_stop_loss, sym, qty, stop, exit_side)
+                        res = await asyncio.to_thread(client.place_stop_loss, sym, qty, stop, exit_side,
+                                                       client._position_product(p) or client.resolve_exit_product(sym, "INTRADAY"))
                         ok = isinstance(res, dict) and (res.get("s") == "ok" or res.get("id"))
                         oid = (res or {}).get("id", "")
+                        _recent_attempt_ok[sym] = bool(ok)
                         if ok:
                             logger.warning(f"🛡️ Guardian placed protective SL for {sym} @ {stop} (id {oid}).")
                             # Register the SL id on the tracked trade so trailing_monitor trails it.

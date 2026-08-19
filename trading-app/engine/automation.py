@@ -107,11 +107,22 @@ class TradingState:
         # Per-strategy paper execution while account stays live (shadow week).
         self.shadow_strategies: list[str] = []
         self.shadow_week_until: str = ""
-        self.active_strategies = ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"]
-        # SEPARATE commodity strategy family (MCX only) — AI-tuned for commodity behaviour (higher
-        # intraday range, EIA/inventory events, evening US-linkage). These run ONLY on MCX symbols,
-        # independent of the equity strategies above, so tuning one never affects the other.
-        self.commodity_strategies = ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"]
+        self.active_strategies = [
+            "Strategy 1: OB + FVG",
+            "Strategy 2: 9:26 - 180 Buy",
+            "Strategy 3: 5-Minute ORB",
+            "Strategy 4: Wisdom-Aligned Pullback",
+            # S5 Aerospace / S6 Gap Fill REMOVED from defaults — they fade one-sided markets
+            "Strategy 7: Swing-Pivot Breakout",
+            "Strategy 8: Smart Money Concepts",
+            "Strategy 9: 9-EMA Momentum Scalper",
+            "Strategy 10: Adaptive ADX Engine",
+            "Strategy 11: FRVP LVN Vacuum",
+        ]
+        # Commodity strategies default OFF (owner stop-bleed 03-08-26). All-day ORB/9-EMA/Swing
+        # on crude was buy-high → SL. Re-enable only after paper week; EIA/Evening are time-gated
+        # in code if turned on manually.
+        self.commodity_strategies = []
         # AI-tunable commodity risk/entry knobs (start from crude defaults; nightly learning refines
         # these from commodity paper-trade performance — the "advised by AI" evolution). Applied to
         # commodity trades only, so equity risk sizing is never affected.
@@ -235,7 +246,7 @@ class TradingState:
                         self.paper_orders = data.get("paper_orders", [])
                         self.paper_funds = data.get("paper_funds", {"availableBalance": 1000000.0, "realizedPnl": 0.0})
                         self.active_strategies = data.get("active_strategies", ["Strategy 1: OB + FVG", "Strategy 2: 9:26 - 180 Buy", "Strategy 3: 5-Minute ORB", "Strategy 4: Wisdom-Aligned Pullback", "Strategy 5: Optimized Aerospace Mean Reversion", "Strategy 6: Gap Fill Reversal", "Strategy 7: Swing-Pivot Breakout", "Strategy 8: Smart Money Concepts", "Strategy 9: 9-EMA Momentum Scalper", "Strategy 10: Adaptive ADX Engine", "Strategy 11: FRVP LVN Vacuum"])
-                        self.commodity_strategies = data.get("commodity_strategies", ["Commodity: 5-Minute ORB", "Commodity: 9-EMA Momentum", "Commodity: Swing-Pivot Breakout", "Commodity: EIA Volatility (Wed)", "Commodity: Evening Momentum"])
+                        # commodity_strategies loaded in PERSISTENT block below (survives daily reset)
                         self.commodity_params = data.get("commodity_params", {"sl_multiplier": 1.75, "target_multiplier": 1.75, "breakout_buffer_mult": 1.5})
                         self.strat_orb_triggered = data.get("strat_orb_triggered", False)
                         self.strat_orb_expired = data.get("strat_orb_expired", False)
@@ -283,6 +294,44 @@ class TradingState:
                     self.agent_added_symbols = data.get("agent_added_symbols", [])
                     self.shadow_strategies = data.get("shadow_strategies", [])
                     self.shadow_week_until = data.get("shadow_week_until", "")
+                    # Commodity enablement is configuration (not a daily counter) — always load + strip
+                    # buy-high all-day ORB/9-EMA/Swing. EIA/Evening remain if owner had them on.
+                    self.commodity_strategies = data.get("commodity_strategies", [])
+                    _bleed = {
+                        "Commodity: 5-Minute ORB",
+                        "Commodity: 9-EMA Momentum",
+                        "Commodity: Swing-Pivot Breakout",
+                    }
+                    _before_com = list(self.commodity_strategies or [])
+                    self.commodity_strategies = [s for s in _before_com if s not in _bleed]
+                    if _before_com != self.commodity_strategies:
+                        print(
+                            f"🛡️ Stop-bleed: disabled buy-high commodity strategies "
+                            f"{_before_com} → {self.commodity_strategies}",
+                            flush=True,
+                        )
+                        try:
+                            self.save()
+                        except Exception:
+                            pass
+                    # Strip fade strategies that fight one-sided markets (Gap / Aerospace mean-rev)
+                    _fade = {
+                        "Strategy 5: Optimized Aerospace Mean Reversion",
+                        "Strategy 6: Gap Fill Reversal",
+                    }
+                    _before_eq = list(getattr(self, "active_strategies", []) or [])
+                    if _before_eq:
+                        self.active_strategies = [s for s in _before_eq if s not in _fade]
+                        if _before_eq != self.active_strategies:
+                            print(
+                                f"🛡️ Stop-bleed: disabled fade strategies "
+                                f"{[s for s in _before_eq if s in _fade]}",
+                                flush=True,
+                            )
+                            try:
+                                self.save()
+                            except Exception:
+                                pass
                     _orphans = [s for s in self.enabled_symbols if s not in self.active_symbols]
                     if _orphans:
                         self.enabled_symbols = [s for s in self.enabled_symbols if s in self.active_symbols]
@@ -842,18 +891,12 @@ class TradingState:
         if not symbol:
             return
 
-        # Strategy: prefer from pos dict (explicit), fall back to active trade lookup
-        strategy = (pos.get("strategy") if isinstance(pos, dict) else None)
-        active = None
-        if not strategy:
-            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
-            strategy = active.get("strategy") if active else None
-        if not strategy:
-            print(f"⚠️ _record_trade_outcome_async: no strategy for {symbol} — trade NOT recorded to swarm.", flush=True)
-            return
-
-        if active is None:
-            active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
+        # Strategy: prefer from pos dict (explicit), fall back to active trade lookup,
+        # then to OPEN ledger row (STRICT: losses must still reach swarm/continuous_losses).
+        strategy = (pos.get("strategy") if isinstance(pos, dict) else None) or None
+        active = next((t for t in self.active_auto_trades if t.get("symbol") == symbol), None)
+        if not strategy and active:
+            strategy = active.get("strategy")
 
         entry_price = float(active.get("entry_price", 0.0)) if active else 0.0
         entry_regime = (active.get("entry_regime") if active else None) or "NEUTRAL"
@@ -875,14 +918,21 @@ class TradingState:
         from models import Database
 
         async def _persist(retry=False):
+            nonlocal strategy, entry_price
             try:
+                strat = strategy
+                if not strat:
+                    strat = await Database.lookup_open_trade_strategy(symbol, user_id=int(self.user_id))
+                if not strat:
+                    print(f"⚠️ _record_trade_outcome_async: no strategy for {symbol} — trade NOT recorded to swarm.", flush=True)
+                    return
                 await Database.record_trade_outcome(
-                    strategy_name=strategy, symbol=symbol,
+                    strategy_name=strat, symbol=symbol,
                     entry_time=entry_time_str, exit_time=exit_time_str,
                     entry_price=entry_price, exit_price=float(exit_price or 0.0),
                     pnl=float(pnl or 0.0), vix=0.0, market_trend=market_trend,
                 )
-                print(f"✅ Trade recorded: {strategy} | {symbol} | Entry ₹{entry_price:.1f} | Exit ₹{exit_price:.1f} | PnL ₹{pnl:.2f}", flush=True)
+                print(f"✅ Trade recorded: {strat} | {symbol} | Entry ₹{entry_price:.1f} | Exit ₹{exit_price:.1f} | PnL ₹{pnl:.2f}", flush=True)
             except Exception as e:
                 if not retry:
                     print(f"⚠️ record_trade_outcome DB write failed, retrying: {e}", flush=True)
@@ -1060,7 +1110,12 @@ class TradingState:
         if "active_strategies" in config:
             self.active_strategies = list(config["active_strategies"])
         if "commodity_strategies" in config:
-            self.commodity_strategies = list(config["commodity_strategies"])
+            _bleed = {
+                "Commodity: 5-Minute ORB",
+                "Commodity: 9-EMA Momentum",
+                "Commodity: Swing-Pivot Breakout",
+            }
+            self.commodity_strategies = [s for s in list(config["commodity_strategies"]) if s not in _bleed]
         if "shadow_strategies" in config:
             self.shadow_strategies = list(config["shadow_strategies"])
         if "commodity_params" in config and isinstance(config["commodity_params"], dict):

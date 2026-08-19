@@ -682,52 +682,65 @@ async def get_fyers_login_url(request: Request):
     if not client_id or not secret:
         return JSONResponse({"error": "No Master App ID configured. Admin must set up Fyers API keys first."}, 400)
 
-    from fyers_apiv3 import fyersModel
-    redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
-    session = fyersModel.SessionModel(
-        client_id=client_id,
-        secret_key=secret,
-        redirect_uri=redirect_url,
-        response_type='code',
-        grant_type='authorization_code'
-    )
-    url = session.generate_authcode()
-    # Set PKCE verifier cookie on the JSON response (same defense as /fyers/auth redirect).
-    from urllib.parse import quote as _urlquote
-    resp = JSONResponse({"url": ""})
-    oauth_state = generate_oauth_state(user_id, response=resp)
-    final_url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-    resp.body = json.dumps({"url": final_url}).encode("utf-8")
-    resp.headers["content-length"] = str(len(resp.body))
-    return resp
+    try:
+        from fyers_apiv3 import fyersModel
+        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+        session = fyersModel.SessionModel(
+            client_id=client_id,
+            secret_key=secret,
+            redirect_uri=redirect_url,
+            response_type='code',
+            grant_type='authorization_code'
+        )
+        url = session.generate_authcode()
+        from urllib.parse import quote as _urlquote
+        # Build cookie carrier first, then return JSON with the same Set-Cookie headers.
+        cookie_carrier = JSONResponse({"url": ""})
+        oauth_state = generate_oauth_state(user_id, response=cookie_carrier, request=request)
+        final_url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
+        return _json_with_cookies({"url": final_url}, cookie_carrier)
+    except Exception as e:
+        logger.exception("fyers login_url failed: %s", e)
+        return JSONResponse({"error": f"Failed to build Fyers login URL: {e}"}, 500)
+
+
+def _json_with_cookies(payload: dict, cookie_source: Response) -> JSONResponse:
+    """Return JSONResponse copying Set-Cookie headers from an earlier Response."""
+    out = JSONResponse(payload)
+    for key, value in cookie_source.raw_headers:
+        if key.lower() == b"set-cookie":
+            out.raw_headers.append((key, value))
+    return out
 
 
 @app.get("/fyers/auth")
-async def fyers_auth_redirect(request: Request, response: Response):
+async def fyers_auth_redirect(request: Request):
     """
     Server-side redirect to Fyers OAuth with PKCE-style verifier cookie.
     This endpoint sets the verifier cookie and redirects to the Fyers auth URL.
     Frontend should navigate to this URL instead of calling /fyers/auth-url + redirect.
     """
-    user_id = await resolve_authenticated_user_id(request)
-    if not user_id:
-        return RedirectResponse(url="/login?reason=session_expired")
-
-    # 04-08-26 fix: this route had no top-level guard, so any unexpected failure here (like the
-    # Database.get_master_fyers_creds() typo that used to live below — that method never existed)
-    # surfaced as a raw, unstyled "Internal Server Error" the instant Connect Fyers was clicked,
-    # before the user ever reached Fyers' own login page. Wrapped so any future failure here
-    # degrades to a readable redirect instead of a raw crash.
     try:
-        from fyers_apiv3 import fyersModel
-        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
+        user_id = await resolve_authenticated_user_id(request)
+        if not user_id:
+            return RedirectResponse(url="/login?reason=session_expired")
+
+        user = await Database.get_user_by_id(user_id)
+        if not user:
+            return RedirectResponse(url="/login?reason=session_expired")
+
+        # Same credential resolution as /api/fyers/login_url (user keys → master → env).
+        # NOTE: Database.get_master_fyers_creds never existed; that AttributeError caused
+        # the UI "Internal Error" when clicking Connect Fyers.
         master_creds = await Database.get_master_app_credentials()
-        client_id = master_creds[0] if master_creds else ""
-        secret = master_creds[1] if master_creds else ""
+        client_id = user.get("fyers_client_id") or master_creds[0]
+        secret = user.get("fyers_secret") or master_creds[1]
 
         if not client_id or not secret:
             return RedirectResponse(url="/?msg=No+Master+App+ID+configured")
 
+        from fyers_apiv3 import fyersModel
+        redirect_url = os.getenv("FYERS_REDIRECT_URI", "https://trade.fyers.in/api-login/redirect-uri/index.html")
         session = fyersModel.SessionModel(
             client_id=client_id,
             secret_key=secret,
@@ -739,13 +752,15 @@ async def fyers_auth_redirect(request: Request, response: Response):
         if not url:
             return RedirectResponse(url="/?msg=Fyers+login+failed:+could+not+generate+auth+URL")
         from urllib.parse import quote as _urlquote
-        oauth_state = generate_oauth_state(user_id, response=response)
+        redirect = RedirectResponse(url="/", status_code=302)
+        oauth_state = generate_oauth_state(user_id, response=redirect, request=request)
         url = url.replace("state=None", f"state={_urlquote(oauth_state)}")
-        return RedirectResponse(url=url)
+        redirect.headers["location"] = url
+        return redirect
     except Exception as e:
-        print(f"❌ /fyers/auth failed: {e}", flush=True)
-        safe_msg = str(e)[:80].replace(" ", "+")
-        return RedirectResponse(url=f"/?msg=Fyers+login+failed:+{safe_msg}")
+        logger.exception("/fyers/auth failed: %s", e)
+        safe = str(e)[:80].replace(" ", "+")
+        return RedirectResponse(url=f"/?msg=Fyers+connect+failed:+{safe}")
 
 
 @app.get("/fyers/callback")
@@ -965,6 +980,35 @@ async def get_scripts(request: Request):
     state = get_user_state(client.user_id)
     return {"success": True, "scripts": state.active_symbols, "enabled": getattr(state, "enabled_symbols", ["NSE:NIFTY50-INDEX"])}
 
+
+@app.post("/api/scripts/agent-refresh")
+async def agent_refresh_scripts(request: Request):
+    """Force an immediate NewsWorker cycle (AI picks → validate → inject scrips).
+
+    Use after Fyers reconnect or when the 30-minute timer has not yet fired.
+    Requires an authenticated session; injection still needs a live Fyers token.
+    """
+    user_id = await resolve_authenticated_user_id(request)
+    if not user_id:
+        return JSONResponse({"success": False, "message": "Unauthorized"}, 401)
+    try:
+        await news_worker.update_summary()
+        summary = news_worker.last_summary
+        state = get_user_state(user_id)
+        return {
+            "success": True,
+            "high_conviction_asset": summary.get("high_conviction_asset"),
+            "commodity_pick": summary.get("commodity_pick"),
+            "last_injected": summary.get("last_injected"),
+            "last_skip_reason": summary.get("last_skip_reason"),
+            "scripts": state.active_symbols,
+            "agent_added": getattr(state, "agent_added_symbols", []),
+        }
+    except Exception as e:
+        logger.exception("agent-refresh failed: %s", e)
+        return JSONResponse({"success": False, "message": str(e)}, 500)
+
+
 @app.post("/api/scripts/toggle-auto-trade")
 async def toggle_script_auto_trade(request: Request):
     data = await request.json()
@@ -1164,6 +1208,12 @@ async def _exchange_fyers_auth_code(user_id, auth_code: str) -> Dict:
         except Exception as ws_err:
             print(f"❌ Error restarting WS Feed: {ws_err}", flush=True)
 
+        # Token is live — do not wait up to 30m for NewsWorker; inject AI scrips now.
+        try:
+            news_worker.schedule_refresh_after_auth("fyers_auth_code_exchange")
+        except Exception as _nr:
+            print(f"⚠️ Post-auth news refresh schedule skipped: {_nr}", flush=True)
+
     return res
 
 
@@ -1288,6 +1338,12 @@ async def _refresh_all_fyers_tokens(reason: str = "scheduled"):
                     pass
         except Exception as e:
             print(f"❌ Auto-refresh error for user {uid}: {e}", flush=True)
+
+    # After morning/startup token refresh, run news agent so scrips appear without waiting 30m.
+    try:
+        news_worker.schedule_refresh_after_auth(f"fyers_token_refresh:{reason}")
+    except Exception as _nr:
+        print(f"⚠️ Post-refresh news schedule skipped: {_nr}", flush=True)
 
 
 async def fyers_token_refresh_scheduler():
@@ -1761,9 +1817,23 @@ async def daily_hard_exit_scheduler():
                             qty = abs(pos.get("qty", pos.get("netQty", 0)))
                             symbol = pos.get("symbol", "")
                             side_val = pos.get("side", 1)
-                            exit_side = "SELL" if side_val > 0 else "BUY"
+                            net = client._position_net_qty(pos) if hasattr(client, "_position_net_qty") else (
+                                qty if side_val > 0 else -qty
+                            )
+                            exit_side = "SELL" if net > 0 else "BUY"
 
-                            print(f"🔴 {skey} hard exit: {exit_side} {qty} x {symbol} for user {u_id}", flush=True)
+                            # Options buy-only: only close longs via SELL; never open/cover shorts.
+                            if hasattr(client, "_is_option_symbol") and client._is_option_symbol(symbol):
+                                if net <= 0:
+                                    print(f"🔴 {skey} hard exit skip {symbol}: no long option (buy-only)", flush=True)
+                                    continue
+                                exit_side = "SELL"
+                                product = client._position_product(pos) or client.resolve_exit_product(symbol, "INTRADAY")
+                            else:
+                                product = client._position_product(pos) if hasattr(client, "_position_product") else "INTRADAY"
+                                product = product or "INTRADAY"
+
+                            print(f"🔴 {skey} hard exit: {exit_side} {qty} x {symbol} ({product}) for user {u_id}", flush=True)
                             await broadcast_log(f"🔴 {skey} Hard Exit: {exit_side} {qty} x {symbol}", "error", user_id=u_id)
 
                             result = await api_queue.enqueue(
@@ -1772,7 +1842,10 @@ async def daily_hard_exit_scheduler():
                                 qty=qty,
                                 side=exit_side,
                                 order_type="MARKET",
-                                product="INTRADAY"
+                                product=product,
+                                is_exit=True,
+                                sl_points=0.0,
+                                target_points=0.0,
                             )
                             print(f"{skey} hard exit result for {symbol}: {result}", flush=True)
                         except Exception as exit_err:
@@ -2957,7 +3030,7 @@ async def place_order(request: Request, order: OrderRequest):
             qty=order.qty,
             side=order.side,
             order_type=order.order_type,
-            product=order.product,
+            product="INTRADAY",  # user directive: all new trades are INTRADAY only
             limit_price=order.limit_price,
             stop_price=order.stop_price,
             sl_points=order.sl_points,

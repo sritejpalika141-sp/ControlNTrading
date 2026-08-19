@@ -578,7 +578,11 @@ class Database:
         
     @staticmethod
     def get_master_app_credentials_sync():
-        """Synchronous version for FyersClient initialization."""
+        """Synchronous version for FyersClient initialization.
+
+        Must decrypt DB values the same way as get_master_app_credentials(); credentials
+        are stored encrypted via update_fyers_creds.
+        """
         conn = sqlite3.connect(Database.DB_NAME)
         conn.row_factory = sqlite3.Row
         try:
@@ -586,8 +590,11 @@ class Database:
             cursor.execute("SELECT fyers_client_id, fyers_secret FROM users WHERE is_admin=1 AND is_active=1 LIMIT 1")
             row = cursor.fetchone()
             if row and row['fyers_client_id'] and row['fyers_secret']:
-                return (row['fyers_client_id'], row['fyers_secret'])
-            return ("", "")
+                client_id = decrypt_val(row['fyers_client_id']) or ""
+                secret = decrypt_val(row['fyers_secret']) or ""
+                if client_id and secret:
+                    return (client_id, secret)
+            return (os.getenv("FYERS_CLIENT_ID", ""), os.getenv("FYERS_SECRET_KEY", ""))
         finally:
             conn.close()
 
@@ -1001,14 +1008,17 @@ class Database:
             asset_class = cfg.get('asset_class') or 'EQUITY'
 
         total_trades += 1
+        # STRICT: only real losses (pnl < 0) count toward continuous_losses.
+        # Breakeven must NOT inflate the streak or auto-disable a strategy.
         if pnl > 0:
             winning_trades += 1
             continuous_losses = 0
-        else:
+        elif pnl < 0:
             continuous_losses += 1
             if continuous_losses >= 3:
                 status = 'DISABLED'
                 logger.warning(f"🚫 Strategy {strategy_name} auto-disabled due to 3 continuous losses.")
+        # pnl == 0 (breakeven): leave continuous_losses unchanged
 
         win_rate = round(winning_trades / total_trades * 100, 1) if total_trades > 0 else 0.0
 
@@ -1225,6 +1235,73 @@ class Database:
         except Exception as e:
             logger.warning(f"get_backtest_performance failed: {e}")
         return out
+
+    @staticmethod
+    async def get_losing_trades(days: int = 30, strategy_name: str = None, limit: int = 50):
+        """CLOSED losing trades (pnl < 0) from the executed-trades ledger — newest first.
+        Used by nightly learning to STRICTLY learn from losses (not win-rate aggregates alone)."""
+        import datetime as _dt
+        cutoff = (datetime.now(IST) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = []
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                conn.row_factory = aiosqlite.Row
+                q = ("SELECT * FROM executed_trades WHERE status='CLOSED' AND pnl < 0 "
+                     "AND trade_date >= ?")
+                params = [cutoff]
+                if strategy_name:
+                    q += " AND strategy_name = ?"
+                    params.append(strategy_name)
+                q += " ORDER BY id DESC LIMIT ?"
+                params.append(int(limit))
+                async with conn.execute(q, params) as cur:
+                    rows = [dict(r) async for r in cur]
+        except Exception as e:
+            logger.warning(f"get_losing_trades failed: {e}")
+        return rows
+
+    @staticmethod
+    async def compute_continuous_loss_streak(strategy_name: str, days: int = 90) -> int:
+        """Count consecutive CLOSED losses from the most recent trade backward.
+        Wins/breakeven break the streak. Authoritative source for continuous_losses sync."""
+        import datetime as _dt
+        cutoff = (datetime.now(IST) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        streak = 0
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                async with conn.execute("""
+                    SELECT pnl FROM executed_trades
+                     WHERE status='CLOSED' AND strategy_name = ? AND trade_date >= ?
+                     ORDER BY id DESC
+                     LIMIT 50
+                """, (strategy_name, cutoff)) as cur:
+                    async for (pnl,) in cur:
+                        if pnl is None:
+                            break
+                        if float(pnl) < 0:
+                            streak += 1
+                        else:
+                            break
+        except Exception as e:
+            logger.warning(f"compute_continuous_loss_streak failed for {strategy_name}: {e}")
+        return streak
+
+    @staticmethod
+    async def lookup_open_trade_strategy(symbol: str, user_id: int = None) -> str:
+        """Best-effort: recover strategy_name for a still-OPEN ledger row (close-path fallback)."""
+        try:
+            async with aiosqlite.connect(Database.DB_NAME) as conn:
+                where_user = "AND user_id = ?" if user_id is not None else ""
+                params = [symbol] + ([user_id] if user_id is not None else [])
+                async with conn.execute(
+                    f"SELECT strategy_name FROM executed_trades WHERE symbol = ? AND status = 'OPEN' "
+                    f"{where_user} ORDER BY id DESC LIMIT 1", params
+                ) as cur:
+                    row = await cur.fetchone()
+                return (row[0] if row and row[0] else "") or ""
+        except Exception as e:
+            logger.warning(f"lookup_open_trade_strategy failed for {symbol}: {e}")
+            return ""
 
     @staticmethod
     async def get_executed_trades(days: int = 7, strategy_name: str = None, limit: int = 500):

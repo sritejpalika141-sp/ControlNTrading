@@ -184,13 +184,46 @@ def _get_verifier_serializer() -> URLSafeTimedSerializer:
     return _verifier_serializer
 
 
-def generate_oauth_state(user_id, response: Optional[object] = None) -> str:
+def _request_is_https(request: Optional[object] = None) -> bool:
+    """True when the inbound request (or proxy headers) indicate HTTPS.
+
+    Prod often serves plain HTTP on :8000. A Secure cookie is dropped by browsers on HTTP,
+    which breaks OAuth callback verifier binding. Prefer Secure only on real HTTPS.
+    """
+    if request is None:
+        return False
+    try:
+        scheme = getattr(getattr(request, "url", None), "scheme", None)
+        if scheme == "https":
+            return True
+        headers = getattr(request, "headers", None) or {}
+        forwarded = ""
+        try:
+            forwarded = headers.get("x-forwarded-proto") or headers.get("X-Forwarded-Proto") or ""
+        except Exception:
+            forwarded = ""
+        if str(forwarded).split(",")[0].strip().lower() == "https":
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def generate_oauth_state(
+    user_id,
+    response: Optional[object] = None,
+    request: Optional[object] = None,
+    secure: Optional[bool] = None,
+) -> str:
     """
     Return a signed, single-use, short-TTL OAuth `state` nonce bound to the initiating user.
     
     If `response` (a Starlette/FastAPI Response object) is provided, also set an HttpOnly,
-    Secure, SameSite=Lax cookie containing a PKCE-style verifier that must be presented
+    SameSite=Lax cookie containing a PKCE-style verifier that must be presented
     on callback. This binds the OAuth flow to the initiating browser session.
+
+    `secure` defaults from the request scheme / X-Forwarded-Proto so HTTP :8000 deployments
+    still receive the verifier cookie (Secure cookies are ignored on plain HTTP).
     """
     import os as _os
     nonce = _os.urandom(16).hex()
@@ -198,9 +231,13 @@ def generate_oauth_state(user_id, response: Optional[object] = None) -> str:
     
     state_payload = {"uid": int(user_id), "nonce": nonce, "verifier": verifier}
     state = _get_oauth_serializer().dumps(state_payload)
+
+    if secure is None:
+        force = _os.getenv("FORCE_SECURE_COOKIES", "").lower() in ("1", "true", "yes")
+        secure = True if force else _request_is_https(request)
     
     if response is not None:
-        # Set the verifier cookie (10 min TTL, HttpOnly, Secure, SameSite=Lax)
+        # Set the verifier cookie (10 min TTL, HttpOnly, SameSite=Lax; Secure only on HTTPS)
         from fastapi.responses import Response as _Response
         if isinstance(response, _Response):
             response.set_cookie(
@@ -208,7 +245,7 @@ def generate_oauth_state(user_id, response: Optional[object] = None) -> str:
                 value=_get_verifier_serializer().dumps(verifier),
                 max_age=OAUTH_VERIFIER_TTL_SECONDS,
                 httponly=True,
-                secure=True,
+                secure=bool(secure),
                 samesite="lax",
                 path="/",  # Must be available on /fyers/callback path
             )
