@@ -732,8 +732,8 @@ async def trailing_monitor():
                                 except Exception as e:
                                     logger.error(f"Strategy 5 ATR calc/trail error: {e}")
 
-                    # Strategy 3 (ORB) and Strategy 9 (9-EMA Scalper) Target Monitoring
-                    if t.get("strategy") in ["Strategy 3: 5-Minute ORB", "Strategy 9: 9-EMA Momentum Scalper"]:
+                    # Strategy 3 (ORB) Target Monitoring
+                    if t.get("strategy") in ["Strategy 3: 5-Minute ORB"]:
                         target_1 = t.get("target_1")
                         target_2 = t.get("target_2")
                         trailed = t.get("trailed", False)
@@ -824,7 +824,7 @@ async def trailing_monitor():
                                 else:
                                     t["trailed"] = True
                                     state.save()
-                        continue
+                            continue
 
                     # Strategy 7: Spot-based Structural Trailing
                     if t.get("strategy") == "Strategy 7: Swing-Pivot Breakout":
