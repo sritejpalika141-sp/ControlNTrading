@@ -1461,6 +1461,28 @@ async def get_swarm_status(request: Request):
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
 
+@app.get("/api/admin/learning-history/{strategy_name}")
+async def get_learning_history(strategy_name: str, request: Request):
+    """Read-only tune history for a strategy (old vs new config + LLM analysis per event).
+
+    /api/admin/swarm-status only surfaces the single latest insight; this gives a reviewer the
+    prior-tune context needed to make a good approve/reject call on a PENDING proposal.
+    """
+    try:
+        from models import Database
+        user_id = await resolve_authenticated_user_id(request)
+        if not user_id:
+            return JSONResponse({"error": "Unauthorized"}, 401)
+        admin_user = await Database.get_user_by_id(user_id)
+        if not admin_user or not admin_user["is_admin"]:
+            return JSONResponse({"error": "Unauthorized: Admins only"}, 403)
+        logs = await Database.get_learning_logs(strategy_name, limit=20)
+        return JSONResponse({"success": True, "logs": logs})
+    except Exception as e:
+        logger.error(f"Error fetching learning history for {strategy_name}: {e}")
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+
 @app.post("/api/admin/strategies/{strategy_name}/enable")
 async def enable_strategy(request: Request, strategy_name: str):
     """Admin-only endpoint to re-enable a disabled strategy.

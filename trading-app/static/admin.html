@@ -1032,6 +1032,7 @@
                     }
                     data.agents.forEach(cfg => {
                         const isPending = cfg.status === 'PENDING';
+                        const cssId = tuneHistoryElemId(cfg.strategy_name);
                         let html = `
                         <div class="agent-card">
                             ${isPending ? '<div class="agent-glow" style="background: radial-gradient(circle, rgba(234,179,8,0.2) 0%, transparent 70%);"></div>' : '<div class="agent-glow"></div>'}
@@ -1059,12 +1060,77 @@
                                     <pre style="margin-top:5px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; white-space:pre-wrap;">${JSON.stringify(cfg.config_json, null, 2)}</pre>
                                 </div>
                             `}
+                            <div style="margin-top:12px;">
+                                <button class="btn-secondary" style="width:100%; font-size:0.75rem; padding:6px;"
+                                        onclick="toggleTuneHistory('${cfg.strategy_name}')">📜 Tune History</button>
+                                <div id="tuneHistory-${cssId}" style="display:none; margin-top:8px; font-size:0.7rem;"></div>
+                            </div>
                         </div>`;
                         container.innerHTML += html;
                     });
                 }
             } catch(e) {
                 container.innerHTML = '<div style="color:var(--danger)">Failed to load strategies</div>';
+            }
+        }
+
+        // --- Tune History (read-only) ---
+        function tuneHistoryElemId(name) {
+            return String(name).replace(/[^a-zA-Z0-9]/g, '_');
+        }
+
+        async function toggleTuneHistory(name) {
+            const box = document.getElementById('tuneHistory-' + tuneHistoryElemId(name));
+            if (!box) return;
+            if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+            box.style.display = 'block';
+            // Build with createElement/textContent only — llm_analysis and config blobs are
+            // model-authored text and must never be injected as HTML.
+            box.textContent = 'Loading tune history...';
+            try {
+                const res = await fetch('/api/admin/learning-history/' + encodeURIComponent(name));
+                const data = await res.json();
+                box.textContent = '';
+                if (!data.success || !data.logs || data.logs.length === 0) {
+                    box.textContent = 'No tune history recorded yet.';
+                    return;
+                }
+                data.logs.forEach(log => {
+                    const entry = document.createElement('div');
+                    entry.style.cssText = 'margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.25); border-radius:6px;';
+
+                    const dateEl = document.createElement('div');
+                    dateEl.style.cssText = 'color:#facc15; font-weight:600; margin-bottom:4px;';
+                    dateEl.textContent = log.date || '(no date)';
+                    entry.appendChild(dateEl);
+
+                    const analysisEl = document.createElement('div');
+                    analysisEl.style.cssText = 'color:var(--text-muted); margin-bottom:6px; white-space:pre-wrap;';
+                    analysisEl.textContent = log.llm_analysis || '(no analysis)';
+                    entry.appendChild(analysisEl);
+
+                    const diffWrap = document.createElement('div');
+                    diffWrap.style.cssText = 'display:flex; gap:8px;';
+                    [['Old', log.old_config], ['New', log.new_config]].forEach(([label, raw]) => {
+                        const col = document.createElement('div');
+                        col.style.cssText = 'flex:1; min-width:0;';
+                        const h = document.createElement('div');
+                        h.style.cssText = 'color:var(--text-muted); font-weight:600;';
+                        h.textContent = label;
+                        const pre = document.createElement('pre');
+                        pre.style.cssText = 'margin:2px 0 0; padding:6px; background:rgba(0,0,0,0.3); border-radius:4px; white-space:pre-wrap; overflow-x:hidden; color:var(--text);';
+                        let pretty = raw || '{}';
+                        try { pretty = JSON.stringify(JSON.parse(raw), null, 2); } catch (e) { /* leave raw */ }
+                        pre.textContent = pretty;
+                        col.appendChild(h);
+                        col.appendChild(pre);
+                        diffWrap.appendChild(col);
+                    });
+                    entry.appendChild(diffWrap);
+                    box.appendChild(entry);
+                });
+            } catch (e) {
+                box.textContent = 'Failed to load tune history.';
             }
         }
 

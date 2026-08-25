@@ -76,15 +76,43 @@ def tmp_db(monkeypatch):
 
 
 def test_should_run_self_tuning_strict_on_any_loss():
-    from engine.nightly_learning import should_run_self_tuning, MIN_TRADES_FOR_LEARNING
+    from engine.nightly_learning import (
+        should_run_self_tuning,
+        MIN_TRADES_FOR_LEARNING,
+        MIN_TOTAL_TRADES_FOR_TUNING,
+    )
 
+    # Sample-size floor (21-08-26): a real loss on a 1-trade sample no longer triggers tuning.
     ok, reason = should_run_self_tuning(total_trades=1, loss_count=1)
-    assert ok is True
-    assert "STRICT" in reason
+    assert ok is False
+    assert "below minimum sample size" in reason
 
     ok2, reason2 = should_run_self_tuning(total_trades=3, loss_count=2)
-    assert ok2 is True
-    assert "2 closed losses" in reason2
+    assert ok2 is False
+    assert "below minimum sample size" in reason2
+
+    # Boundary: exactly one below the floor, with a real loss present → still blocked.
+    # This is the off-by-one detector — it fails if the floor is ever coded as <= instead of <.
+    edge, edge_reason = should_run_self_tuning(
+        total_trades=MIN_TOTAL_TRADES_FOR_TUNING - 1, loss_count=1
+    )
+    assert edge is False
+    assert "below minimum sample size" in edge_reason
+
+    # Floor is inclusive at exactly 5: STRICT loss path still fires once the floor is met.
+    at_floor, at_floor_reason = should_run_self_tuning(
+        total_trades=MIN_TOTAL_TRADES_FOR_TUNING, loss_count=1
+    )
+    assert at_floor is True
+    assert "STRICT" in at_floor_reason
+
+    # At the floor but no losses → aggregate path is still separately gated by
+    # MIN_TRADES_FOR_LEARNING (10), so this stays blocked.
+    no_loss, no_loss_reason = should_run_self_tuning(
+        total_trades=MIN_TOTAL_TRADES_FOR_TUNING, loss_count=0
+    )
+    assert no_loss is False
+    assert "no losses" in no_loss_reason
 
     # No losses + below threshold → skip
     skip, skip_reason = should_run_self_tuning(total_trades=MIN_TRADES_FOR_LEARNING - 1, loss_count=0)
@@ -214,5 +242,59 @@ def test_third_loss_disables_strategy(tmp_db):
         cfg = await Database.get_agent_config("S-Bleed")
         assert int(cfg["continuous_losses"]) == 3
         assert cfg["status"] == "DISABLED"
+
+    asyncio.run(_run())
+
+
+def test_approve_agent_config_merges_disjoint_keys(tmp_db):
+    """Approving a PENDING proposal must MERGE, not replace — keys owned by
+    hindsight_optimizer_worker.py must survive an AI-tuning approval."""
+    from models import Database
+    import json
+
+    async def _run():
+        await Database.update_agent_config(
+            strategy_name="S-Merge",
+            config_dict={"entry_confidence_floor": 55, "strike_offset": 2},
+            win_rate=0, total_trades=0, winning_trades=0,
+            status="PENDING",
+            pending_config_json=json.dumps({"ema_period": 10}),
+        )
+        assert await Database.approve_agent_config("S-Merge") is True
+
+        cfg = await Database.get_agent_config("S-Merge")
+        merged = cfg["config_json"]
+        if isinstance(merged, str):
+            merged = json.loads(merged)
+        assert merged["entry_confidence_floor"] == 55
+        assert merged["strike_offset"] == 2
+        assert merged["ema_period"] == 10
+        assert cfg["status"] == "APPROVED"
+        assert not cfg["pending_config_json"]
+
+    asyncio.run(_run())
+
+
+def test_approve_agent_config_pending_wins_on_overlapping_key(tmp_db):
+    """Merge precedence: the newly-approved PENDING value must win over the stale
+    existing value. Proves precedence, not just key union."""
+    from models import Database
+    import json
+
+    async def _run():
+        await Database.update_agent_config(
+            strategy_name="S-Precedence",
+            config_dict={"entry_confidence_floor": 55},
+            win_rate=0, total_trades=0, winning_trades=0,
+            status="PENDING",
+            pending_config_json=json.dumps({"entry_confidence_floor": 62}),
+        )
+        assert await Database.approve_agent_config("S-Precedence") is True
+
+        cfg = await Database.get_agent_config("S-Precedence")
+        merged = cfg["config_json"]
+        if isinstance(merged, str):
+            merged = json.loads(merged)
+        assert merged["entry_confidence_floor"] == 62
 
     asyncio.run(_run())

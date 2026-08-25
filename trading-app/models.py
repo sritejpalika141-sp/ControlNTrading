@@ -917,24 +917,61 @@ class Database:
 
     @staticmethod
     async def approve_agent_config(strategy_name: str) -> bool:
-        """Moves pending_config_json into config_json and sets status to APPROVED."""
+        """MERGES pending_config_json into config_json (never replaces) and sets status APPROVED.
+
+        Merge, not replace (safety fix 21-08-26): the pending proposal is an AI-authored partial
+        patch. Replacing config_json wholesale silently dropped keys owned by other writers
+        (hindsight_optimizer_worker.py: entry_confidence_floor, strike_offset, chase_buffer_pct).
+        Precedence: the pending (newly-approved) value wins on overlapping keys.
+
+        TOCTOU: the SELECT -> merge -> UPDATE runs inside a single BEGIN IMMEDIATE transaction so a
+        concurrent hindsight_optimizer_worker read-merge-write on the same row cannot land between
+        our read and our write and be clobbered.
+        """
+        import json
         timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
         async with aiosqlite.connect(Database.DB_NAME) as conn:
             conn.row_factory = aiosqlite.Row
-            async with conn.execute("SELECT pending_config_json FROM swarm_agent_configs WHERE strategy_name=? AND status='PENDING'", (strategy_name,)) as c:
-                row = await c.fetchone()
-                if not row or not row['pending_config_json']:
-                    return False
-                
-                pending_cfg = row['pending_config_json']
-            
-            await conn.execute("""
-                UPDATE swarm_agent_configs 
-                SET config_json = ?, status = 'APPROVED', pending_config_json = NULL, last_updated = ?
-                WHERE strategy_name = ?
-            """, (pending_cfg, timestamp, strategy_name))
-            await conn.commit()
-            return True
+            # Take the write lock up front — no other writer can complete a competing
+            # read-merge-write cycle on this row until we commit or roll back.
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                async with conn.execute(
+                    "SELECT config_json, pending_config_json FROM swarm_agent_configs "
+                    "WHERE strategy_name=? AND status='PENDING'", (strategy_name,)
+                ) as c:
+                    row = await c.fetchone()
+                    if not row or not row['pending_config_json']:
+                        await conn.rollback()
+                        return False
+
+                try:
+                    existing_config = json.loads(row['config_json'] or '{}')
+                except (TypeError, ValueError):
+                    existing_config = {}
+                if not isinstance(existing_config, dict):
+                    existing_config = {}
+                try:
+                    pending_config = json.loads(row['pending_config_json'])
+                except (TypeError, ValueError):
+                    # pending_config_json was not parseable JSON; fail safe by keeping
+                    # existing_config untouched rather than corrupting config_json.
+                    pending_config = {}
+                if not isinstance(pending_config, dict):
+                    pending_config = {}
+
+                merged_json = json.dumps({**existing_config, **pending_config})
+
+                await conn.execute("""
+                    UPDATE swarm_agent_configs
+                    SET config_json = ?, status = 'APPROVED', pending_config_json = NULL, last_updated = ?
+                    WHERE strategy_name = ?
+                """, (merged_json, timestamp, strategy_name))
+                await conn.commit()
+                return True
+            except Exception:
+                await conn.rollback()
+                raise
 
     @staticmethod
     async def reject_agent_config(strategy_name: str) -> bool:

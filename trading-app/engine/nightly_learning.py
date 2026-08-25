@@ -16,18 +16,24 @@ IST = pytz.timezone('Asia/Kolkata')
 # STRICT RULE (owner): losing trades ALWAYS force AI critique — even a single closed loss
 # bypasses MIN_TRADES_FOR_LEARNING. Aggregate-only tuning (no losses yet) still needs
 # >= MIN_TRADES_FOR_LEARNING closed trades so noise does not rewrite params.
+# SAMPLE-SIZE FLOOR (safety fix 21-08-26): NO AI tuning of any kind fires below
+# MIN_TOTAL_TRADES_FOR_TUNING real closed trades — this floor applies to BOTH the
+# loss-triggered STRICT path and the no-loss aggregate path. A single closed loss on a
+# 1-trade sample can no longer rewrite live parameters.
 # Auto-apply rails:
-#   • AUTO_APPLY_MINOR=True: MINOR AI parameter changes (<=20% per-param swing) auto-apply
-#     when learning runs (loss-driven OR enough trades).
+#   • AUTO_APPLY_MINOR=False (safety fix 21-08-26): EVERY AI-suggested parameter change —
+#     minor or major — now lands in status='PENDING' for human approval. No AI-authored
+#     value reaches live config_json unreviewed.
 #   • MAJOR changes (>20% swing) STILL go PENDING/approval-required unless
 #     REQUIRE_APPROVAL_FOR_MAJOR=False.
 # NOTE (merge 19-08-26): the backtest pipeline (run_backtests_cron.py, backtest_results,
 # stats_source provenance badges) is retained, but it is NOT the tuning input — the executed-trades
 # ledger is. Backtest numbers stay informational/dashboard-only.
 SELF_TUNING_ENABLED = True
-AUTO_APPLY_MINOR = True
+AUTO_APPLY_MINOR = False
 REQUIRE_APPROVAL_FOR_MAJOR = True
 MIN_TRADES_FOR_LEARNING = 10
+MIN_TOTAL_TRADES_FOR_TUNING = 5  # floor for ANY AI tuning (loss-triggered OR aggregate)
 # Max losing-trade rows injected into the AI prompt (keeps tokens bounded).
 MAX_LOSS_TRADES_IN_PROMPT = 25
 
@@ -56,13 +62,20 @@ def _format_losing_trades_for_prompt(losing_trades: list) -> str:
 def should_run_self_tuning(total_trades: int, loss_count: int) -> tuple:
     """Gate for nightly AI param changes.
     Returns (should_run: bool, reason: str).
-    STRICT: any closed loss (loss_count >= 1) ALWAYS runs learning.
+    Floor first: below MIN_TOTAL_TRADES_FOR_TUNING real closed trades nothing runs,
+    regardless of losses (sample size too small to justify a live param change).
+    Above the floor: any closed loss (loss_count >= 1) ALWAYS runs learning.
     Without losses, require >= MIN_TRADES_FOR_LEARNING closed trades.
     """
     if not SELF_TUNING_ENABLED:
         return False, "SELF_TUNING_ENABLED=False"
     losses = int(loss_count or 0)
     total = int(total_trades or 0)
+    if total < MIN_TOTAL_TRADES_FOR_TUNING:
+        return False, (
+            f"below minimum sample size (real trades={total}, need "
+            f"≥{MIN_TOTAL_TRADES_FOR_TUNING}) — no AI param change regardless of losses"
+        )
     if losses >= 1:
         return True, f"STRICT loss-learning ({losses} closed losses)"
     if total >= MIN_TRADES_FOR_LEARNING:
@@ -486,10 +499,15 @@ async def run_nightly_learning(state, user_id: int):
                             msg = f"<b>Major Parameter Shift Proposed!</b>\nStrategy: <i>{strat}</i>\nChanges: {', '.join(major_changes)}\n\nPlease go to your Dashboard to approve this change."
                             await send_webhook_alert(webhook_url, msg, title="⚠️ AI Strategy Upgrade (Pending)")
                         elif AUTO_APPLY_MINOR:
-                            # Minor change + owner opted into auto-apply: write it live.
+                            # INTENTIONALLY DISABLED BY DEFAULT (safety fix 21-08-26):
+                            # AUTO_APPLY_MINOR is False, so this branch is unreachable. It is kept
+                            # (not deleted) as the documented single-point rollback path if an owner
+                            # directive ever re-enables auto-apply — and it now MERGES onto
+                            # old_config rather than replacing it wholesale.
+                            merged_config = {**old_config, **new_config}
                             await Database.update_agent_config(
                                 strategy_name=strat,
-                                config_dict=new_config,
+                                config_dict=merged_config,
                                 win_rate=win_rate,
                                 total_trades=total,
                                 winning_trades=wins,
@@ -504,6 +522,19 @@ async def run_nightly_learning(state, user_id: int):
                         else:
                             # DEFAULT SAFE PATH: even minor changes are PROPOSED (PENDING), never
                             # auto-applied to a live strategy. Owner approves on the dashboard.
+                            #
+                            # Stacked-proposal visibility (safety fix 21-08-26): pending_config_json
+                            # is a single slot with no queueing, so writing this proposal silently
+                            # overwrites any still-unapproved prior one. When that is the case, say
+                            # so explicitly in the alert text so the reviewer knows a proposal they
+                            # never acted on has just been replaced. Text-only — the prior proposal
+                            # remains recoverable from swarm_learning_logs.
+                            replaces_note = ""
+                            if cfg.get('pending_config_json') and cfg.get('status') == 'PENDING':
+                                _prior_date = cfg.get('last_updated') or 'an earlier run'
+                                replaces_note = (
+                                    f"\n⚠️ This replaces an unapproved proposal from {_prior_date}."
+                                )
                             await Database.update_agent_config(
                                 strategy_name=strat,
                                 config_dict=old_config,
@@ -524,7 +555,7 @@ async def run_nightly_learning(state, user_id: int):
                                 expectancy_delta=0.0,
                                 reason="Loss-driven / minor optimization proposed by Nightly Learning"
                             )
-                            msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades ({losses} losses). Approve on the Dashboard to apply."
+                            msg = f"<b>Optimization Proposed (Pending Approval)</b>\nStrategy: <i>{strat}</i>\nProposed: <code>{json_str}</code>\nWin rate {win_rate}% over {total} trades ({losses} losses). Approve on the Dashboard to apply.{replaces_note}"
                             await send_webhook_alert(webhook_url, msg, title="🔄 AI Strategy Proposal (Pending)")
                         
                         analysis_text = response.replace(json_str, "").strip()
