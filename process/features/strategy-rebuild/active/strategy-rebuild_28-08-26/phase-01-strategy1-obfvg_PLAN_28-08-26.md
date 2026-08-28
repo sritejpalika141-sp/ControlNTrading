@@ -13,7 +13,7 @@ metadata:
 
 **Program:** strategy-rebuild
 **Umbrella plan:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md
-**Phase status:** 🔧 EXECUTE complete — awaiting EVL
+**Phase status:** ✅ VERIFIED — EVL-confirmed PASS; committed to `main` at `97c901c` (pushed, local matches `origin/main`)
 **Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-01-strategy1-obfvg_REPORT_{dd-mm-yy}.md (flat in the program task folder)
 
 ---
@@ -215,17 +215,22 @@ python3 trading-app/engine/backtest_runner.py --strategy "Strategy 1: OB+FVG"
 Orchestrator reads this before deciding which subagent to spawn next. The canonical 7-step inner loop
 `R → I → P → PVL → E → EVL → UP` SKIPS SPEC (SPEC runs once in the outer program loop).
 
-- [ ] 1. RESEARCH — research-agent: prior phase reports read (none yet, Phase 1 is first); test
+- [x] 1. RESEARCH — research-agent: prior phase reports read (none yet, Phase 1 is first); test
       context loaded; fresh audit of automation.py + OB/FVG files completed (Step A)
-- [ ] 2. INNOVATE — innovate-agent: fix approach decided; Decision Summary written (Step B)
-- [ ] 3. PLAN-SUPPLEMENT — plan-agent: existing phase plan updated with any research/innovate gaps
+- [x] 2. INNOVATE — innovate-agent: fix approach decided; Decision Summary written (Step B)
+- [x] 3. PLAN-SUPPLEMENT — plan-agent: existing phase plan updated with any research/innovate gaps
       (Step C) (or "n/a — research clean")
-- [ ] 4. PVL — vc-validate-agent: full V1-V7; validate-contract written per
-      `.claude/skills/vc-validate-findings/references/example-validate-output.md`
+- [x] 4. PVL — vc-validate-agent: full V1-V7; validate-contract written per
+      `.claude/skills/vc-validate-findings/references/example-validate-output.md` (Gate: PASS,
+      cycle 2, 28-08-26)
 - [x] 5. EXECUTE — all checklist items (D, E, F, G) done; per-section test gates run and green
-- [ ] 6. EVL — all EVL gates green (py_compile + pytest + backtest_runner.py); follow-up stubs
-      registered; EVL HANDOFF SUMMARY written
-- [ ] 7. UPDATE PROCESS — phase report written, umbrella state updated, commit done
+- [x] 6. EVL — all EVL gates green (py_compile + pytest); backtest_runner.py recorded as known-gap
+      (no CLI entrypoint — see umbrella Test Infra Improvement Notes); follow-up stubs registered
+      (STRAT1_CONFLUENCE_ONLY sign-off item, dead score-branch sign-off item); EVL confirmed
+      independently per commit `97c901c` message ("Independently re-verified: py_compile clean,
+      34/34 core tests, 24/24 widened gate, diff scope confirmed")
+- [x] 7. UPDATE PROCESS — phase report written, umbrella state updated, commit already made and
+      pushed by user (`97c901c`) — see this UPDATE PROCESS session
 
 **Validate-contract required before execute.** If step 4 (PVL) is unchecked or `## Validate
 Contract` reads "(placeholder — vc-validate-agent writes this section before EXECUTE)",
@@ -276,13 +281,13 @@ git log --oneline -1 -- trading-app/engine/automation.py
 
 - Selected plan file path:
   `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-01-strategy1-obfvg_PLAN_28-08-26.md`
-- Last completed step: Step G1 (all checklist items A-G done); EXECUTE gates green locally, awaiting EVL
+- Last completed step: Step 7 UPDATE PROCESS — phase VERIFIED, committed and pushed at `97c901c`
 - Validate-contract status: PASS (28-08-26, inner-pvl cycle 2)
 - Supporting context files loaded: `process/context/all-context.md`,
   `process/development-protocols/phase-programs.md`,
   `process/general-plans/backlog/zero-trade-strategies-1-7_NOTE_11-08-26.md`
-- Next step: Spawn vc-research-agent for RESEARCH (Step 1 / Step A) — fresh audit of
-  `trading-app/engine/automation.py`, `engine/signals.py`, `engine/order_blocks.py`, `engine/fvg.py`
+- Next step: none — Phase 1 is closed. Program continues at Phase 2
+  (`phase-02-strategy3-orb_PLAN_28-08-26.md`), loop step RESEARCH.
 
 ---
 

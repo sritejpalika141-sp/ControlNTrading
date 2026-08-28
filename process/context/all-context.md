@@ -275,6 +275,13 @@ Feature-scoped folders under `process/features/` (kept in sync with `ls process/
   (`0e1b78c`, `c31e950`, `a4feb20`). Deploy-day manual gates + 2 backlog items remain (see the
   Program Closeout Summary in the umbrella plan). Umbrella plan (archived):
   `process/features/security-remediation/completed/trading-remediation_03-07-26/trading-remediation-umbrella_PLAN_03-07-26.md`
+- `strategy-rebuild` — 14-phase audit+fix program across all trading strategies (rule-based
+  Strategies 1-11 plus Crude Evening/Crude EIA, then the shared post-signal trend-gate stack last).
+  **IN PROGRESS (started 28-08-26)** — Phase 1 (Strategy 1 OB+FVG name-collision fix) ✅ VERIFIED,
+  committed to `main` at `97c901c`; Phases 2-14 pending, strictly sequential. Two open
+  entry-intent sign-off questions from Phase 1 are tracked in the umbrella plan's
+  `## Open Questions — Requires User Sign-Off`, not yet resolved. Umbrella plan (active):
+  `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md`
 
 ## Scan Metadata
 

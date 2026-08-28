@@ -248,6 +248,37 @@ During /goal execution of this phase program:
 
 ---
 
+## Open Questions — Requires User Sign-Off (do NOT silently act on these)
+
+Two findings from Phase 1's OB/FVG audit (`trading-app/engine/signals.py`) are core-entry-intent
+candidates per the umbrella's hard safety constraint ("never change a strategy's core entry/exit
+intent without flagging it... requiring explicit user sign-off"). Neither was fixed in Phase 1.
+Recorded here so a later phase (candidate: Phase 14, shared gate stack, or a dedicated follow-up)
+does not have to re-discover them, and so no agent treats silence as approval:
+
+1. **`STRAT1_CONFLUENCE_ONLY = False` (`signals.py:211`).** History: flipped from `True` after
+   confluence-only setups "produced zero signals for a week" — but that dead week overlaps the
+   since-fixed phantom-expiry bug and Phase 1's name-collision bug, so the zero-signal period may
+   have been caused by those bugs, not by confluence-only being genuinely worse. The comment's
+   stated compensating safeguard (admit standalone setups only above ">70 confidence") does **not
+   exist in code** — confidence is computed as `min(95, 60 + trend_strength/5)` (+15 at a key
+   level) and is never gated. The same comment block cites backtest evidence favoring
+   confluence-only (win rate 14.7% → 54.8%, max drawdown −348 → −68 pts). Reverting to `True` is a
+   plausible fix but is a core entry-intent change — requires explicit sign-off before any agent
+   applies it.
+2. **Dead counter-trend escape hatch (`signals.py:223`).** `if setup.get("score", 0) < 80: continue`
+   is dead code — no setup dict in `all_setups` ever carries a `"score"` key (order-blocks carry
+   `impulse_strength`, confluences carry `confluence_score`), so the condition is always true and
+   the intended "skip counter-trend setups unless it's a very strong OB" escape hatch never fires.
+   Fix options (either changes behavior): populate a real `score` key so the escape hatch works as
+   documented, or delete the dead branch and its comment. Requires sign-off on which behavior is
+   actually wanted before either change is applied.
+
+**Status:** open, unresolved, not actioned. Do not close either item without an explicit user
+decision recorded in a phase report or this section.
+
+---
+
 ## Durable Report Destinations
 
 | Phase | Report path (inside task folder) |
@@ -275,7 +306,7 @@ During /goal execution of this phase program:
 | Phase | Status |
 |---|---|
 | 0 — Pre-program (plan creation) | 🔨 CODE DONE (this artifact set) |
-| 01 — Strategy 1 (OB+FVG) | ⏳ PLANNED |
+| 01 — Strategy 1 (OB+FVG) | ✅ VERIFIED |
 | 02 — Strategy 3 (ORB) | ⏳ PLANNED |
 | 03 — Strategy 2 | ⏳ PLANNED |
 | 04 — Strategy 4 | ⏳ PLANNED |
@@ -385,16 +416,31 @@ pytest trading-app/ -k "<phase-specific selector>"
 ## Current Execution State
 
 Last updated: 28-08-26
-Completed phases: Phase 0 (Planning — umbrella + 14 phase plans created)
-Current phase: Phase 1 — Strategy 1 (OB+FVG) name-collision + audit
+Completed phases: Phase 0 (Planning — umbrella + 14 phase plans created); Phase 1 — Strategy 1
+(OB+FVG) name-collision fix + entry-logic audit — ✅ VERIFIED. Full 7-step inner loop closed
+(R→I→P→PVL→E→EVL→UP). Validate-contract: Gate PASS (28-08-26, inner-pvl cycle 2, 1 supplement
+cycle). Execution changes committed and pushed to `origin/main` at `97c901c` (verified: local HEAD
+matches `origin/main` at time of this UPDATE PROCESS session — no further commit needed here).
+Phase report: `phase-01-strategy1-obfvg_REPORT_28-08-26.md` (status: COMPLETE_WITH_GAPS — gaps are
+(a) `backtest_runner.py` known-gap, see Test Infra Improvement Notes below, and (b) 2 open
+sign-off items, see Open Questions — Requires User Sign-Off below; neither blocks VERIFIED per the
+program's Definition of Done since both are Agent-Probe-classified observations/infra gaps, not
+unresolved test gates the fix itself depends on).
+Current phase: Phase 2 — Strategy 3 (ORB) 5-minute window bug
 Current loop step: RESEARCH (pending)
-Validate-contract status: pending (no phase validated yet)
-Program Net Gate: PENDING
-Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat output)
+Validate-contract status: pending for Phase 2 (Phase 1's contract is closed/PASS; not reused)
+Program Net Gate: PENDING (1 of 14 phases verified)
+Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat
+output). No harness-file changes this phase (Phase 1 touched application code + process/context
+only) — full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not
+applicable per §Regression Gate Validators (harness-artifact trigger only).
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any
 subagent. Never spawn execute-agent when loop step is RESEARCH, INNOVATE, PLAN-SUPPLEMENT, or PVL.
+Next action: spawn vc-research-agent for Phase 2, scoped to a fresh audit of
+`trading-app/workers/auto_trader.py`'s `eval_strat_3()` (5-minute ORB window bug) per the phase 2
+plan (`phase-02-strategy3-orb_PLAN_28-08-26.md`).
 
 Note: The Stable Program Goal above is fixed. This section is the only part that changes —
 update-process-agent rewrites it after every phase closeout (overwrite, not append — git history is
@@ -416,7 +462,31 @@ code execution.
 
 ## Test Infra Improvement Notes
 
-(none identified yet)
+**[Found in Phase 1 — flag for every subsequent phase, do not re-discover from scratch]**
+`trading-app/engine/backtest_runner.py` has **no CLI entrypoint** — no `__main__` block, no
+`argparse`, no arg handling. It is a library module exposing
+`async backtest_strategy(strategy_name, real_client, days_back)`, which requires a **live Fyers
+client** to fetch historical candles. Every phase plan in this program (1-14) names a
+`backtest_runner.py --strategy "<name>"` command as a Hybrid test gate — as written, that command
+is a **silent no-op** (imports cleanly, exits 0, prints nothing; it is not a real gate as invoked
+from the shell). Phase 1 hit this and recorded it as a known-gap rather than blocking the phase
+(materiality was low there because zero strategy-logic files changed).
+
+This will very likely recur for Phases 2-14, several of which depend on the backtest gate more
+heavily than Phase 1 did (e.g. Phase 2's ORB window-bug fix is exactly the kind of change a backtest
+should catch). Two resolution options, to be decided once (not re-litigated per phase):
+1. Add a real `argparse`/`__main__` entrypoint to `backtest_runner.py` backed by a recorded-candle
+   fixture (no live broker dependency) — turns it into a genuine Fully-Automated/Hybrid gate.
+2. Reclassify every backtest-gate row across Phases 2-14's plans as Agent-Probe/Known-Gap up front,
+   and rely on the pytest regression-test tier (as Phase 1 did) as the actual proof of each fix.
+Recommendation: raise this decision explicitly at or before Phase 2's PLAN-SUPPLEMENT step, since
+Phase 2 is a window/timing bug that a working backtest would verify well. Not resolved by this
+UPDATE PROCESS session — flagging only, per orchestrator instruction not to silently act on it.
+
+`process/context/tests/all-tests.md` is still the unfilled `vc-setup` template (routing table is
+commented-out placeholders) — Phase 1 derived test commands from the validate-contract and direct
+inspection instead of this router. Filling it in would remove this repeated workaround for every
+remaining phase.
 
 ---
 
