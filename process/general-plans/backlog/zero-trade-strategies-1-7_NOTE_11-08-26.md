@@ -7,6 +7,24 @@ feature: general
 
 # BACKLOG NOTE — Strategies 1-7 Have Zero Real Trades
 
+**STATUS: SUPERSEDED (28-08-26)** by the `strategy-rebuild` phase program.
+
+Closing artifact:
+`process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-01-strategy1-obfvg_REPORT_28-08-26.md`
+
+Phase 01 of that program investigated the premise below and found **no shared cross-strategy
+dispatch bug for Strategies 1-7 as a group**. The concrete root cause identified and fixed was
+narrower and Strategy-1/10/11-specific: `str(strategy).startswith("Strategy 1")` at 3 call sites in
+`trading-app/engine/automation.py` also prefix-matched "Strategy 10" and "Strategy 11", so an active
+Strategy 10/11 trade silently blocked Strategy 1 from entering (and inflated its daily-cap counter).
+Strategy 1's earlier dead period is additionally explained by the since-fixed phantom-expiry bug
+(22-Jul-26). The remaining per-strategy questions below are now carried by the `strategy-rebuild`
+program's Phases 02-14 (one phase per strategy), not by this note.
+
+Do not re-open this note — route any follow-up to the `strategy-rebuild` program.
+
+---
+
 Opened: 11-08-26. Source: SPEC AC#6 of `strategy-self-improvement_11-08-26`.
 
 ## What was observed

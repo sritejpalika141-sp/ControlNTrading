@@ -657,11 +657,14 @@ class TradingState:
         Different strategies CAN trade simultaneously."""
         for t in self.active_auto_trades:
             t_strat = t.get("strategy", "") or ""
-            # Match by strategy prefix (e.g. "Strategy 1" matches "Strategy 1: OB + FVG")
+            # Match on the EXACT strategy ID (the part before the ":"), never a prefix.
+            # 28-08-26 fix: the old bidirectional `startswith` comparison made "Strategy 1"
+            # match "Strategy 10" / "Strategy 11" (and vice versa), so an active Strategy 10
+            # trade silently blocked Strategy 1 from ever entering. Exact-match on the split
+            # ID keeps "Strategy 1: OB + FVG" == "Strategy 1" while rejecting "Strategy 10".
             if strategy_name and t_strat and (
                 t_strat == strategy_name or
-                t_strat.startswith(strategy_name.split(":")[0]) or
-                strategy_name.startswith(t_strat.split(":")[0])
+                t_strat.split(":")[0].strip() == strategy_name.split(":")[0].strip()
             ):
                 return True
         return False
@@ -725,7 +728,9 @@ class TradingState:
         # Variant L: real per-day cap for Strategy 1 (the legacy strat_1_triggered flag was never
         # enforced). Backtest showed 2/day + confluence-only + breakeven-trail was the best
         # risk-adjusted configuration; more trades/day degraded drawdown sharply.
-        if strategy_name and str(strategy_name).startswith("Strategy 1"):
+        # 28-08-26: match "Strategy 1:" (with colon) — bare "Strategy 1" also prefix-matched
+        # "Strategy 10" / "Strategy 11", so those strategies were wrongly blocked by S1's cap.
+        if strategy_name and str(strategy_name).startswith("Strategy 1:"):
             _s1_cap = getattr(self, "STRAT_1_MAX_TRADES_PER_DAY", 2)
             if getattr(self, "strat_1_trades_today", 0) >= _s1_cap:
                 return False, f"Strategy 1 daily cap reached ({_s1_cap} trades)"
@@ -984,7 +989,9 @@ class TradingState:
         except Exception:
             entry_regime = "NEUTRAL"
         # Variant L: count Strategy-1 entries so the per-day cap in can_trade() is enforceable.
-        if strategy and str(strategy).startswith("Strategy 1"):
+        # 28-08-26: colon-anchored — bare "Strategy 1" also matched "Strategy 10"/"Strategy 11",
+        # inflating Strategy 1's daily counter with other strategies' entries.
+        if strategy and str(strategy).startswith("Strategy 1:"):
             self.strat_1_trades_today = getattr(self, "strat_1_trades_today", 0) + 1
         self.active_auto_trades.append({
             "symbol": symbol,

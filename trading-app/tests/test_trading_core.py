@@ -185,3 +185,77 @@ def test_hard_exit_mcx_account_keeps_trading_after_nse_close():
 def test_hard_exit_mcx_account_stops_at_mcx_close():
     # same account at 23:20 (NSE already closed earlier today) -> now disabled (end of day)
     assert _would_disable_automation(["NSE:SBIN-EQ", "MCX:CRUDEOIL26JULFUT"], ["NSE"], "MCX") is True
+
+
+# ───────── Strategy 1 vs 10 vs 11 name-collision (28-08-26 fix) ─────────
+# Bug locked in here: `str(strategy).startswith("Strategy 1")` also matched "Strategy 10"
+# and "Strategy 11", so those three strategies silently cross-blocked each other at all
+# THREE call sites in automation.py — has_active_trade_for_strategy(), can_trade()'s
+# Strategy-1 daily cap, and add_active_trade()'s strat_1_trades_today counter.
+
+S1 = "Strategy 1: OB + FVG"
+S10 = "Strategy 10: Adaptive ADX Engine"
+S11 = "Strategy 11: FRVP LVN Vacuum"
+
+
+def _state_with_active(strategy_names):
+    """Real (un-stubbed) has_active_trade_for_strategy over the given active trades."""
+    st = make_state(active_auto_trades=[{"strategy": s} for s in strategy_names])
+    del st.has_active_trade_for_strategy   # drop the make_state stub, use the real method
+    return st
+
+
+# --- call site 1: has_active_trade_for_strategy() ---
+@pytest.mark.parametrize("active,asked", [
+    ([S10], S1), ([S11], S1),          # S10/S11 running must not block S1
+    ([S1], S10), ([S1], S11),          # S1 running must not block S10/S11
+    ([S10], S11), ([S11], S10),        # S10 and S11 must not block each other
+])
+def test_active_trade_does_not_cross_block(active, asked):
+    assert _state_with_active(active).has_active_trade_for_strategy(asked) is False
+
+
+@pytest.mark.parametrize("strategy", [S1, S10, S11])
+def test_active_trade_still_blocks_same_strategy(strategy):
+    """The genuine guard must survive the exact-match change."""
+    assert _state_with_active([strategy]).has_active_trade_for_strategy(strategy) is True
+
+
+def test_active_trade_matches_bare_id_form():
+    """A tracked "Strategy 1" (no suffix) must still match "Strategy 1: OB + FVG"."""
+    assert _state_with_active(["Strategy 1"]).has_active_trade_for_strategy(S1) is True
+    assert _state_with_active([S1]).has_active_trade_for_strategy("Strategy 1") is True
+
+
+# --- call site 2: can_trade() Strategy-1 daily cap ---
+@pytest.mark.parametrize("strategy", [S10, S11])
+def test_can_trade_s1_cap_does_not_block_s10_s11(strategy):
+    st = make_state(strat_1_trades_today=99)   # S1 cap maxed out
+    ok, reason = st.can_trade(strategy, signal_type="CALL", symbol="NSE:NIFTY50-INDEX")
+    assert ok is True, f"{strategy} wrongly blocked by Strategy-1 cap: {reason}"
+
+
+def test_can_trade_s1_cap_still_blocks_s1():
+    st = make_state(strat_1_trades_today=2)
+    ok, reason = st.can_trade(S1, signal_type="CALL", symbol="NSE:NIFTY50-INDEX")
+    assert ok is False and "Strategy 1 daily cap" in reason
+
+
+# --- call site 3: add_active_trade() Strategy-1 counter increment ---
+def _add_trade(monkeypatch, strategy):
+    import engine.automation as _auto
+    monkeypatch.setattr(_auto, "trigger_webhook_background", lambda *a, **k: None)
+    st = make_state(webhook_url="", strat_1_trades_today=0)
+    st.save = lambda: None
+    st.add_active_trade("NSE:NIFTY50-INDEX", 100.0, 5.0, "BUY", "sl1", "tg1",
+                        strategy=strategy)
+    return st
+
+
+@pytest.mark.parametrize("strategy", [S10, S11])
+def test_add_active_trade_does_not_increment_s1_counter(monkeypatch, strategy):
+    assert _add_trade(monkeypatch, strategy).strat_1_trades_today == 0
+
+
+def test_add_active_trade_increments_s1_counter_for_s1(monkeypatch):
+    assert _add_trade(monkeypatch, S1).strat_1_trades_today == 1
