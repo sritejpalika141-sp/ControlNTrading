@@ -197,6 +197,13 @@ def _strat_enabled_for(state, equity_strat_name: str, symbol: str) -> bool:
     return equity_strat_name in getattr(state, "active_strategies", [])
 
 
+def _strat3_orb_window_ok(now_str: str) -> bool:
+    """Strategy 3 (5-Min ORB) evaluation window check -- pure, no side effects, no I/O.
+    Matches strategy_orb.py's own 10:30:00 expiry boundary exactly (see strategy_orb.py:83).
+    Extracted so the window-widen fix is unit-testable without driving automation_loop()."""
+    return "09:20:00" <= now_str <= "10:30:00"
+
+
 def _opt_base(s):
     """Alpha-prefix of an option/futures symbol, e.g. 'MCX:CRUDEOIL26AUG7500PE' -> 'CRUDEOIL',
     'NSE:NIFTY50-INDEX' -> 'NIFTY', 'NSE:NIFTY2680424600CE' -> 'NIFTY'. Reliably means "same
@@ -1999,7 +2006,7 @@ async def automation_loop():
                 from datetime import datetime
                 from state import IST
                 now = datetime.now(IST).strftime("%H:%M:%S")
-                if "09:20:00" <= now <= "09:30:00":
+                if _strat3_orb_window_ok(now):
                     for symbol in state.active_symbols:
                         # Asset-aware gate: equity ORB (active_strategies) vs commodity ORB
                         # (commodity_strategies). Skips symbols whose family/strategy is disabled.

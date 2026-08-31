@@ -79,3 +79,27 @@ def test_volume_filter_disabled_for_index_symbol():
 def test_is_index_spot_symbol():
     assert is_index_spot_symbol("NSE:NIFTY50-INDEX") is True
     assert is_index_spot_symbol("NSE:RELIANCE-EQ") is False
+
+
+# --- Strategy 3 (5-Min ORB) call-site evaluation-window gate -------------------
+# Phase 02 (strategy-rebuild): the auto_trader call-site window was hardcoded to a
+# 10-minute gate ("09:20:00" <= now <= "09:30:00"), 60 minutes narrower than
+# strategy_orb.py's own 10:30:00 expiry boundary. Widened to match exactly.
+
+
+def test_strat3_orb_window_admits_later_times():
+    """E2 -- times previously rejected by the old 10-minute gate are now in-window."""
+    from workers.auto_trader import _strat3_orb_window_ok
+
+    assert _strat3_orb_window_ok("09:45:00") is True
+    assert _strat3_orb_window_ok("10:15:00") is True
+
+
+def test_strat3_orb_window_boundaries():
+    """E3 -- boundary discipline: inclusive at both ends, rejects just outside."""
+    from workers.auto_trader import _strat3_orb_window_ok
+
+    assert _strat3_orb_window_ok("09:15:00") is False
+    assert _strat3_orb_window_ok("10:35:00") is False
+    assert _strat3_orb_window_ok("09:20:00") is True
+    assert _strat3_orb_window_ok("10:30:00") is True
