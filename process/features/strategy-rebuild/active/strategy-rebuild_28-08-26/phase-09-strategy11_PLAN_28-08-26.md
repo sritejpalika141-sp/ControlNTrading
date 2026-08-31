@@ -27,6 +27,18 @@ research; the Implementation Checklist is a placeholder only. This phase will be
 via its own RESEARCH pass when the program reaches it — do not trust the file mapping or scope
 below as final without re-verifying against current code.
 
+**[Added at Phase 2's UPDATE PROCESS, 31-08-26 — read before RESEARCH]** Strategy 11 was found to
+be currently `DISABLED` on the live dashboard during a side investigation (`swarm_agent_configs.status
+= 'DISABLED'`, auto-disabled from 3 consecutive real losses) — RESEARCH should confirm this and
+factor "why is it disabled" into the audit, not just review logic in isolation. Also carries a
+folded-in backlog item (optional scope addition, not a hard requirement):
+`process/features/strategy-rebuild/backlog/admin-dashboard-disabled-vs-shadow-label_NOTE_31-08-26.md`
+— the admin dashboard has no visual distinction between this `DISABLED` state and a separate
+shadow-mode-demoted state (`state.shadow_strategies`). Raise both at this phase's PLAN-SUPPLEMENT
+step; if the dashboard-label fix would grow this phase's blast radius beyond a single-strategy
+engine-logic audit (dashboard/UI code is a different surface than `engine/strategy_11_frvp.py`),
+split it into its own follow-up instead of bundling it silently.
+
 ---
 
 ## Entry Gate

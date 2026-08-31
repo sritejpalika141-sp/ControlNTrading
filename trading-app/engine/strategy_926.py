@@ -33,8 +33,13 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL", now=None
     Strategy 2: 9:26 - 9:35 - 183 Buy
     Selects CE/PE nearest to 183 (below) at 9:26 AM.
     Triggers a BUY if either hits 183 before 9:35 AM.
-    Strictly aligns with the market trend. Blocks entirely if NEUTRAL.
     Returns a signal dict or None.
+
+    `current_trend`: accepted for call-site signature compatibility but NOT evaluated in this
+    function body. Trend / directional-regime alignment for this strategy — as for every
+    strategy — is enforced downstream by the shared gate stack in `auto_trader.py`'s
+    `execute_auto_trade()`, not here. (Corrected 31-08-26: the previous wording claimed this
+    function "blocks entirely if NEUTRAL", which it never did.)
 
     `now`: optional injectable IST datetime (04-08-26, for engine/backtest_engine.py replay —
     live callers never pass this, so live behavior is unchanged).
@@ -131,7 +136,10 @@ async def evaluate_926_strategy(client, state, current_trend="NEUTRAL", now=None
             elif ltp >= _entry:
                 if strike_info.get('armed', False):
                     logger.info(f"🚀 Strategy 2 TRIGGERED! {sig_type} {sym} crossed ₹{_entry} from below (LTP: {ltp})")
-                    state.strat_926_triggered = True
+                # Bug fix (strategy-rebuild Phase 3): the signal below is returned regardless of
+                # `armed`, so the 1-trade-per-day flag must be consumed unconditionally. Previously
+                # an unarmed direct jump emitted a BUY without consuming the daily cap.
+                state.strat_926_triggered = True
 
                 return {
                     "symbol": "NSE:NIFTY50-INDEX",

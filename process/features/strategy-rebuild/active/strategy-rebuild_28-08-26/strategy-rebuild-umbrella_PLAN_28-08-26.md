@@ -307,7 +307,7 @@ decision recorded in a phase report or this section.
 |---|---|
 | 0 — Pre-program (plan creation) | 🔨 CODE DONE (this artifact set) |
 | 01 — Strategy 1 (OB+FVG) | ✅ VERIFIED |
-| 02 — Strategy 3 (ORB) | ⏳ PLANNED |
+| 02 — Strategy 3 (ORB) | ✅ VERIFIED |
 | 03 — Strategy 2 | ⏳ PLANNED |
 | 04 — Strategy 4 | ⏳ PLANNED |
 | 05 — Strategy 7 | ⏳ PLANNED |
@@ -415,32 +415,38 @@ pytest trading-app/ -k "<phase-specific selector>"
 
 ## Current Execution State
 
-Last updated: 28-08-26
+Last updated: 31-08-26
 Completed phases: Phase 0 (Planning — umbrella + 14 phase plans created); Phase 1 — Strategy 1
-(OB+FVG) name-collision fix + entry-logic audit — ✅ VERIFIED. Full 7-step inner loop closed
+(OB+FVG) name-collision fix + entry-logic audit — ✅ VERIFIED (committed `97c901c`); Phase 2 —
+Strategy 3 (ORB) 5-minute time-window bug — ✅ VERIFIED. Full 7-step inner loop closed
 (R→I→P→PVL→E→EVL→UP). Validate-contract: Gate PASS (28-08-26, inner-pvl cycle 2, 1 supplement
-cycle). Execution changes committed and pushed to `origin/main` at `97c901c` (verified: local HEAD
-matches `origin/main` at time of this UPDATE PROCESS session — no further commit needed here).
-Phase report: `phase-01-strategy1-obfvg_REPORT_28-08-26.md` (status: COMPLETE_WITH_GAPS — gaps are
-(a) `backtest_runner.py` known-gap, see Test Infra Improvement Notes below, and (b) 2 open
-sign-off items, see Open Questions — Requires User Sign-Off below; neither blocks VERIFIED per the
-program's Definition of Done since both are Agent-Probe-classified observations/infra gaps, not
-unresolved test gates the fix itself depends on).
-Current phase: Phase 2 — Strategy 3 (ORB) 5-minute window bug
+cycle — cycle-1 CONDITIONAL's headline test-coverage CONCERN closed via a plan-supplement that
+extracted a new module-level pure helper, `_strat3_orb_window_ok()`). EXECUTE implemented D1-D3 and
+E1-E5 with zero plan deviations. EVL independently confirmed all gates green (py_compile clean;
+10/10 tests pass — 8 baseline + 2 new pure-function tests; E4 one-shot-flag safety re-confirmed by
+code-trace). Execution changes committed and pushed to `origin/main` at `ede705e` (verified: local
+HEAD matches `origin/main` at time of this UPDATE PROCESS session — no further commit needed here).
+Phase report: `phase-02-strategy3-orb_REPORT_28-08-26.md` (status: COMPLETE — zero plan deviations;
+one pre-existing harness-drift item found and recorded, see Test Infra Improvement Notes below; one
+backlog item recorded, see below).
+Current phase: Phase 3 — Strategy 2 (9:26-180 Buy) audit-only, no known bug
 Current loop step: RESEARCH (pending)
-Validate-contract status: pending for Phase 2 (Phase 1's contract is closed/PASS; not reused)
-Program Net Gate: PENDING (1 of 14 phases verified)
+Validate-contract status: pending for Phase 3 (Phase 2's contract is closed/PASS; not reused)
+Program Net Gate: PENDING (2 of 14 phases verified)
 Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat
-output). No harness-file changes this phase (Phase 1 touched application code + process/context
-only) — full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not
-applicable per §Regression Gate Validators (harness-artifact trigger only).
+output). No harness-file changes in Phase 2 (application code + process/context only) — full
+regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not applicable per
+§Regression Gate Validators (harness-artifact trigger only).
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any
 subagent. Never spawn execute-agent when loop step is RESEARCH, INNOVATE, PLAN-SUPPLEMENT, or PVL.
-Next action: spawn vc-research-agent for Phase 2, scoped to a fresh audit of
-`trading-app/workers/auto_trader.py`'s `eval_strat_3()` (5-minute ORB window bug) per the phase 2
-plan (`phase-02-strategy3-orb_PLAN_28-08-26.md`).
+Next action: spawn vc-research-agent for Phase 3, scoped to a fresh audit of
+`trading-app/engine/strategy_926.py` (Strategy 2, 9:26-180 Buy — audit-only, no known bug per Phase
+0's baseline) per the phase 3 plan (`phase-03-strategy2_PLAN_28-08-26.md`). Note: this is a
+lightweight stub plan per Phase 0 — do not trust its file mapping/scope as final without
+re-verifying against current code (same caveat that applied to, and held true for, Phase 1 and
+Phase 2's stubs).
 
 Note: The Stable Program Goal above is fixed. This section is the only part that changes —
 update-process-agent rewrites it after every phase closeout (overwrite, not append — git history is
@@ -487,6 +493,50 @@ UPDATE PROCESS session — flagging only, per orchestrator instruction not to si
 commented-out placeholders) — Phase 1 derived test commands from the validate-contract and direct
 inspection instead of this router. Filling it in would remove this repeated workaround for every
 remaining phase.
+
+**[Found in Phase 2, confirms a pattern first hit in Phase 1 — now CONFIRMED TWICE, treat as
+settled fact for every remaining phase, do not re-discover]** `pytest trading-app/` (bare, or the
+umbrella's own literal `pytest trading-app/ -k "<selector>"` test-gate command as written in every
+phase plan) does **not run** — pytest collects root-level diagnostic scripts under `trading-app/`
+that are named `test_*.py` (e.g. `test_webhook.py`, `test_mcx_quote.py`, `test_fyers_token.py`,
+`test_active_symbols.py`) but are not real test modules; several call `sys.exit(1)` at import time,
+which pytest turns into `INTERNALERROR> SystemExit: 1` before any real test runs. Phase 1 and Phase
+2 both hit this independently and both worked around it the same way: **scope every test-gate
+command to `trading-app/tests/` specifically** (the actual suite root `conftest.py` serves), e.g.
+`pytest trading-app/tests/ -k "<selector>"` instead of `pytest trading-app/ -k "<selector>"`. Every
+phase plan (3-14) that copies the umbrella's literal gate-command template should apply this scoping
+from the start rather than rediscovering the INTERNALERROR each time. Two resolution options exist
+if a phase wants to fix the root cause instead of continuing to work around it (not required, not
+blocking): (1) rename the root-level diagnostic scripts away from the `test_*.py` pattern, or (2)
+add a `testpaths = trading-app/tests` (or `norecursedirs`) entry to a pytest config file. Neither is
+in scope for any phase unless explicitly picked up.
+
+**[Found in Phase 2 — line-number drift warning for all remaining phases]** Phase 2's EXECUTE added
+a new module-level function (~7 lines) to `trading-app/workers/auto_trader.py`. Every line number
+in that file at or after the insertion point (~line 188) is now shifted **+7** relative to any
+cached line numbers from Phase 0's baseline research or from Phase 1's/Phase 2's own RESEARCH notes.
+Any later phase whose blast radius touches `auto_trader.py` (per the umbrella's Touchpoints table:
+Phase 14's directional-regime-gate / MTF-alignment-gate sections) must **re-grep for exact line
+numbers at RESEARCH time**, not trust any previously-recorded line number for that file. This is the
+same discipline Phase 2's own plan already enforced for its own edits ("re-confirm the exact current
+line number before editing") — the lesson generalizes to every subsequent phase touching a
+file another phase has already modified, not just to editing your own phase's target lines.
+
+---
+
+## Backlog Items (cross-phase index)
+
+- `process/features/strategy-rebuild/backlog/eval-strat3-clock-injection_NOTE_28-08-26.md` —
+  clock-injection testability gap for `eval_strat_3()` (deferred from Phase 2; not blocking any
+  phase; pick up opportunistically or as a dedicated follow-up).
+- `process/features/strategy-rebuild/backlog/admin-dashboard-disabled-vs-shadow-label_NOTE_31-08-26.md`
+  — admin dashboard has no visual distinction between auto-disabled (3 consecutive real losses,
+  `swarm_agent_configs.status='DISABLED'`) and shadow-mode demoted (`state.shadow_strategies`)
+  strategies; discovered via a side investigation during Phase 2's UPDATE PROCESS session (not part
+  of Phase 2's formal scope). Strategy 11 (this program's Phase 9 subject) is currently `DISABLED`
+  on the live dashboard — fold this item into Phase 9's PLAN-SUPPLEMENT step as an optional scope
+  addition, or split it into its own follow-up if it would grow Phase 9's blast radius beyond a
+  single-strategy engine-logic audit (dashboard/UI code is a different surface).
 
 ---
 
