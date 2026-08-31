@@ -277,10 +277,13 @@ Feature-scoped folders under `process/features/` (kept in sync with `ls process/
   `process/features/security-remediation/completed/trading-remediation_03-07-26/trading-remediation-umbrella_PLAN_03-07-26.md`
 - `strategy-rebuild` — 14-phase audit+fix program across all trading strategies (rule-based
   Strategies 1-11 plus Crude Evening/Crude EIA, then the shared post-signal trend-gate stack last).
-  **IN PROGRESS (started 28-08-26)** — Phase 1 (Strategy 1 OB+FVG name-collision fix) ✅ VERIFIED,
-  committed to `main` at `97c901c`; Phases 2-14 pending, strictly sequential. Two open
-  entry-intent sign-off questions from Phase 1 are tracked in the umbrella plan's
-  `## Open Questions — Requires User Sign-Off`, not yet resolved. Umbrella plan (active):
+  **IN PROGRESS (started 28-08-26)** — 3 of 14 phases verified: Phase 1 (Strategy 1 OB+FVG
+  name-collision fix) ✅ VERIFIED, committed at `97c901c`; Phase 2 (Strategy 3 ORB time-window
+  widen) ✅ VERIFIED, committed at `ede705e`; Phase 3 (Strategy 2 audit — found and fixed a real
+  live-money bug during test-writing: an unarmed direct-jump signal bypassed the 1-trade/day cap)
+  ✅ VERIFIED, committed at `a38fdef`. Phases 4-14 pending, strictly sequential; Phase 4 (Strategy 4
+  audit) is next. Two open entry-intent sign-off questions from Phase 1 are tracked in the umbrella
+  plan's `## Open Questions — Requires User Sign-Off`, not yet resolved. Umbrella plan (active):
   `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md`
 
 ## Scan Metadata

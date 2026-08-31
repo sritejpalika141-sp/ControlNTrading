@@ -13,10 +13,10 @@ metadata:
 
 **Program:** strategy-rebuild
 **Umbrella plan:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md
-**Phase status:** ⏳ PLANNED (RESEARCH + INNOVATE complete; PLAN-SUPPLEMENT complete — see below)
-**Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-03-strategy2_REPORT_{dd-mm-yy}.md (flat in the program task folder)
+**Phase status:** ✅ VERIFIED (all 7 inner-loop steps complete; EVL-confirmed PASS twice — tests/docstring pass, then the supplement bug-fix pass; committed to `origin/main` at `a38fdef`)
+**Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-03-strategy2_REPORT_31-08-26.md (flat in the program task folder)
 **Date**: 31-08-26
-**Status**: PLANNED
+**Status**: VERIFIED
 **Complexity**: SIMPLE (audit + regression-test-only phase; no behavior/signature change)
 
 ---
@@ -259,9 +259,19 @@ Orchestrator reads this before deciding which subagent to spawn next. The canoni
       file paths, test scenarios, and mocking guidance
 - [x] 4. PVL — vc-validate-agent: full V1-V7 complete; validate-contract written, Gate: PASS
       (31-08-26)
-- [x] 5. EXECUTE — all checklist items done; per-section test gates run and green
-- [ ] 6. EVL — all EVL gates green; follow-up stubs registered; EVL HANDOFF SUMMARY written
-- [ ] 7. UPDATE PROCESS — phase report written, umbrella state updated, commit done
+- [x] 5. EXECUTE — all checklist items done; per-section test gates run and green. A material
+      test-writing discovery (unarmed direct-jump path returned a signal without consuming the
+      1-trade/day flag) was escalated, user-approved, and fixed via a one-line supplement
+      (`state.strat_926_triggered = True` dedented out of the `armed` guard) — see report addendum.
+- [x] 6. EVL — all gates independently re-confirmed green **twice**: once for the docstring +
+      7-test regression suite, once more after the supplement fix (py_compile clean;
+      `test_strategy_926.py` 7/7 green; full scoped suite delta unchanged at pre-existing 6
+      failures, +7 passed, zero new regressions). Follow-up stub
+      (`strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md`) registered and now marked RESOLVED.
+- [x] 7. UPDATE PROCESS — phase report finalized (addendum present); umbrella
+      `## Current Execution State` and Program Status Table updated; execution changes already
+      committed/pushed to `origin/main` at `a38fdef` (confirmed local HEAD == origin/main); no
+      further commit needed this session.
 
 **Validate-contract required before execute.** If step 4 (PVL) is unchecked or `## Validate
 Contract` reads "(placeholder — vc-validate-agent writes this section before EXECUTE)",

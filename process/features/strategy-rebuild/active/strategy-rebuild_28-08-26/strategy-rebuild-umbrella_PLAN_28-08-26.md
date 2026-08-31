@@ -308,7 +308,7 @@ decision recorded in a phase report or this section.
 | 0 — Pre-program (plan creation) | 🔨 CODE DONE (this artifact set) |
 | 01 — Strategy 1 (OB+FVG) | ✅ VERIFIED |
 | 02 — Strategy 3 (ORB) | ✅ VERIFIED |
-| 03 — Strategy 2 | ⏳ PLANNED |
+| 03 — Strategy 2 | ✅ VERIFIED |
 | 04 — Strategy 4 | ⏳ PLANNED |
 | 05 — Strategy 7 | ⏳ PLANNED |
 | 06 — Strategy 8 | ⏳ PLANNED |
@@ -418,35 +418,49 @@ pytest trading-app/ -k "<phase-specific selector>"
 Last updated: 31-08-26
 Completed phases: Phase 0 (Planning — umbrella + 14 phase plans created); Phase 1 — Strategy 1
 (OB+FVG) name-collision fix + entry-logic audit — ✅ VERIFIED (committed `97c901c`); Phase 2 —
-Strategy 3 (ORB) 5-minute time-window bug — ✅ VERIFIED. Full 7-step inner loop closed
-(R→I→P→PVL→E→EVL→UP). Validate-contract: Gate PASS (28-08-26, inner-pvl cycle 2, 1 supplement
-cycle — cycle-1 CONDITIONAL's headline test-coverage CONCERN closed via a plan-supplement that
-extracted a new module-level pure helper, `_strat3_orb_window_ok()`). EXECUTE implemented D1-D3 and
-E1-E5 with zero plan deviations. EVL independently confirmed all gates green (py_compile clean;
-10/10 tests pass — 8 baseline + 2 new pure-function tests; E4 one-shot-flag safety re-confirmed by
-code-trace). Execution changes committed and pushed to `origin/main` at `ede705e` (verified: local
-HEAD matches `origin/main` at time of this UPDATE PROCESS session — no further commit needed here).
-Phase report: `phase-02-strategy3-orb_REPORT_28-08-26.md` (status: COMPLETE — zero plan deviations;
-one pre-existing harness-drift item found and recorded, see Test Infra Improvement Notes below; one
-backlog item recorded, see below).
-Current phase: Phase 3 — Strategy 2 (9:26-180 Buy) audit-only, no known bug
+Strategy 3 (ORB) 5-minute time-window bug — ✅ VERIFIED (committed `ede705e`); Phase 3 — Strategy 2
+(9:26-180 Buy) audit — ✅ VERIFIED. Full 7-step inner loop closed (R→I→P→PVL→E→EVL→UP).
+Validate-contract: Gate PASS (31-08-26, `generated-by: inner-pvl: phase-3`, single V1-V7 pass, no
+CONCERNs, no supplement cycle needed at PVL). RESEARCH found the two historically-known bugs
+(duplicate-function shadowing, phantom-expiry) already fixed; confirmed zero test coverage existed.
+EXECUTE added a docstring correction (zero behavior change) plus a new 7-test regression file
+(`trading-app/tests/test_strategy_926.py`), with two documented test-file-only deviations from the
+plan. One deviation was material: writing the arm-then-recover test **discovered a real live-money
+bug** — an unarmed direct-jump to entry price returned a full BUY signal without setting
+`state.strat_926_triggered`, so the 1-trade-per-day cap was not consumed on that path. This was
+escalated (not silently fixed, since the phase's approved scope was audit-only), independently
+re-confirmed by EVL's code read, and the user approved a minimal one-line supplement fix (dedenting
+`state.strat_926_triggered = True` out of the `armed` guard). EVL independently confirmed all gates
+green **twice** — once for the docstring+tests pass, once more after the supplement fix
+(py_compile clean; `test_strategy_926.py` 7/7 green both times; full scoped suite delta unchanged:
+same 6 pre-existing unrelated failures, +7 passed, zero new regressions). Execution changes
+committed and pushed to `origin/main` at `a38fdef` (verified: local HEAD matches `origin/main` at
+time of this UPDATE PROCESS session — no further commit needed here). Phase report:
+`phase-03-strategy2_REPORT_31-08-26.md` (status: COMPLETE_WITH_GAPS — "gaps" = pre-existing
+unrelated test failures and harness-drift items, not this phase's own work; see addendum for the
+supplement fix). Backlog note `strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md` is RESOLVED
+(fix landed, pinned by a renamed regression test).
+Current phase: Phase 4 — Strategy 4 (Wisdom-Aligned Pullback) audit-only, no known bug from Phase 0
 Current loop step: RESEARCH (pending)
-Validate-contract status: pending for Phase 3 (Phase 2's contract is closed/PASS; not reused)
-Program Net Gate: PENDING (2 of 14 phases verified)
+Validate-contract status: pending for Phase 4 (Phase 3's contract is closed/PASS; not reused)
+Program Net Gate: PENDING (3 of 14 phases verified)
 Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat
-output). No harness-file changes in Phase 2 (application code + process/context only) — full
-regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not applicable per
-§Regression Gate Validators (harness-artifact trigger only).
+output). No harness-file changes in Phase 3 (application code + tests + process/context/backlog
+only) — full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not
+applicable per §Regression Gate Validators (harness-artifact trigger only).
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any
 subagent. Never spawn execute-agent when loop step is RESEARCH, INNOVATE, PLAN-SUPPLEMENT, or PVL.
-Next action: spawn vc-research-agent for Phase 3, scoped to a fresh audit of
-`trading-app/engine/strategy_926.py` (Strategy 2, 9:26-180 Buy — audit-only, no known bug per Phase
-0's baseline) per the phase 3 plan (`phase-03-strategy2_PLAN_28-08-26.md`). Note: this is a
-lightweight stub plan per Phase 0 — do not trust its file mapping/scope as final without
-re-verifying against current code (same caveat that applied to, and held true for, Phase 1 and
-Phase 2's stubs).
+Next action: spawn vc-research-agent for Phase 4, scoped to a fresh audit of
+`trading-app/engine/strategy_wisdom.py` (Strategy 4, Wisdom-Aligned Pullback — audit-only, no known
+bug per Phase 0's baseline) per the phase 4 plan (`phase-04-strategy4_PLAN_28-08-26.md`). Note: this
+is a lightweight stub plan per Phase 0 — do not trust its file mapping/scope as final without
+re-verifying against current code (same caveat that applied to, and held true for, Phases 1-3's
+stubs — Phase 3 in particular found real behavior the Phase 0 baseline missed; see "Audit-Phase
+Methodology Note" below). Also carry forward: any strategy file touched by an earlier phase may
+have shifted line numbers — re-grep, do not trust cached line numbers (see Test Infra Improvement
+Notes).
 
 Note: The Stable Program Goal above is fixed. This section is the only part that changes —
 update-process-agent rewrites it after every phase closeout (overwrite, not append — git history is
@@ -466,7 +480,52 @@ code execution.
 
 ---
 
+## Audit-Phase Methodology Note
+
+**[Found in Phase 3 — apply this lens to every remaining audit-only phase: 4, 6, 7, 8, 9, 10, 11]**
+Phase 3 was scoped "audit-only, no known bug" per Phase 0's baseline research — a plain code review
+of `strategy_926.py` genuinely found no live bug (both historical bugs were confirmed already
+fixed). The real bug (unarmed direct-jump signal bypassing the 1-trade/day cap) was found only
+because EXECUTE **wrote a regression test that exercised the actual runtime path** (arm-then-recover
+vs. bare threshold cross), not by re-reading the source. A static code review of the same lines
+would very plausibly have missed it, since the bug is about *dedent depth relative to a guard
+clause* — exactly the kind of thing that reads fine at a glance and only breaks under an executed
+scenario.
+
+**Lesson for Phases 4, 6-11 (all still audit-only, no known bug from Phase 0):** treat writing the
+regression-test suite as part of the investigation, not a formality bolted on after RESEARCH
+concludes "no bug found." RESEARCH's job is scoping and reading the source; INNOVATE's "no fix
+needed" verdict should be held provisional until EXECUTE's test-writing pass has actually exercised
+each documented behavior (window enforcement, one-shot/one-trade flags, arm/trigger sequencing,
+sizing math, fallback paths) against the live function — not just asserted from reading it. If
+EXECUTE's tests surface a real behavior gap, escalate via the same pattern used here: document,
+seek explicit user sign-off (this is audit-only scope, not a license for silent fixes), fix
+minimally if approved, pin with a renamed/updated test, and mark the backlog note RESOLVED with a
+pointer to the fix. Do not treat "audit-only" as "test-writing is optional cleanup" — it is the
+actual verification mechanism for the program's "verified" bar per the Program Goal Charter's
+Definition of Done.
+
 ## Test Infra Improvement Notes
+
+**[Found in Phase 3 — concrete guidance for every remaining phase: fix the pytest-hang workaround
+now, don't rediscover it 8 more times]** `cd trading-app/tests && python3 -m pytest -q` (the
+documented workaround for the root-level `test_*.py` collection break) finishes its actual test run
+and prints the summary line in ~15s, but the **process itself does not exit** afterward — a
+foreground run of this command therefore appears to hang forever. Confirmed pre-existing (reproduces
+identically on a `git stash`ed baseline, not caused by any strategy-rebuild phase's changes) —
+almost certainly a non-daemon thread or unclosed event loop left behind by one of the suite's own
+modules. **Concrete workaround for every remaining phase (4, 5, 6-14): never run this command in the
+foreground and wait on it.** Instead redirect output to a file and poll/kill once the summary line
+appears, e.g.:
+```bash
+cd trading-app/tests && (python3 -m pytest -q > /tmp/pytest_out.txt 2>&1 &) ; sleep 20 && cat /tmp/pytest_out.txt
+pkill -f "pytest -q" 2>/dev/null  # reap the hung process once the summary has been read
+```
+(Exact polling mechanics are the executing agent's choice — the invariant is: redirect to a file,
+poll for the summary line, then kill the process; do not block a foreground shell call on this
+command.) Root-causing the hang (find and close the leaked thread/loop) is a separate, not-yet-scoped
+follow-up — raise it as a dedicated fix phase or fold into Phase 14 if time allows; not required to
+unblock any individual audit phase since the workaround above is sufficient.
 
 **[Found in Phase 1 — flag for every subsequent phase, do not re-discover from scratch]**
 `trading-app/engine/backtest_runner.py` has **no CLI entrypoint** — no `__main__` block, no
@@ -526,6 +585,12 @@ file another phase has already modified, not just to editing your own phase's ta
 
 ## Backlog Items (cross-phase index)
 
+- `process/features/strategy-rebuild/backlog/strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md`
+  — **RESOLVED (31-08-26).** Found during Phase 3 EXECUTE test-writing: an unarmed direct-jump to
+  entry price in Strategy 2 returned a full BUY signal without consuming the 1-trade-per-day flag.
+  User-approved supplement fix landed same phase (one-line dedent); pinned by
+  `test_direct_jump_without_arming_still_sets_triggered_flag`; committed at `a38fdef`. No
+  follow-up action required.
 - `process/features/strategy-rebuild/backlog/eval-strat3-clock-injection_NOTE_28-08-26.md` —
   clock-injection testability gap for `eval_strat_3()` (deferred from Phase 2; not blocking any
   phase; pick up opportunistically or as a dedicated follow-up).
