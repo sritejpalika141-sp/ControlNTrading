@@ -31,12 +31,37 @@ class RiskOrchestrator:
         # We can just cache per strategy if it's missing or stale
         if s_name not in self._agent_config_cache or (now - self._agent_config_cache[s_name].get('_ts', 0)) > 60:
             config = await Database.get_agent_config(s_name)
+
+            if not config:
+                # 01-09-26 (Phase 15): defensive retry. A caller passing a short name
+                # ("Strategy 4") when the DB row is seeded with the full descriptive name
+                # ("Strategy 4: Wisdom-Aligned Pullback") used to silently miss and fall
+                # through to the zeroed default, which pinned effective_win_rate at 100.0
+                # forever via the grace-period branch. Match on the EXACT strategy ID (the
+                # part before the ":"), never a prefix/startswith/LIKE — the same pattern
+                # proven in automation.py's has_active_trade_for_strategy(). A naive prefix
+                # match would make "Strategy 1" match "Strategy 10"/"Strategy 11".
+                try:
+                    q_id = (s_name or "").split(":")[0].strip()
+                    if q_id:
+                        for row in await Database.get_all_agent_configs():
+                            row_name = row.get('strategy_name', '') or ''
+                            if row_name.split(":")[0].strip() == q_id:
+                                config = row
+                                break
+                except Exception as e:
+                    logger.error(f"Error during agent config fallback lookup for '{s_name}': {e}")
+
             if config:
                 config['_ts'] = now
                 self._agent_config_cache[s_name] = config
             else:
+                logger.warning(
+                    f"⚠️ No agent config found for strategy '{s_name}' — using zeroed defaults "
+                    f"(win_rate=0.0). Check for a name mismatch against swarm_agent_configs."
+                )
                 self._agent_config_cache[s_name] = {'_ts': now, 'win_rate': 0.0, 'total_trades': 0}
-                
+
         return self._agent_config_cache[s_name]
 
     def propose_trade_sync(self, strategy_name: str, symbol: str, sig: Dict, analysis: Dict, client: Any, state: Any):
@@ -161,13 +186,20 @@ class RiskOrchestrator:
             # Handle post-execution state updates per strategy
             s_name = winning_sig['strategy_name']
             state = winning_sig['state']
-            if s_name == "Strategy 3":
+            # 01-09-26 (Phase 15): these three checks compare against the FULL descriptive
+            # strategy names now passed by auto_trader.py's propose_trade() call sites (matching
+            # the swarm_agent_configs seeding in models.py). They drive load-bearing daily
+            # trade-frequency caps — strat_orb_triggered (Strategy 3 one-shot/day, read by
+            # strategy_orb.py), strat_4_trades (Strategy 4 2/day, read by strategy_wisdom.py),
+            # strat_6_trades_today (Strategy 6 2/day, read by strategy_gap.py) — so the literals
+            # must stay byte-identical to models.py's default_strats entries.
+            if s_name == "Strategy 3: 5-Minute ORB":
                 state.strat_orb_triggered = True
                 state.save()
-            elif s_name == "Strategy 4":
+            elif s_name == "Strategy 4: Wisdom-Aligned Pullback":
                 state.strat_4_trades = getattr(state, "strat_4_trades", 0) + 1
                 state.save()
-            elif s_name == "Strategy 6":
+            elif s_name == "Strategy 6: Gap Fill Reversal":
                 state.strat_6_trades_today = getattr(state, "strat_6_trades_today", 0) + 1
                 state.save()
                 

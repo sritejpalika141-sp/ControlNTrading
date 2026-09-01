@@ -309,7 +309,8 @@ decision recorded in a phase report or this section.
 | 01 — Strategy 1 (OB+FVG) | ✅ VERIFIED |
 | 02 — Strategy 3 (ORB) | ✅ VERIFIED |
 | 03 — Strategy 2 | ✅ VERIFIED |
-| 04 — Strategy 4 | ⏳ PLANNED |
+| 04 — Strategy 4 | 🚧 PAUSED (RESEARCH done, no bug in strategy_wisdom.py; resumes after Phase 15) |
+| 15 — Risk orchestrator strategy-name mismatch (inserted mid-program 31-08-26) | 🔨 CODE DONE (plan) — RUNNING NOW, prioritized ahead of Phase 4 resume |
 | 05 — Strategy 7 | ⏳ PLANNED |
 | 06 — Strategy 8 | ⏳ PLANNED |
 | 07 — Strategy 9 | ⏳ PLANNED |
@@ -440,21 +441,49 @@ time of this UPDATE PROCESS session — no further commit needed here). Phase re
 unrelated test failures and harness-drift items, not this phase's own work; see addendum for the
 supplement fix). Backlog note `strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md` is RESOLVED
 (fix landed, pinned by a renamed regression test).
-Current phase: Phase 4 — Strategy 4 (Wisdom-Aligned Pullback) audit-only, no known bug from Phase 0
-Current loop step: RESEARCH (pending)
-Validate-contract status: pending for Phase 4 (Phase 3's contract is closed/PASS; not reused)
-Program Net Gate: PENDING (3 of 14 phases verified)
+PHASE 4 STATUS: 🚧 PAUSED (not abandoned). Phase 4 — Strategy 4 (Wisdom-Aligned Pullback)
+audit-only, no known bug from Phase 0. Phase 4's own RESEARCH step already completed for its
+original scope and found no bug in `strategy_wisdom.py` itself. Phase 4's Phase Loop Progress:
+Step 1 RESEARCH ✅ done; Steps 2-7 (INNOVATE onward) NOT started — paused here, will resume after
+Phase 15 closes out.
+
+INSERTED PHASE 15 — RUNNING NOW (discovered mid-Phase-4-RESEARCH, 31-08-26): During Phase 4's
+RESEARCH pass, a shared-infrastructure bug was found — `auto_trader.py` calls
+`risk_orchestrator.propose_trade(strategy_name, ...)` using SHORT strategy-name strings for most
+strategies while `swarm_agent_configs` is seeded/queried by FULL descriptive names, so
+`_get_agent_config()` silently misses the DB row and falls back to zeroed
+win-rate/Kelly-multiplier defaults for the affected strategies. Because this affects the shared
+risk-orchestration path used by nearly every strategy (not just Strategy 4), it is prioritized to
+run as an inserted Phase 15 ahead of resuming Phase 4. Phase 15 plan:
+`phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`. Phase 15's own RESEARCH (mid-program
+discovery) and INNOVATE (Approach C: fix call sites + harden lookup + add warning log; defer full
+config-drift validation to backlog) both completed this session (Steps 1-2 ticked); Step 3
+(PLAN-SUPPLEMENT / plan creation) completes with this plan write. Step 4 (PVL) is next —
+`MID_PROGRAM_PLAN_CREATED` signal applies: inner PVL required for this plan only, no new /goal
+block, Stable Program Goal unchanged.
+
+Current phase: Phase 15 — Risk orchestrator strategy-name mismatch (inserted, running now, ahead
+of Phase 4 resume)
+Current loop step: PVL (pending — Steps 1-3 done this session)
+Validate-contract status: pending for Phase 15 (placeholder in phase-15 plan file; Phase 4's
+RESEARCH-only progress is preserved separately, not superseded; Phase 3's contract remains
+closed/PASS, not reused)
+Program Net Gate: PENDING (3 of 14 numbered phases verified; Phase 15 is an inserted 15th phase,
+not yet counted toward the 14-phase baseline total)
 Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat
 output). No harness-file changes in Phase 3 (application code + tests + process/context/backlog
 only) — full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not
-applicable per §Regression Gate Validators (harness-artifact trigger only).
+applicable per §Regression Gate Validators (harness-artifact trigger only). Phase 15's plan-artifact
+validator run is expected as part of its own PLAN-phase completion checklist.
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any
 subagent. Never spawn execute-agent when loop step is RESEARCH, INNOVATE, PLAN-SUPPLEMENT, or PVL.
-Next action: spawn vc-research-agent for Phase 4, scoped to a fresh audit of
-`trading-app/engine/strategy_wisdom.py` (Strategy 4, Wisdom-Aligned Pullback — audit-only, no known
-bug per Phase 0's baseline) per the phase 4 plan (`phase-04-strategy4_PLAN_28-08-26.md`). Note: this
+Next action: spawn vc-validate-agent for inner PVL on Phase 15's plan file
+(`phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`, Step 4). Do NOT spawn
+vc-execute-agent for Phase 15 until its validate-contract is written and non-placeholder. After
+Phase 15 reaches ✅ VERIFIED, resume Phase 4 from its next un-checked Phase Loop Progress step
+(INNOVATE) per the phase 4 plan (`phase-04-strategy4_PLAN_28-08-26.md`). Note: this
 is a lightweight stub plan per Phase 0 — do not trust its file mapping/scope as final without
 re-verifying against current code (same caveat that applied to, and held true for, Phases 1-3's
 stubs — Phase 3 in particular found real behavior the Phase 0 baseline missed; see "Audit-Phase
