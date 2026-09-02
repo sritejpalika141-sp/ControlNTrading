@@ -13,8 +13,8 @@ metadata:
 
 **Program:** strategy-rebuild
 **Umbrella plan:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md
-**Phase status:** ⏳ PLANNED
-**Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-15-risk-orchestrator-name-mismatch_REPORT_{dd-mm-yy}.md (flat in the program task folder)
+**Phase status:** ✅ VERIFIED (EVL-confirmed 01-09-26; committed + pushed to `origin/main` at `e9c6d63`)
+**Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-15-risk-orchestrator-name-mismatch_REPORT_01-09-26.md (flat in the program task folder)
 
 **Insertion note:** This phase was discovered mid-program, during Phase 4's own RESEARCH pass (Phase
 4 = Strategy 4 / Wisdom-Aligned Pullback audit, still in progress, PAUSED — not abandoned). Because
@@ -281,9 +281,9 @@ Orchestrator reads this before deciding which subagent to spawn next. The canoni
   collateral regression), PVL-supplement (B1b/B1c/C1) applied, cycle 2 independently re-verified
   the fix and ran a broadened hardcoded-name-check sweep (found 2 new pre-existing, out-of-scope
   bugs, recorded as Open Gaps + backlog-note recommendation, non-blocking).
-- [x] 5. EXECUTE — all checklist items (A, B incl. B1b/B1c, C) done 01-09-26; py_compile clean; new `tests/test_risk_orchestrator.py` 27/27 green; 2 backlog notes written. Awaiting independent EVL confirmation.
-- [ ] 6. EVL — all EVL gates green; follow-up stubs registered; EVL HANDOFF SUMMARY written
-- [ ] 7. UPDATE PROCESS — phase report written, umbrella state updated, commit done
+- [x] 5. EXECUTE — all checklist items (A, B incl. B1b/B1c, C) done 01-09-26; py_compile clean; new `tests/test_risk_orchestrator.py` 27/27 green; 2 backlog notes written.
+- [x] 6. EVL — independent EVL confirmation run (orchestrator-owned, separate session) re-ran the exact validate-contract gate commands (py_compile, `test_risk_orchestrator.py` 27/27, `grep -n 'propose_trade("Strategy [0-9]"'` zero-hit check, `git diff --stat` scope check) — all green, matching EXECUTE's self-reported results with no discrepancy. Follow-up stubs registered as backlog notes (both already written by EXECUTE: `config-drift-validation-check_NOTE_01-09-26.md`, `strategy-1-daily-cap-and-collision-bugs_NOTE_01-09-26.md`). Execution changes committed and pushed to `origin/main` at `e9c6d63` ("fix(trading): strategy names didn't match database, breaking fair trade-slot selection").
+- [x] 7. UPDATE PROCESS — this session (01-09-26). Phase report finalized; umbrella `## Current Execution State` rewritten (Phase 15 verified, Phase 4 resuming); context (`process/context/all-context.md`) updated; Phase 1 daily-cap/collision backlog item flagged HIGH-PRIORITY in the umbrella. No source re-commit needed (already at `e9c6d63`, verified local == `origin/main`); a docs-only commit for this closeout is recommended, not yet made.
 
 **Validate-contract written, Gate: PASS (31-08-26, cycle 2, inner-pvl: phase-15).** Step 4 (PVL)
 is complete. Cycle 1 found one unresolved FAIL (Item 3: fixing Strategy 3/4/6 call sites per Step
@@ -354,22 +354,22 @@ EXECUTE.)
 
 - Selected plan file path:
   `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`
-- Last completed step: inner PVL V1-V7, cycle 2 (this session) — Gate: PASS, independently
-  re-verified (see `## Validate Contract`)
+- **Phase closed 01-09-26 — ✅ VERIFIED.** Last completed step: UPDATE PROCESS (Step 7). Full
+  7-step inner loop (R→I→P→PVL→E→EVL→UP) closed with no unresolved gaps within this phase's own
+  Blast Radius.
 - Validate-contract status: written, Gate: PASS (31-08-26, cycle 2, `generated-by: inner-pvl:
-  phase-15`, supersedes cycle-1's BLOCKED contract)
-- Supporting context files loaded: `process/context/all-context.md`,
-  `process/features/strategy-rebuild/` full file listing, umbrella plan
-  `strategy-rebuild-umbrella_PLAN_28-08-26.md` (Current Execution State + Blast Radius +
-  Verification Evidence sections)
-- Next step for a fresh agent: spawn `vc-execute-agent` against this plan file (Steps A, B
-  including B1/B1b/B2/B3, and C including C1/C2). EXECUTE should also write the two backlog notes
-  named in the validate-contract's Open Gaps section (config-drift-validation-check, and the new
-  Strategy-1 daily-cap/collision bugs note) to `process/features/strategy-rebuild/backlog/`. After
-  this phase reaches ✅ VERIFIED (EVL green), resume Phase 4
-  (`phase-04-strategy4_PLAN_28-08-26.md`) from its own next un-checked Phase Loop Progress step
-  (Phase 4's RESEARCH already completed for its original `strategy_wisdom.py` scope; next is
-  INNOVATE for Phase 4).
+  phase-15`, supersedes cycle-1's BLOCKED contract) — EVL independently re-confirmed all gates
+  green against this contract on 01-09-26.
+- Execution changes committed and pushed to `origin/main` at `e9c6d63` (verified: local HEAD
+  matched `origin/main` at UPDATE PROCESS time — no further commit needed for source).
+- This phase's own scope is fully closed. Two out-of-Blast-Radius findings surfaced during PVL/EVL
+  were NOT fixed here (by design) and are tracked as backlog notes — see the umbrella plan's
+  `## HIGH-PRIORITY Open Item` and `## Backlog Items (cross-phase index)` sections.
+- Next step for a fresh agent: this phase requires no further action. Resume Phase 4
+  (`phase-04-strategy4_PLAN_28-08-26.md`) from its next un-checked Phase Loop Progress step
+  (Step 1 RESEARCH is now ticked in the Phase 4 plan itself — see that file; next is Step 2
+  INNOVATE for Phase 4). The orchestrator's call whether to run the flagged Phase-1 verification
+  item before, or in parallel with, Phase 4's resume — see the umbrella's HIGH-PRIORITY section.
 
 ---
 

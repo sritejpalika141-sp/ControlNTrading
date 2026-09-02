@@ -145,16 +145,32 @@ deviations.
 - Two pre-existing failures in `test_p0_fixes.py` / `test_auto_trader.py` are unrelated to this
   phase but are latent red in the suite — worth a separate cleanup item.
 
+## EVL Confirmation and Commit (added at UPDATE PROCESS, 01-09-26)
+
+Independent EVL (separate session, orchestrator-owned) re-ran the exact validate-contract gate
+commands rather than trusting this report's self-reported EXECUTE results:
+- `python3 -m py_compile trading-app/workers/auto_trader.py trading-app/engine/risk_orchestrator.py` — green
+- `cd trading-app/tests && python3 -m pytest test_risk_orchestrator.py -v` — 27/27 green
+- `grep -n 'propose_trade("Strategy [0-9]"' trading-app/workers/auto_trader.py` — zero hits
+- `git diff --stat` — scope matched the declared Blast Radius
+
+No discrepancy from EXECUTE's self-report. Execution changes committed and pushed to `origin/main`
+at `e9c6d63` ("fix(trading): strategy names didn't match database, breaking fair trade-slot
+selection"); local HEAD confirmed matching `origin/main` at UPDATE PROCESS time.
+
+**Not proven by this phase (carried forward, not silently dropped):** a live-DB spot-check that the
+production `swarm_agent_configs` table matches `models.py`'s `default_strats` seeding (the
+validate-contract's own "What This Coverage Does NOT Prove" caveat) — this remains an Agent-Probe
+gap, not blocking, since the seeding-code proof is what the gate table commits to.
+
 ## Closeout Packet
 
 - **Selected plan:** `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`
-- **Finished:** Steps A, B (B1/B1b/B1c/B2/B3/B4), C (C1/C2); 2 backlog notes.
-- **Verified:** py_compile, 27/27 new tests, grep gates, diff scope.
-- **Still unverified:** independent EVL re-run (orchestrator-owned); live-DB spot-check that the
-  production `swarm_agent_configs` table matches `models.py` seeding (per the validate-contract's
-  "What This Coverage Does NOT Prove").
-- **Remaining:** EVL confirmation, then UPDATE PROCESS (umbrella state + commit).
-- **Classification:** `Keep in active/testing` — implementation complete, awaiting independent EVL.
+- **Finished:** Steps A, B (B1/B1b/B1c/B2/B3/B4), C (C1/C2); 2 backlog notes; EVL confirmation; commit `e9c6d63`.
+- **Verified:** py_compile, 27/27 new tests, grep gates, diff scope — confirmed twice (EXECUTE self-report + independent EVL re-run).
+- **Still unverified:** live-DB spot-check that the production `swarm_agent_configs` table matches `models.py` seeding (Agent-Probe, non-blocking known-gap, not required by this phase's own gate table).
+- **Remaining:** none for this phase. UPDATE PROCESS (this document's finalization) is the last step.
+- **Classification:** ✅ VERIFIED. Stays in the program's flat `active/` task folder (program continues — not individually archived; matches Phases 1-3's precedent of staying co-located until the whole umbrella closes).
 
 ## Forward Preview
 

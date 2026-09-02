@@ -84,7 +84,17 @@ def test_per_session_gate_blocks_only_that_session():
     assert st.can_trade("S", signal_type="CALL", symbol="MCX:CRUDEOIL26JULFUT")[0] is True
 
 def test_strategy1_daily_cap():
-    """Strategy 1 is capped at 2/day; other strategies are unaffected by that counter."""
+    """Strategy 1 is capped at 2/day; other strategies are unaffected by that counter.
+
+    SCOPE (Phase 16, 02-09-26) — KEPT, not retired, but read this before trusting it:
+    this is a unit test of can_trade()'s OWN cap logic. It hand-types the strategy name, so
+    it proves nothing about what the production call site actually passes. It passed for
+    months while workers/auto_trader.py's run_strat_1() passed a bare "Strategy 1" that
+    never matched this gate — i.e. it masked a live daily-cap bypass. The real-call-site
+    coverage now lives in test_auto_trader.py::test_strat1_passes_full_name_to_can_trade and
+    ::test_strat1_daily_cap_blocks_at_real_call_site. Do NOT treat this test alone as proof
+    that the cap enforces in production.
+    """
     for n, expect in [(0, True), (1, True), (2, False), (3, False)]:
         st = make_state(strat_1_trades_today=n)
         assert st.can_trade("Strategy 1: OB + FVG", signal_type="CALL",

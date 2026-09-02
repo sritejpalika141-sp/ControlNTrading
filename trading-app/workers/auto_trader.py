@@ -204,6 +204,62 @@ def _strat3_orb_window_ok(now_str: str) -> bool:
     return "09:20:00" <= now_str <= "10:30:00"
 
 
+async def _strat1_attempt_trade(state, client, symbol, analysis):
+    """Strategy 1 (OB + FVG) trade-attempt body, extracted verbatim from the `run_strat_1()`
+    closure inside eval_symbol_strats() so it is directly callable (and therefore testable)
+    without driving automation_loop(). Same precedent as _strat3_orb_window_ok() above.
+
+    Phase 16 fix: `strat_name` is hoisted to a SINGLE local used by BOTH the can_trade() gate
+    and the propose_trade() call. Previously these were two independent string literals and had
+    drifted apart — can_trade() received a bare "Strategy 1", which never matched
+    automation.py's `.startswith("Strategy 1:")` cap gate, so Strategy 1's 2-trades/day cap was
+    dead code on this path. BEHAVIOR CHANGE: that cap now actually enforces.
+    """
+    strat_name = "Strategy 1: OB + FVG"
+    # Strategy 1 is equity OB/FVG only — never on MCX/CDS (was buying crude at highs).
+    if symbol.startswith(("MCX:", "CDS:")):
+        return
+    if strat_name not in state.active_strategies or not analysis.get("signals"):
+        return
+    trade_placed = False
+    for sig in analysis["signals"]:
+            if trade_placed: break
+            if sig.get("type") not in ("CALL", "PUT"): continue
+            tech_conf = sig.get("confidence", 0)
+            if tech_conf < 50: continue
+            trend_info = analysis.get("trend", {})
+            # Safety: trend_info can be a string or dict depending on code path
+            if isinstance(trend_info, str):
+                current_trend = trend_info.upper()
+            elif isinstance(trend_info, dict):
+                current_trend = (trend_info.get("trend", "") or "").upper()
+            else:
+                current_trend = "NEUTRAL"
+            # Trend alignment: skip counter-trend signals
+            if sig["type"] == "CALL" and "BEAR" in current_trend: continue
+            if sig["type"] == "PUT" and "BULL" in current_trend: continue
+            # NEUTRAL/SIDEWAYS: allow high-confidence signals (>= 75) instead of blocking all
+            # Previously this blocked ALL signals in NEUTRAL, which was the #1 reason for
+            # zero trades when AI always said BEARISH and conflicted with math.
+            if ("NEUTRAL" in current_trend or "SIDEWAYS" in current_trend) and tech_conf < 75: continue
+            if state.profit_target_met and tech_conf < 85: continue
+
+            can_trade, reason = state.can_trade(strat_name, signal_type=sig['type'], symbol=symbol)
+            if not can_trade: continue
+
+            # FIX 3: "AI unavailable" must not act as an AI veto. Signal confidence is
+            # 60 + trend_strength/5 (typically 60-75), so most signals fall in the 60-69
+            # band that REQUIRED ai_confidence >= 50. Whenever the AI provider was
+            # rate-limited, ai_confidence defaulted to 0 and every one of those signals
+            # was silently dropped — a major contributor to "no trades placed".
+            _ai_conf = sig.get("ai_confidence", 0) or 0
+            _ai_down = sig.get("ai_status") in ("unavailable", "skipped", "timeout", "error")
+            if tech_conf >= 70 or (tech_conf >= 50 and _ai_conf >= 50) or (_ai_down and tech_conf >= 60):
+                print(f"📡 Strat1 SIGNAL: {sig['type']} {symbol} conf={tech_conf} trend={current_trend}", flush=True)
+                await risk_orchestrator.propose_trade(strat_name, symbol, sig, analysis, client, state)
+                break
+
+
 def _opt_base(s):
     """Alpha-prefix of an option/futures symbol, e.g. 'MCX:CRUDEOIL26AUG7500PE' -> 'CRUDEOIL',
     'NSE:NIFTY50-INDEX' -> 'NIFTY', 'NSE:NIFTY2680424600CE' -> 'NIFTY'. Reliably means "same
@@ -1187,7 +1243,10 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
         #      often — under the old rule that silently became a permanent block.
         # Directional consistency is KEPT: never buy a CALL into a bearish trend or vice-versa.
         # Counter-trend setups are already filtered upstream in signals.py.
-        if "Strategy 1" in strategy_name:
+        # Phase 16: exact-match-on-split, never substring containment — bare `"Strategy 1" in
+        # strategy_name` also matched "Strategy 10: Adaptive ADX Engine" and "Strategy 11: FRVP
+        # LVN Vacuum", silently applying Strategy 1's directional rule to those strategies.
+        if strategy_name.split(":")[0].strip() == "Strategy 1":
             sig_type = sig.get("type", "").upper()
             if "BULL" in current_trend and sig_type != "CALL":
                 return
@@ -2122,49 +2181,10 @@ async def automation_loop():
                         await risk_orchestrator.propose_trade("Strategy 11: FRVP LVN Vacuum", symbol, sig, {"trend": sig.get("direction", "NEUTRAL")}, client, state)
 
             async def run_strat_1():
-                # Strategy 1 is equity OB/FVG only — never on MCX/CDS (was buying crude at highs).
-                if symbol.startswith(("MCX:", "CDS:")):
-                    return
-                if "Strategy 1: OB + FVG" not in state.active_strategies or not analysis.get("signals"):
-                    return
-                trade_placed = False
-                for sig in analysis["signals"]:
-                        if trade_placed: break
-                        if sig.get("type") not in ("CALL", "PUT"): continue
-                        tech_conf = sig.get("confidence", 0)
-                        if tech_conf < 50: continue
-                        trend_info = analysis.get("trend", {})
-                        # Safety: trend_info can be a string or dict depending on code path
-                        if isinstance(trend_info, str):
-                            current_trend = trend_info.upper()
-                        elif isinstance(trend_info, dict):
-                            current_trend = (trend_info.get("trend", "") or "").upper()
-                        else:
-                            current_trend = "NEUTRAL"
-                        # Trend alignment: skip counter-trend signals
-                        if sig["type"] == "CALL" and "BEAR" in current_trend: continue
-                        if sig["type"] == "PUT" and "BULL" in current_trend: continue
-                        # NEUTRAL/SIDEWAYS: allow high-confidence signals (>= 75) instead of blocking all
-                        # Previously this blocked ALL signals in NEUTRAL, which was the #1 reason for
-                        # zero trades when AI always said BEARISH and conflicted with math.
-                        if ("NEUTRAL" in current_trend or "SIDEWAYS" in current_trend) and tech_conf < 75: continue
-                        if state.profit_target_met and tech_conf < 85: continue
-                        
-                        can_trade, reason = state.can_trade("Strategy 1", signal_type=sig['type'], symbol=symbol)
-                        if not can_trade: continue
-                        
-                        # FIX 3: "AI unavailable" must not act as an AI veto. Signal confidence is
-                        # 60 + trend_strength/5 (typically 60-75), so most signals fall in the 60-69
-                        # band that REQUIRED ai_confidence >= 50. Whenever the AI provider was
-                        # rate-limited, ai_confidence defaulted to 0 and every one of those signals
-                        # was silently dropped — a major contributor to "no trades placed".
-                        _ai_conf = sig.get("ai_confidence", 0) or 0
-                        _ai_down = sig.get("ai_status") in ("unavailable", "skipped", "timeout", "error")
-                        if tech_conf >= 70 or (tech_conf >= 50 and _ai_conf >= 50) or (_ai_down and tech_conf >= 60):
-                            print(f"📡 Strat1 SIGNAL: {sig['type']} {symbol} conf={tech_conf} trend={current_trend}", flush=True)
-                            await risk_orchestrator.propose_trade("Strategy 1: OB + FVG", symbol, sig, analysis, client, state)
-                            break
-                            
+                # Body extracted to the module-level _strat1_attempt_trade() (Phase 16) so it is
+                # directly testable; same code, same call site, same invocation count.
+                await _strat1_attempt_trade(state, client, symbol, analysis)
+
             async def run_crude_strats():
                 # The evening/EIA crude strategies are the ONLY ones designed for the MCX evening
                 # session — the ORB/9-EMA/Swing commodity variants are hard-gated to NSE daytime

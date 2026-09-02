@@ -298,6 +298,8 @@ decision recorded in a phase report or this section.
 | 12 | `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-12-crude-evening_REPORT_{dd-mm-yy}.md` |
 | 13 | `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-13-crude-eia_REPORT_{dd-mm-yy}.md` |
 | 14 | `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-14-shared-gate-stack_REPORT_{dd-mm-yy}.md` |
+| 15 (inserted mid-program, ahead of Phase 4 resume) | `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-15-risk-orchestrator-name-mismatch_REPORT_01-09-26.md` |
+| 16 (inserted mid-program, running alongside Phase 4 resume) | `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-16-strategy1-identity-fixes_REPORT_{dd-mm-yy}.md` |
 
 ---
 
@@ -309,8 +311,9 @@ decision recorded in a phase report or this section.
 | 01 — Strategy 1 (OB+FVG) | ✅ VERIFIED |
 | 02 — Strategy 3 (ORB) | ✅ VERIFIED |
 | 03 — Strategy 2 | ✅ VERIFIED |
-| 04 — Strategy 4 | 🚧 PAUSED (RESEARCH done, no bug in strategy_wisdom.py; resumes after Phase 15) |
-| 15 — Risk orchestrator strategy-name mismatch (inserted mid-program 31-08-26) | 🔨 CODE DONE (plan) — RUNNING NOW, prioritized ahead of Phase 4 resume |
+| 15 — Risk orchestrator strategy-name mismatch (inserted mid-program 31-08-26) | ✅ VERIFIED (committed + pushed `e9c6d63`, 01-09-26) |
+| 16 — Strategy 1 identity fixes: daily-cap bypass + substring collision (inserted mid-program 02-09-26) | 🚧 IN PROGRESS (RESEARCH + INNOVATE done, PLAN written 02-09-26; PVL next) |
+| 04 — Strategy 4 | 🚧 RESUMING (Step 1 RESEARCH done, no bug in strategy_wisdom.py itself; Step 2 INNOVATE next; may run in parallel with Phase 16) |
 | 05 — Strategy 7 | ⏳ PLANNED |
 | 06 — Strategy 8 | ⏳ PLANNED |
 | 07 — Strategy 9 | ⏳ PLANNED |
@@ -416,84 +419,163 @@ pytest trading-app/ -k "<phase-specific selector>"
 
 ## Current Execution State
 
-Last updated: 31-08-26
+Last updated: 02-09-26
+
 Completed phases: Phase 0 (Planning — umbrella + 14 phase plans created); Phase 1 — Strategy 1
 (OB+FVG) name-collision fix + entry-logic audit — ✅ VERIFIED (committed `97c901c`); Phase 2 —
 Strategy 3 (ORB) 5-minute time-window bug — ✅ VERIFIED (committed `ede705e`); Phase 3 — Strategy 2
-(9:26-180 Buy) audit — ✅ VERIFIED. Full 7-step inner loop closed (R→I→P→PVL→E→EVL→UP).
-Validate-contract: Gate PASS (31-08-26, `generated-by: inner-pvl: phase-3`, single V1-V7 pass, no
-CONCERNs, no supplement cycle needed at PVL). RESEARCH found the two historically-known bugs
-(duplicate-function shadowing, phantom-expiry) already fixed; confirmed zero test coverage existed.
-EXECUTE added a docstring correction (zero behavior change) plus a new 7-test regression file
-(`trading-app/tests/test_strategy_926.py`), with two documented test-file-only deviations from the
-plan. One deviation was material: writing the arm-then-recover test **discovered a real live-money
-bug** — an unarmed direct-jump to entry price returned a full BUY signal without setting
-`state.strat_926_triggered`, so the 1-trade-per-day cap was not consumed on that path. This was
-escalated (not silently fixed, since the phase's approved scope was audit-only), independently
-re-confirmed by EVL's code read, and the user approved a minimal one-line supplement fix (dedenting
-`state.strat_926_triggered = True` out of the `armed` guard). EVL independently confirmed all gates
-green **twice** — once for the docstring+tests pass, once more after the supplement fix
-(py_compile clean; `test_strategy_926.py` 7/7 green both times; full scoped suite delta unchanged:
-same 6 pre-existing unrelated failures, +7 passed, zero new regressions). Execution changes
-committed and pushed to `origin/main` at `a38fdef` (verified: local HEAD matches `origin/main` at
-time of this UPDATE PROCESS session — no further commit needed here). Phase report:
-`phase-03-strategy2_REPORT_31-08-26.md` (status: COMPLETE_WITH_GAPS — "gaps" = pre-existing
-unrelated test failures and harness-drift items, not this phase's own work; see addendum for the
-supplement fix). Backlog note `strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md` is RESOLVED
-(fix landed, pinned by a renamed regression test).
-PHASE 4 STATUS: 🚧 PAUSED (not abandoned). Phase 4 — Strategy 4 (Wisdom-Aligned Pullback)
-audit-only, no known bug from Phase 0. Phase 4's own RESEARCH step already completed for its
-original scope and found no bug in `strategy_wisdom.py` itself. Phase 4's Phase Loop Progress:
-Step 1 RESEARCH ✅ done; Steps 2-7 (INNOVATE onward) NOT started — paused here, will resume after
-Phase 15 closes out.
+(9:26-180 Buy) audit — ✅ VERIFIED (committed `a38fdef`; see prior-session detail below); Phase 15
+— Risk orchestrator strategy-name mismatch (inserted mid-program) — ✅ VERIFIED, closed out
+01-09-26.
 
-INSERTED PHASE 15 — RUNNING NOW (discovered mid-Phase-4-RESEARCH, 31-08-26): During Phase 4's
-RESEARCH pass, a shared-infrastructure bug was found — `auto_trader.py` calls
-`risk_orchestrator.propose_trade(strategy_name, ...)` using SHORT strategy-name strings for most
-strategies while `swarm_agent_configs` is seeded/queried by FULL descriptive names, so
-`_get_agent_config()` silently misses the DB row and falls back to zeroed
-win-rate/Kelly-multiplier defaults for the affected strategies. Because this affects the shared
-risk-orchestration path used by nearly every strategy (not just Strategy 4), it is prioritized to
-run as an inserted Phase 15 ahead of resuming Phase 4. Phase 15 plan:
-`phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`. Phase 15's own RESEARCH (mid-program
-discovery) and INNOVATE (Approach C: fix call sites + harden lookup + add warning log; defer full
-config-drift validation to backlog) both completed this session (Steps 1-2 ticked); Step 3
-(PLAN-SUPPLEMENT / plan creation) completes with this plan write. Step 4 (PVL) is next —
-`MID_PROGRAM_PLAN_CREATED` signal applies: inner PVL required for this plan only, no new /goal
-block, Stable Program Goal unchanged.
+**Phase 16 — Strategy 1 identity fixes (inserted mid-program, this session, 02-09-26) — 🚧 IN
+PROGRESS.** Directly resolves the umbrella's own `## HIGH-PRIORITY Open Item` (below) found during
+Phase 15's PVL sweep. RESEARCH (dedicated debugger investigation) and INNOVATE (fix approach) are
+both complete and folded into the phase plan at creation time. PLAN written and PVL is the required
+next step — plan file:
+`phase-16-strategy1-identity-fixes_PLAN_02-09-26.md`. This phase runs in parallel with Phase 4's
+resume (disjoint files: `auto_trader.py` here vs `strategy_wisdom.py` for Phase 4), per the
+umbrella's own prior recommendation.
 
-Current phase: Phase 15 — Risk orchestrator strategy-name mismatch (inserted, running now, ahead
-of Phase 4 resume)
-Current loop step: PVL (pending — Steps 1-3 done this session)
-Validate-contract status: pending for Phase 15 (placeholder in phase-15 plan file; Phase 4's
-RESEARCH-only progress is preserved separately, not superseded; Phase 3's contract remains
-closed/PASS, not reused)
-Program Net Gate: PENDING (3 of 14 numbered phases verified; Phase 15 is an inserted 15th phase,
-not yet counted toward the 14-phase baseline total)
-Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff (see chat
-output). No harness-file changes in Phase 3 (application code + tests + process/context/backlog
-only) — full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not
-applicable per §Regression Gate Validators (harness-artifact trigger only). Phase 15's plan-artifact
-validator run is expected as part of its own PLAN-phase completion checklist.
+**Phase 15 closeout summary:** `auto_trader.py`'s `risk_orchestrator.propose_trade()` call sites
+passed SHORT strategy-name strings ("Strategy 4") for Strategies 1-9 while `swarm_agent_configs` is
+seeded with FULL descriptive names ("Strategy 4: Wisdom-Aligned Pullback"), silently pinning
+`effective_win_rate` at 100.0 and the Kelly multiplier at 1.0 for all nine of them. Fixed by
+renaming all 9 mismatched call sites to full names, hardening `_get_agent_config()` with an
+exact-match-on-split retry (never startswith/substring — same pattern as Phase 1's fix), and adding
+a fallback warning log. A cycle-1 PVL FAIL caught a real collateral regression this rename would
+have caused (silently freezing the Strategy 3/4/6 daily-trade-cap counters inside
+`flush_signals()`) — fixed in the same change (B1b) and pinned by a non-vacuous regression test
+(C1's flush-signals-caps case). New `trading-app/tests/test_risk_orchestrator.py`: 27/27 green.
+Independent EVL (separate session) re-ran every validate-contract gate command fresh and confirmed
+green with no discrepancy from EXECUTE's self-report. Committed and pushed to `origin/main` at
+`e9c6d63` ("fix(trading): strategy names didn't match database, breaking fair trade-slot
+selection") — verified local HEAD == `origin/main` at this UPDATE PROCESS session. Full detail:
+`phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md` (Validate Contract + Phase Loop
+Progress) and `phase-15-risk-orchestrator-name-mismatch_REPORT_01-09-26.md`.
+
+**Phase 15's PVL/EVL sweep surfaced 2 new pre-existing bugs, deliberately NOT fixed (out of Phase
+15's declared Blast Radius) — see `## HIGH-PRIORITY Open Item` immediately below. Do not miss this
+section.**
+
+Prior-session detail (Phase 3, retained for context): Full 7-step inner loop closed
+(R→I→P→PVL→E→EVL→UP). Validate-contract: Gate PASS (31-08-26, `generated-by: inner-pvl: phase-3`,
+single V1-V7 pass, no CONCERNs). RESEARCH found the two historically-known bugs (duplicate-function
+shadowing, phantom-expiry) already fixed; confirmed zero test coverage existed. EXECUTE added a
+docstring correction plus a new 7-test regression file (`test_strategy_926.py`); one deviation was
+material — the arm-then-recover test discovered a real live-money bug (an unarmed direct-jump
+signal bypassed the 1-trade-per-day cap), escalated, user-approved, fixed with a one-line
+supplement, EVL-reconfirmed twice. Phase report: `phase-03-strategy2_REPORT_31-08-26.md`. Backlog
+note `strategy2-unarmed-direct-jump-signal_NOTE_31-08-26.md` is RESOLVED.
+
+**PHASE 4 STATUS: 🚧 RESUMING now that Phase 15 has closed.** Phase 4 — Strategy 4
+(Wisdom-Aligned Pullback), audit-only, no known bug from Phase 0. Phase 4's own RESEARCH (Step 1)
+completed 31-08-26 and found no bug in `strategy_wisdom.py` itself for its original scope (the
+Phase 15 finding was a side-discovery during that same RESEARCH pass, not part of Phase 4's own
+scope — see Phase 15 above). **Documentation-reconciliation note:** Phase 4's own plan file
+(`phase-04-strategy4_PLAN_28-08-26.md`) had NOT had its Step 1 checkbox ticked despite this section
+previously asserting RESEARCH was done — the two artifacts had drifted out of sync. Reconciled this
+session: Phase 4's plan file Step 1 is now ticked with the same finding recorded in both places.
+Phase 4's Phase Loop Progress: Step 1 RESEARCH ✅ done; Steps 2-7 (INNOVATE onward) NOT started —
+next action is Step 2 INNOVATE.
+
+Current phase: TWO phases active in parallel — Phase 4 (Strategy 4, Wisdom-Aligned
+Pullback, resuming) and Phase 16 (Strategy 1 identity fixes, newly inserted).
+Current loop step: Phase 4 → INNOVATE (Step 1 RESEARCH already done for Phase 4's own scope). Phase
+16 → PVL (Steps 1-2 RESEARCH/INNOVATE already done, folded into the plan at creation time).
+Validate-contract status: pending for Phase 4 (placeholder in phase-04 plan file). Pending for Phase
+16 (placeholder in phase-16 plan file — inner PVL required before EXECUTE, per
+`MID_PROGRAM_PLAN_CREATED`). Phase 15's contract remains closed/PASS and does not apply to either.
+Phase 3's contract remains closed/PASS, not reused.
+Program Net Gate: PENDING (4 of 14 numbered phases verified — Phases 1, 2, 3 plus the inserted
+Phase 15, which is not counted toward the 14-phase baseline total; Phase 16 is also inserted and not
+counted toward the 14-phase baseline; 10 numbered phases remain: 4-14 minus the 3 already verified)
+Latest validator run: 28-08-26 — plan-artifact structural validators run at kickoff. No harness-file
+changes in Phase 3 or Phase 15 (application code + tests + process/context/backlog only in both) —
+full regression validator suite (`vc-audit-vc` etc.) intentionally not re-run; not applicable per
+§Regression Gate Validators (harness-artifact trigger only). Phase 15's own plan-artifact validator
+run reported 4 advisory FAILs/4 warnings against the generic SIMPLE/COMPLEX template — treated as
+non-blocking per established precedent for this program's phase-plan shape (see Phase 15's Validate
+Contract "Structural note").
 
 Loop step values: RESEARCH | INNOVATE | PLAN-SUPPLEMENT | PVL | EXECUTE | EVL | UPDATE-PROCESS
 Orchestrator rule: read "Current loop step" and "validate-contract status" before spawning any
 subagent. Never spawn execute-agent when loop step is RESEARCH, INNOVATE, PLAN-SUPPLEMENT, or PVL.
-Next action: spawn vc-validate-agent for inner PVL on Phase 15's plan file
-(`phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`, Step 4). Do NOT spawn
-vc-execute-agent for Phase 15 until its validate-contract is written and non-placeholder. After
-Phase 15 reaches ✅ VERIFIED, resume Phase 4 from its next un-checked Phase Loop Progress step
-(INNOVATE) per the phase 4 plan (`phase-04-strategy4_PLAN_28-08-26.md`). Note: this
-is a lightweight stub plan per Phase 0 — do not trust its file mapping/scope as final without
-re-verifying against current code (same caveat that applied to, and held true for, Phases 1-3's
-stubs — Phase 3 in particular found real behavior the Phase 0 baseline missed; see "Audit-Phase
-Methodology Note" below). Also carry forward: any strategy file touched by an earlier phase may
-have shifted line numbers — re-grep, do not trust cached line numbers (see Test Infra Improvement
-Notes).
+**Next action — both paths are now active in parallel (the HIGH-PRIORITY item below has been
+converted into Phase 16's plan; no further orchestrator choice needed on whether to investigate —
+only on execution order if agent capacity is constrained):**
+1. Spawn vc-validate-agent for Phase 16 (inner PVL, V1-V7) — `phase-16-strategy1-identity-fixes_PLAN_02-09-26.md`.
+   RESEARCH and INNOVATE are already done; PVL is the next required step per
+   `MID_PROGRAM_PLAN_CREATED`.
+2. Spawn vc-innovate-agent for Phase 4 Step 2 (resume the paused phase per its own Phase Loop
+   Progress in `phase-04-strategy4_PLAN_28-08-26.md`).
+Both may run in parallel — they touch disjoint files (Phase 4 touches `strategy_wisdom.py` only;
+Phase 16 touches `auto_trader.py` only). If only one can run at a time, prioritize Phase 16's PVL
+first, since it concerns whether Phase 1's already-shipped, already-VERIFIED fix (`97c901c`) is
+actually correct end-to-end on the real live call path — see the HIGH-PRIORITY section below for
+why this matters more than routine backlog priority.
 
 Note: The Stable Program Goal above is fixed. This section is the only part that changes —
 update-process-agent rewrites it after every phase closeout (overwrite, not append — git history is
 the audit log).
+
+---
+
+## HIGH-PRIORITY Open Item — Phase 1 Fix May Not Cover the Real Live Call Path
+
+**Flagged 01-09-26, during Phase 15's UPDATE PROCESS closeout. This is NOT a routine backlog note —
+read this before resuming Phase 4 or treating Phase 1 as fully closed.**
+
+Phase 15's PVL cycle-2 independent re-verification ran a broadened hardcoded-name sweep (beyond
+what its own checklist required) and found **two pre-existing, live, unfixed bugs directly adjacent
+to Phase 1's already-shipped, already-✅-VERIFIED fix** (`97c901c`, 28-08-26):
+
+1. **`automation.py:733`'s `can_trade()` Strategy-1 daily-cap check requires the caller to pass a
+   colon-suffixed string** (`str(strategy_name).startswith("Strategy 1:")`), **but its only call
+   site — `auto_trader.py:2153` — passes the bare short string `"Strategy 1"`** (no colon).
+   `"Strategy 1".startswith("Strategy 1:")` is `False`. Result: **Strategy 1's daily 2-trade cap
+   (`STRAT_1_MAX_TRADES_PER_DAY`) has never actually fired on the real live call path.**
+   `automation.py:994` (`add_active_trade()`) carries the identical `.startswith("Strategy 1:")`
+   shape and needs the same scrutiny.
+2. **`auto_trader.py:1190`, inside the shared `execute_auto_trade()`:**
+   `if "Strategy 1" in strategy_name:` — naive substring containment. Since `"Strategy 1"` is a
+   literal prefix of `"Strategy 10: Adaptive ADX Engine"` and `"Strategy 11: FRVP LVN Vacuum"`
+   (both already full-form), **this check also fires for every Strategy 10 and Strategy 11 trade** —
+   reintroducing, via a second, different code path, the exact "Strategy 1 vs 10/11 collision" bug
+   class that Phase 1's `has_active_trade_for_strategy()` fix was specifically built to prevent.
+
+**Why this is high-priority, not routine backlog:** Phase 1's report and this program's Program
+Status Table both mark Phase 1 ✅ VERIFIED with 34 passing tests as proof. But Phase 15's sweep
+found that the *actual live call site* (`auto_trader.py:2153`, `:1190`) uses a code path these two
+bugs live on — a path that may be **different from what Phase 1's 34 tests exercised**. Two
+concrete unknowns need resolving before anyone should treat Phase 1 as fully proven end-to-end:
+- Did Phase 1's regression suite call `can_trade()` / `execute_auto_trade()` through the same
+  argument-passing route `auto_trader.py` actually uses in production, or did it test
+  `has_active_trade_for_strategy()` and a synthetic harness that never exercised these two adjacent
+  functions' own argument-matching bugs?
+- Is it possible Phase 1's fix is *itself* correct and fully tested, but simply narrower in scope
+  than these two adjacent, never-fixed call sites — i.e., Phase 1 fixed one function
+  (`has_active_trade_for_strategy`) while `can_trade()` and `execute_auto_trade()`'s own
+  independent hardcoded-string checks were never in Phase 1's Blast Radius at all?
+
+Both bugs are **confirmed independent of, unaffected by, and not caused by** Phase 15's own fix
+(Phase 15 only renamed `propose_trade()`'s argument two lines away from the `can_trade()` call site
+at `:2153`, and did not touch `execute_auto_trade()`'s `sig["strategy"]`-fed check at `:1190`).
+They are real, live, currently-active gaps in a live-money system's daily-trade-cap and
+strategy-collision defenses.
+
+**RESOLVED INTO A PHASE (02-09-26):** this item is no longer an open recommendation — a dedicated
+debugger investigation confirmed both bugs exhaustively, and a full phase plan was created:
+`phase-16-strategy1-identity-fixes_PLAN_02-09-26.md`. RESEARCH and INNOVATE are complete; PVL is the
+next step before EXECUTE. See that plan for the full fix approach (hoist a shared `strat_name`
+local in `run_strat_1()` for Bug 1; exact-match-on-split at `auto_trader.py:1190` for Bug 2) and its
+Open Questions section for the still-undecided directional-guard design question. This phase runs in
+parallel with Phase 4's resume per the recommendation below (disjoint files).
+
+Backlog note (full technical detail, proposed fix — now superseded by the Phase 16 plan itself, kept
+for historical trace): see
+`## Backlog Items (cross-phase index)` → `strategy-1-daily-cap-and-collision-bugs_NOTE_01-09-26.md`
+below.
 
 ---
 
@@ -577,6 +659,15 @@ Recommendation: raise this decision explicitly at or before Phase 2's PLAN-SUPPL
 Phase 2 is a window/timing bug that a working backtest would verify well. Not resolved by this
 UPDATE PROCESS session — flagging only, per orchestrator instruction not to silently act on it.
 
+**[Found in Phase 15 — cleanup item, non-blocking, added at UPDATE PROCESS 01-09-26]** Two
+pre-existing, unrelated test failures were hit while running Phase 15's regression sweep
+(`test_p0_fixes.py::test_gap_strategy_filters_todays_candles_with_unix_ts` — fails with "no current
+event loop"; `test_auto_trader.py::test_atr_sl_field_separation` — a source-string assertion about
+`t["trailing_sl_price"]`). Both were reproduced identically on the unmodified pre-Phase-15 files via
+`git stash` — confirmed unrelated to Phase 15's own changes, not a regression it introduced. Not
+blocking any phase; worth a dedicated test-suite cleanup pass whenever one is scheduled (candidate:
+fold into Phase 14's shared-infrastructure phase, or a standalone maintenance task).
+
 `process/context/tests/all-tests.md` is still the unfilled `vc-setup` template (routing table is
 commented-out placeholders) — Phase 1 derived test commands from the validate-contract and direct
 inspection instead of this router. Filling it in would remove this repeated workaround for every
@@ -631,6 +722,24 @@ file another phase has already modified, not just to editing your own phase's ta
   on the live dashboard — fold this item into Phase 9's PLAN-SUPPLEMENT step as an optional scope
   addition, or split it into its own follow-up if it would grow Phase 9's blast radius beyond a
   single-strategy engine-logic audit (dashboard/UI code is a different surface).
+- `process/features/strategy-rebuild/backlog/strategy-1-daily-cap-and-collision-bugs_NOTE_01-09-26.md`
+  — **SUPERSEDED by Phase 16 (02-09-26).** Found during Phase 15's PVL cycle-2 sweep (01-09-26),
+  confirmed independently unrelated to and unaffected by Phase 15's own fix. Two live bugs: (a)
+  `automation.py:733`'s `can_trade()` Strategy-1 daily-cap check requires a colon-suffixed name but
+  its only call site (`auto_trader.py:2153`, inside `run_strat_1()`) passes the bare short string —
+  the cap has never fired. (b) `auto_trader.py:1190`'s `execute_auto_trade()` uses naive substring
+  containment (`"Strategy 1" in strategy_name`), which also matches Strategy 10/11's full names — a
+  second, independent instance of the exact collision class Phase 1's
+  `has_active_trade_for_strategy()` fix was built to prevent. Both bugs are now scoped into a full
+  phase plan: `phase-16-strategy1-identity-fixes_PLAN_02-09-26.md` (RESEARCH + INNOVATE complete,
+  PVL next). This backlog note is retained for historical trace only — the phase plan is now
+  authoritative.
+- `process/features/strategy-rebuild/backlog/config-drift-validation-check_NOTE_01-09-26.md` —
+  linked here per Phase 15's INNOVATE Decision item 4 (explicitly out of Phase 15's scope). Proposes
+  a startup/nightly check cross-referencing every `propose_trade` call-site strategy-name string
+  against DB-seeded `swarm_agent_configs` names, so a future name-mismatch (the same bug class
+  Phase 15 just fixed) is caught before reaching production rather than discovered by audit again.
+  Not scheduled; pick up as a dedicated follow-up when capacity allows.
 
 ---
 

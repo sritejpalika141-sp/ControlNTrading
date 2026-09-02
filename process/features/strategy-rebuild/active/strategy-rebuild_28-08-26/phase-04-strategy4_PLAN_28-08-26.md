@@ -13,7 +13,7 @@ metadata:
 
 **Program:** strategy-rebuild
 **Umbrella plan:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/strategy-rebuild-umbrella_PLAN_28-08-26.md
-**Phase status:** ⏳ PLANNED
+**Phase status:** 🚧 PAUSED — Step 1 RESEARCH done (31-08-26); resuming at Step 2 INNOVATE now that Phase 15 has closed (01-09-26)
 **Report destination:** process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-04-strategy4_REPORT_{dd-mm-yy}.md (flat in the program task folder)
 
 ---
@@ -93,8 +93,24 @@ python3 trading-app/engine/backtest_runner.py --strategy "<Strategy Name>"
 Orchestrator reads this before deciding which subagent to spawn next. The canonical 7-step inner loop
 `R → I → P → PVL → E → EVL → UP` SKIPS SPEC (SPEC runs once in the outer program loop).
 
-- [ ] 1. RESEARCH — research-agent: prior phase report read; test context loaded; fresh audit of
-      this strategy's current code completed (re-verify Blast Radius above)
+- [x] 1. RESEARCH — completed 31-08-26 (as part of the same session that also began this phase's
+      work). Fresh audit of `trading-app/engine/strategy_wisdom.py` found no bug in the strategy's
+      own entry/exit/SL logic for its originally-scoped RESEARCH question — Blast Radius above
+      (single file) is confirmed accurate. **Side-finding, not part of this phase's own scope:**
+      this RESEARCH pass also surfaced a shared-infrastructure bug (`auto_trader.py` passing
+      short strategy-name strings to `risk_orchestrator.propose_trade()` while
+      `swarm_agent_configs` is seeded with full descriptive names, silently zeroing win-rate/Kelly
+      lookups for most strategies). Because that finding affects nearly every strategy — not just
+      Strategy 4 — the program owner elected to run it as an inserted Phase 15 ahead of this
+      phase resuming, rather than fold it into Phase 4's own INNOVATE/fix cycle. Phase 15 is now
+      ✅ VERIFIED (committed `e9c6d63`, 01-09-26) — see
+      `phase-15-risk-orchestrator-name-mismatch_PLAN_31-08-26.md`. This phase resumes at Step 2
+      with its original `strategy_wisdom.py` scope unchanged by Phase 15's fix (Phase 15 did not
+      touch `strategy_wisdom.py` itself, only the call site + shared orchestrator lookup).
+      **Note (documentation-reconciliation, done at Phase 15's UPDATE PROCESS session):** this
+      checkbox was not ticked when the RESEARCH pass actually happened on 31-08-26; the umbrella's
+      `## Current Execution State` had already recorded it as done, but this file's own
+      Phase Loop Progress had drifted out of sync. Reconciled here so both artifacts agree.
 - [ ] 2. INNOVATE — innovate-agent: approach decided; Decision Summary written
 - [ ] 3. PLAN-SUPPLEMENT — plan-agent: this stub fleshed out into a full checklist with concrete
       file paths and line references (or "n/a — research clean" if truly nothing to add)
@@ -145,10 +161,13 @@ git log --oneline -1 -- trading-app/engine/strategy_wisdom.py
 
 - Selected plan file path:
   `process/features/strategy-rebuild/active/strategy-rebuild_28-08-26/phase-04-strategy4_PLAN_28-08-26.md`
-- Last completed step: not started
-- Validate-contract status: pending
-- Next step: Spawn vc-research-agent for RESEARCH (Step 1) once Phase 03 is complete —
-  do not start early even under autonomous /goal execution (strictly sequential program).
+- Last completed step: Step 1 RESEARCH (31-08-26) — no bug found in `strategy_wisdom.py`'s own
+  logic for this phase's original scope; see the Step 1 checklist note above for the Phase 15
+  side-finding and its resolution.
+- Validate-contract status: pending (Step 4 PVL not yet run)
+- Next step: Spawn vc-innovate-agent for Step 2 INNOVATE now that Phase 15 is ✅ VERIFIED
+  (committed `e9c6d63`, 01-09-26). Decide the fix approach (or "no fix needed, confirmed working
+  as intended" if RESEARCH truly found nothing) and write the Decision Summary.
 
 ---
 
