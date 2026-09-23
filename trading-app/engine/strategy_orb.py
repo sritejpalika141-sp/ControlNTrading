@@ -79,10 +79,11 @@ async def evaluate_orb_strategy(client, state, symbol: str, candles_5m: List[Dic
         if current_time_str < "09:05:00":
             return None
     else:
-        # Time expiration check: if past 10:30 AM IST, mark expired for today
-        if current_time_str > "10:30:00":
+        # Time expiration: cut after 10:00 IST (was 10:30) — late ORB breakouts chase
+        # and historically dragged spot-proxy WR ~28–30%. First 40 min keeps higher quality.
+        if current_time_str > "10:00:00":
             if not getattr(state, "strat_orb_expired", False):
-                logger.info(f"⏰ Strategy 3: Time window closed for {symbol} (10:30 AM). Expired for today.")
+                logger.info(f"⏰ Strategy 3: Time window closed for {symbol} (10:00 AM). Expired for today.")
                 state.strat_orb_expired = True
                 state.save()
             return None

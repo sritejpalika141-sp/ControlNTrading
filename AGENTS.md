@@ -737,6 +737,14 @@ The trading product lives under `trading-app/` — a single **FastAPI + Uvicorn*
 - Hindsight optimizer (`workers/hindsight_optimizer_worker.py`) tunes `entry_confidence_floor` / `strike_offset` / `chase_buffer_pct` from each new CLOSED ledger trade (losses tighten).
 - Tests: `tests/test_ai_strategy_wiring.py`.
 
+**LOCKED — 55% WR profitability pack (23-09-26):**
+- Target live WR ≥55%. Nightly shadows strategies with live WR <55% (or net-losing) over ≥10 closed trades.
+- S1 = confluence-only (`STRAT1_CONFLUENCE_ONLY=True`) + min confidence 70.
+- Hindsight knobs are LIVE: `engine/profitability_gates.py` → confidence floor + chase buffer + strike ITM offset in `auto_trader` / `strikes.py`.
+- ORB window ends **10:00** (not 10:30); range 0.10–0.40%.
+- S9 session **10:00–13:30**; S10 CHOPPY RSI mean-rev **disabled** (trend-only).
+- S5/S6 fade stay disabled. Tests: `tests/test_profitability_55pct.py`.
+
 ### First-time VM prerequisites
 
 If `python3 -m venv` fails, install once (not in the update script):

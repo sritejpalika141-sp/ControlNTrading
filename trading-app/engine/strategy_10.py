@@ -75,13 +75,14 @@ async def evaluate_strategy_10(symbol: str, spot: float, candles_5m: List[Dict],
                 signal_direction = "PUT"
                 reason = f"TRENDY (ADX={adx_15m:.1f}): 1H/15m/5m aligned BEARISH."
         else:
-            # CHOPPY LOGIC (MEAN REVERSION via RSI)
-            if rsi_15m < 35 and rsi_5m < 30:
-                signal_direction = "CALL"
-                reason = f"CHOPPY (ADX={adx_15m:.1f}): RSI Oversold (15m: {rsi_15m:.1f}, 5m: {rsi_5m:.1f}). Mean reversion BUY."
-            elif rsi_15m > 65 and rsi_5m > 70:
-                signal_direction = "PUT"
-                reason = f"CHOPPY (ADX={adx_15m:.1f}): RSI Overbought (15m: {rsi_15m:.1f}, 5m: {rsi_5m:.1f}). Mean reversion SELL."
+            # CHOPPY MEAN-REVERSION DISABLED (owner 55% WR policy 23-09-26).
+            # RSI fade fights one-sided / trending days and bleeds like S5/S6.
+            # Keep TRENDY MTF alignment path only.
+            logger.info(
+                f"⏭️ Strategy 10: CHOPPY (ADX={adx_15m:.1f}) — mean-reversion path disabled "
+                f"(trend-only / 55% WR policy)."
+            )
+            return False, {}
 
         if signal_direction:
             confidence = 80

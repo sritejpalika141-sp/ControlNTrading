@@ -67,9 +67,19 @@ def _is_fade_strategy(name: str) -> bool:
     return any(n.startswith(p) or p in n for p in _FADE_STRATEGY_PREFIXES)
 
 
-async def _is_chase_entry(client, strike_symbol: str, entry_price: float) -> Tuple[bool, str]:
-    """True if entry is at/near the last-5 one-min highs (buy-high / chase after expansion)."""
+async def _is_chase_entry(
+    client,
+    strike_symbol: str,
+    entry_price: float,
+    chase_buffer_pct: float = 1.0,
+) -> Tuple[bool, str]:
+    """True if entry is at/near the last-5 one-min highs (buy-high / chase after expansion).
+
+    chase_buffer_pct comes from hindsight/nightly tunables (default 1.0% → threshold 0.990).
+    """
     try:
+        from engine.profitability_gates import chase_threshold_multiplier
+        mult = chase_threshold_multiplier(chase_buffer_pct)
         candles = await api_queue.enqueue(2, client.get_historical, strike_symbol, "1", 1)
         if not candles or len(candles) < 3 or entry_price <= 0:
             return False, ""
@@ -77,9 +87,11 @@ async def _is_chase_entry(client, strike_symbol: str, entry_price: float) -> Tup
         local_high = max(float(c.get("high") or 0) for c in recent)
         if local_high <= 0:
             return False, ""
-        # Within 0.8% of the local high = chasing the spike
-        if entry_price >= local_high * 0.992:
-            return True, f"entry ₹{entry_price:.2f} near 5×1m high ₹{local_high:.2f}"
+        if entry_price >= local_high * mult:
+            return True, (
+                f"entry ₹{entry_price:.2f} near 5×1m high ₹{local_high:.2f} "
+                f"(buffer {chase_buffer_pct:.1f}%)"
+            )
         return False, ""
     except Exception as e:
         logger.warning(f"Anti-chase check failed for {strike_symbol}: {e}")
@@ -198,10 +210,9 @@ def _strat_enabled_for(state, equity_strat_name: str, symbol: str) -> bool:
 
 
 def _strat3_orb_window_ok(now_str: str) -> bool:
-    """Strategy 3 (5-Min ORB) evaluation window check -- pure, no side effects, no I/O.
-    Matches strategy_orb.py's own 10:30:00 expiry boundary exactly (see strategy_orb.py:83).
-    Extracted so the window-widen fix is unit-testable without driving automation_loop()."""
-    return "09:20:00" <= now_str <= "10:30:00"
+    """Strategy 3 (5-Min ORB) evaluation window — matches strategy_orb.py 10:00 expiry
+    (tightened 23-09-26 for 55% WR quality; was 10:30)."""
+    return "09:20:00" <= now_str <= "10:00:00"
 
 
 async def _strat1_attempt_trade(state, client, symbol, analysis):
@@ -1232,6 +1243,22 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             current_trend = "NEUTRAL"
 
         strategy_name = sig.get("strategy", "")
+
+        # ── Profitability gates (55% WR target): load hindsight/nightly tunables ──
+        from engine.profitability_gates import load_strategy_tunables, passes_confidence_floor
+        _tunables = await load_strategy_tunables(strategy_name)
+        _conf_ok, _conf_why = passes_confidence_floor(sig, _tunables["entry_confidence_floor"])
+        if not _conf_ok:
+            logger.info(f"⏭️ Confidence floor: skip {strategy_name} — {_conf_why}")
+            await broadcast_log(
+                f"⏭️ Skipped {strategy_name}: {_conf_why} (55% WR quality gate).",
+                "info", user_id=client.user_id,
+            )
+            return
+        _chase_buf = float(_tunables.get("chase_buffer_pct") or 1.0)
+        _strike_offset = int(_tunables.get("strike_offset") or 0)
+        sig["_strike_offset"] = _strike_offset  # consumed by strike selection below
+
         # Strategy 1 (OB+FVG) directional consistency.
         # FIX 5: the old rule ALSO returned outright on NEUTRAL/RANGE/SIDEWAYS/CHOPPY. That blocked
         # Strategy 1 on the majority of days (NSE regime is frequently CHOPPY_SIDEWAYS, and 133 of
@@ -1346,7 +1373,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
             if entry_price <= 0:
                 entry_price = strike_info.get("ltp", sig.get("entry_price", 180))
 
-            _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price)
+            _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price, chase_buffer_pct=_chase_buf)
             if _chase:
                 logger.info(f"⏭️ Anti-chase: skip {strike_symbol} — {_chase_why}")
                 await broadcast_log(
@@ -1585,7 +1612,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 return
 
         dte = expiry.get("dte", 5)
-        recommendations = get_strike_recommendations(option_chain, sig["type"], spot, dte, exclude_symbols=state.traded_strikes_today)
+        recommendations = get_strike_recommendations(option_chain, sig["type"], spot, dte, exclude_symbols=state.traded_strikes_today, strike_offset=int(sig.get("_strike_offset") or 0))
 
         if not recommendations:
             logger.warning(f"No suitable strikes found for {sig['type']} at spot {spot}")
@@ -1820,7 +1847,7 @@ async def execute_auto_trade(symbol: str, sig: Dict, analysis: Dict, client):
                 f"keeping LTP ₹{entry_price} (buy-high disabled)"
             )
 
-        _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price)
+        _chase, _chase_why = await _is_chase_entry(client, strike_symbol, entry_price, chase_buffer_pct=_chase_buf)
         if _chase:
             logger.info(f"⏭️ Anti-chase: skip {strike_symbol} — {_chase_why}")
             await broadcast_log(

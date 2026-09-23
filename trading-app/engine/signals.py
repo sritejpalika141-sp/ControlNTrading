@@ -194,21 +194,12 @@ def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
     trend_dir = trend.get("trend", "NEUTRAL")
     trend_strength = trend.get("strength", 0)
 
-    # 1. OB & FVG signals with Retest & Rejection
-    # We combine them because they follow the same logic
-    # ── Variant I (backtest-validated, 20-Jul) ──────────────────────────────────────────
-    # Strategy 1 now takes CONFLUENCE setups ONLY (an OB and an FVG overlapping).
-    # Evidence: walk-forward replay of this exact engine over 68 trading days produced 1,304
-    # raw signals (fvg 900 / ob 285 / confluence 119). Feeding all three LOST money at every
-    # exit rule tested (fixed 1R -295 pts, partial+trail -289 pts). Restricting to confluence
-    # and adding partial-at-1R + trailing lifted the win rate 14.7% -> 54.8%, kept profit
-    # comparable (+218 vs +307 pts) and cut MAX DRAWDOWN from -348 to -68 points — i.e. ~3.2
-    # pts of profit per pt of drawdown vs 0.88 before. Standalone OB/FVG setups were noise.
-    # Flip to False to restore the previous all-setups behaviour.
-    # FIX: Changed to False to allow standalone OB/FVG signals. The confluence-only filter
-    # produced zero signals for a week. Standalone setups with strong trend alignment and
-    # higher confidence thresholds (>70) provide more trading opportunities.
-    STRAT1_CONFLUENCE_ONLY = False
+    # ── Variant I (backtest-validated, 20-Jul) + OWNER 55% WR LOCK (23-09-26) ──
+    # Strategy 1 takes CONFLUENCE setups ONLY (OB ∩ FVG). Standalone OB/FVG lost money
+    # in walk-forward (14.7% WR); confluence-only lifted to ~54.8% with lower drawdown.
+    # Do NOT flip to False without a fresh offline report clearing ≥55% WR.
+    STRAT1_CONFLUENCE_ONLY = True
+    STRAT1_MIN_CONFIDENCE = 70
 
     all_setups = []
     for conf in confluences: all_setups.append({"dir": conf["direction"], "top": conf["zone_top"], "bottom": conf["zone_bottom"], "type": "confluence", "source": conf})
@@ -217,10 +208,15 @@ def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
         for fvg in fvgs: all_setups.append({"dir": fvg["direction"], "top": fvg["top"], "bottom": fvg["bottom"], "type": "fvg", "source": fvg})
 
     for setup in all_setups:
-        # Check Trend alignment
+        # Check Trend alignment — counter-trend only if confluence with strong zone score
+        setup_score = float(
+            setup.get("score")
+            or (setup.get("source") or {}).get("score")
+            or (setup.get("source") or {}).get("strength")
+            or 0
+        )
         if trend_dir != "NEUTRAL" and setup["dir"] != trend_dir:
-            # Skip counter-trend setups unless it's a very strong OB
-            if setup.get("score", 0) < 80:
+            if setup_score < 80:
                 continue
             
         status = detect_retest_and_rejection(candles_eval, setup, setup["dir"])
@@ -251,6 +247,11 @@ def _evaluate_signals(trend: Dict, key_levels: List[Dict], obs: List[Dict],
             confidence = min(95, 60 + (trend_strength / 5))
             if (is_bull and at_support) or (not is_bull and at_resistance):
                 confidence = min(95, confidence + 15)
+            # Confluence bonus toward 55% quality bar
+            if setup["type"] == "confluence":
+                confidence = min(95, confidence + 5)
+            if confidence < STRAT1_MIN_CONFIDENCE:
+                continue
 
             # Avoid duplicate signals for same zone
             signals.append({

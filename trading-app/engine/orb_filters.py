@@ -10,8 +10,8 @@ from engine.technical_indicators import calculate_ema
 
 IST = pytz.timezone("Asia/Kolkata")
 
-MIN_ORB_RANGE_PCT = 0.08   # skip ultra-tight opening ranges (noise)
-MAX_ORB_RANGE_PCT = 0.50
+MIN_ORB_RANGE_PCT = 0.10   # skip ultra-tight opening ranges (raised 0.08→0.10 for 55% quality)
+MAX_ORB_RANGE_PCT = 0.40   # skip chaotic wide ORBs (was 0.50)
 
 INDEX_SYMBOL_MARKERS = ("NIFTY50-INDEX", "BANKNIFTY-INDEX", "^NSEI", "-INDEX")
 

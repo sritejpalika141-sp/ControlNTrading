@@ -359,22 +359,31 @@ async def run_nightly_learning(state, user_id: int):
             # proving/disproving itself risk-free rather than being permanently written off.
             # ═══════════════════════════════════════════
             if total >= MIN_TRADES_FOR_LEARNING:
+                from engine.profitability_gates import TARGET_WIN_RATE_PCT
                 shadow_list = list(getattr(state, "shadow_strategies", None) or [])
                 already_shadowed = strat in shadow_list
-                if total_pnl <= 0 and not already_shadowed:
+                # Shadow if net-losing OR live WR below 55% target (owner 23-09-26).
+                below_wr_target = win_rate < float(TARGET_WIN_RATE_PCT)
+                should_shadow = (total_pnl <= 0 or below_wr_target) and not already_shadowed
+                if should_shadow:
                     shadow_list.append(strat)
                     state.shadow_strategies = shadow_list
                     state.save()
-                    reason = (f"Net-losing over {total} real closed trades (₹{total_pnl:.0f} total, "
-                              f"{win_rate}% win, ₹{avg_pnl:.0f} avg/trade) — moved to shadow mode "
-                              f"to protect capital.")
+                    if total_pnl <= 0:
+                        reason = (f"Net-losing over {total} real closed trades (₹{total_pnl:.0f} total, "
+                                  f"{win_rate}% win, ₹{avg_pnl:.0f} avg/trade) — moved to shadow mode "
+                                  f"to protect capital.")
+                    else:
+                        reason = (f"Win rate {win_rate}% < {TARGET_WIN_RATE_PCT:.0f}% target over {total} "
+                                  f"real closed trades (PnL ₹{total_pnl:.0f}) — moved to shadow until "
+                                  f"quality gates lift WR.")
                     logger.warning(f"🛡️ RULE-BASED (no AI): {strat} -> SHADOW. {reason}")
                     try:
                         await Database.insert_learning_log(
                             strategy_name=strat,
                             llm_analysis=f"[STRICT RULE-BASED, no AI involved] {reason}",
                             old_config=json.dumps({"shadow": already_shadowed}),
-                            new_config=json.dumps({"shadow": True}),
+                            new_config=json.dumps({"shadow": True, "target_wr": TARGET_WIN_RATE_PCT}),
                         )
                     except Exception as _le:
                         logger.warning(f"insert_learning_log failed for {strat}: {_le}")
@@ -389,12 +398,13 @@ async def run_nightly_learning(state, user_id: int):
                             title="🛡️ Nightly Learning — Moved to Shadow (rule-based, no AI)")
                     except Exception as _e:
                         logger.warning(f"Shadow-move alert failed for {strat}: {_e}")
-                elif total_pnl > 0:
+                elif total_pnl > 0 and win_rate >= float(TARGET_WIN_RATE_PCT):
                     logger.info(f"✅ RULE-BASED (no AI): {strat} net-positive "
-                                f"(₹{total_pnl:.0f} over {total} trades) — no status change needed.")
+                                f"(₹{total_pnl:.0f}, WR {win_rate}% ≥ {TARGET_WIN_RATE_PCT:.0f}%) — no status change.")
                 elif already_shadowed:
                     logger.info(f"🛡️ RULE-BASED (no AI): {strat} still net-losing/shadowed — no change "
-                                f"(promotion back to live is handled by the graduation rule above, not here).")
+                                f"(WR {win_rate}%, PnL ₹{total_pnl:.0f}; "
+                                f"promotion back to live is handled by the graduation rule above, not here).")
 
             # AI Critique — STRICT: any closed loss forces learning. BEST-EFFORT ADDITION on top of
             # the rule-based action above, never a requirement for tonight's run to have had effect.

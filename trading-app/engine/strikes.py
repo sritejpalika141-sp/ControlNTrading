@@ -79,7 +79,7 @@ DELTA_IDEAL = 0.50        # reward peaks at ATM-ish delta
 OI_CHANGE_WEIGHT = 0.25   # scales the OI-change positioning score (oichp is a percent)
 
 
-def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float, dte: int = 5, exclude_symbols: List[str] = None, asset_class: str = None) -> List[Dict]:
+def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float, dte: int = 5, exclude_symbols: List[str] = None, asset_class: str = None, strike_offset: int = 0) -> List[Dict]:
     """
     Strike selection driven by OI CHANGE + IV + DELTA/THETA (owner directive 31-07-26), biased to
     ATM/near-ATM. Composite score per strike:
@@ -91,6 +91,7 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
       • IV guard — penalise strikes whose IV is rich vs the chain median (IV-crush protection),
       • THETA guard — penalise fast time-decay, harsher on/near expiry,
       • liquidity — OI level.
+    strike_offset (hindsight-tuned, 0–2): bias target toward ITM by N strike intervals after losses.
     Greeks (IV/delta/theta) are computed via Black-Scholes (engine.greeks) since Fyers doesn't
     provide them. Fully defensive: if greeks can't be computed for a strike it degrades to the
     distance + OI + positioning score rather than dropping the strike. Returns the full score-ranked
@@ -135,7 +136,10 @@ def get_strike_recommendations(option_chain: Dict, signal_type: str, spot: float
 
     options = calls if is_call else puts
     max_oi = max((o.get("oi", 1) for o in options), default=1) or 1
-    target_price = atm_strike + ((-_si if is_call else _si) if dte <= 1 else 0)
+    # Expiry-day: one strike ITM. Hindsight strike_offset: additional ITM bias after losses.
+    _off = max(0, min(2, int(strike_offset or 0)))
+    _itm_steps = (1 if dte <= 1 else 0) + _off
+    target_price = atm_strike + ((-_si if is_call else _si) * _itm_steps)
 
     # Chain median IV (near-ATM) — a RELATIVE yardstick so the IV guard works across underlyings
     # whose absolute IV levels differ (index vs stock vs crude).

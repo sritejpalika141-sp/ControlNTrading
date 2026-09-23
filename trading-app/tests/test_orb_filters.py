@@ -31,7 +31,7 @@ def test_volume_multiplier_low_vix_stricter():
 
 
 def test_orb_range_ok_bounds():
-    ok, pct = orb_range_ok(100.10, 100.00, 100.00)
+    ok, pct = orb_range_ok(100.15, 100.00, 100.00)  # 0.15% — inside 0.10–0.40
     assert ok is True
     assert MIN_ORB_RANGE_PCT <= pct < MAX_ORB_RANGE_PCT
 
@@ -82,24 +82,24 @@ def test_is_index_spot_symbol():
 
 
 # --- Strategy 3 (5-Min ORB) call-site evaluation-window gate -------------------
-# Phase 02 (strategy-rebuild): the auto_trader call-site window was hardcoded to a
-# 10-minute gate ("09:20:00" <= now <= "09:30:00"), 60 minutes narrower than
-# strategy_orb.py's own 10:30:00 expiry boundary. Widened to match exactly.
+# Tightened 23-09-26 for 55% WR quality: window ends at 10:00 (was 10:30).
 
 
-def test_strat3_orb_window_admits_later_times():
-    """E2 -- times previously rejected by the old 10-minute gate are now in-window."""
+def test_strat3_orb_window_admits_morning_times():
+    """Times inside 09:20–10:00 are admitted; past 10:00 rejected."""
     from workers.auto_trader import _strat3_orb_window_ok
 
     assert _strat3_orb_window_ok("09:45:00") is True
-    assert _strat3_orb_window_ok("10:15:00") is True
+    assert _strat3_orb_window_ok("09:55:00") is True
+    assert _strat3_orb_window_ok("10:15:00") is False
 
 
 def test_strat3_orb_window_boundaries():
-    """E3 -- boundary discipline: inclusive at both ends, rejects just outside."""
+    """Boundary discipline: inclusive at 09:20 and 10:00, rejects just outside."""
     from workers.auto_trader import _strat3_orb_window_ok
 
     assert _strat3_orb_window_ok("09:15:00") is False
-    assert _strat3_orb_window_ok("10:35:00") is False
+    assert _strat3_orb_window_ok("10:05:00") is False
     assert _strat3_orb_window_ok("09:20:00") is True
-    assert _strat3_orb_window_ok("10:30:00") is True
+    assert _strat3_orb_window_ok("10:00:00") is True
+    assert _strat3_orb_window_ok("10:30:00") is False

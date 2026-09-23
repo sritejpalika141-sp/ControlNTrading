@@ -25,9 +25,9 @@ logger = logging.getLogger("HINDSIGHT_OPTIMIZER")
 IST = pytz.timezone("Asia/Kolkata")
 
 DEFAULTS = {
-    "entry_confidence_floor": 60,
+    "entry_confidence_floor": 70,
     "strike_offset": 0,
-    "chase_buffer_pct": 0.8,
+    "chase_buffer_pct": 1.0,
 }
 MIN_FLOOR = 50
 MAX_FLOOR = 90

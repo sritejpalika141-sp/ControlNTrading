@@ -11,8 +11,8 @@ IST = pytz.timezone("Asia/Kolkata")
 MIN_ADX_15M = 25.0
 SESSION_START_HOUR = 10
 SESSION_START_MINUTE = 0
-SESSION_END_HOUR = 14
-SESSION_END_MINUTE = 0
+SESSION_END_HOUR = 13
+SESSION_END_MINUTE = 30  # cut late-day chop (was 14:00) toward 55% WR quality
 
 
 def _as_ist(dt: Union[datetime, None]) -> datetime:
@@ -24,7 +24,7 @@ def _as_ist(dt: Union[datetime, None]) -> datetime:
 
 
 def session_allows_entry(dt: Union[datetime, None] = None) -> bool:
-    """NSE index/equity: allow new entries 10:00–14:00 IST (exclusive at 14:00)."""
+    """NSE index/equity: allow new entries 10:00–13:30 IST (exclusive at 13:30)."""
     t = _as_ist(dt)
     start_mins = SESSION_START_HOUR * 60 + SESSION_START_MINUTE
     end_mins = SESSION_END_HOUR * 60 + SESSION_END_MINUTE
